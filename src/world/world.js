@@ -241,7 +241,7 @@ export class World {
       this.stats.generated++;
     } else if (r.type === 'mesh') {
       const c = this.getChunk(r.cx, r.cz);
-      if (!c) return;
+      if (!c || !c.blocks) return;
       c.meshInFlight = false;
       c.meshedVersion = r.version;
       if (r.light) c.light = r.light;

@@ -46,6 +46,7 @@ export function scatter(dx, dy, dz, lx, ly, lz, alt, steps = 12) {
   const tg = raySphere(ox, oy, oz, dx, dy, dz, PLANET_R);
   let tMax = ta[1];
   if (tg && tg[0] > 0) tMax = Math.min(tMax, tg[0]);
+  tMax = Math.min(tMax, 120e3); // same cap as the GLSL model
   const dt = tMax / steps;
   const mu = dx * lx + dy * ly + dz * lz;
   const phR = 3 / (16 * Math.PI) * (1 + mu * mu);

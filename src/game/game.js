@@ -102,6 +102,12 @@ export class Game {
     this.renderer = new Renderer(this.canvas, arrays, this.settings);
     this.icons = buildIcons(this.textures);
     this.ui.buildInventory(this.icons);
+    this.canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      cancelAnimationFrame(this.raf);
+      this.save();
+      this.ui.showError('The graphics context was lost (the GPU was reset or ran out of memory). Your world was saved; reload the page to continue.');
+    });
     this.input = new Input(this.canvas);
     this.input.onLockChange = (locked) => this.onLockChange(locked);
     this.input.onLockError = () => {
@@ -234,7 +240,10 @@ export class Game {
       if (['shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'].includes(key)) s.preset = 'custom';
     }
     if (key === 'timeOfDay') this.dayTime = value;
-    if (key === 'renderDistance') this.world.renderDistance = value;
+    if (key === 'renderDistance') {
+      this.world.renderDistance = value;
+      this.world.lastCx = null; // re-scan the neighbourhood with the new radius
+    }
     if (key === 'volume') this.audio.setVolume(value);
     if (key === 'ambience') this.audio.ambientOn = value;
     if (!live) this.renderer.applySettings(s);
@@ -523,7 +532,8 @@ export class Game {
     let n = 0;
     while (q.length && (n < 2 || performance.now() - t0 < 5)) {
       const { chunk, mesh } = q.shift();
-      if (!this.world.chunks.has(chunk.key)) continue;
+      // skip meshes for chunks that were unloaded (possibly re-created) since the job started
+      if (this.world.chunks.get(chunk.key) !== chunk) continue;
       this.renderer.uploadChunk(chunk, mesh);
       n++;
     }

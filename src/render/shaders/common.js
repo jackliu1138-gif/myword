@@ -184,6 +184,9 @@ vec3 atmosScatter(vec3 rd, vec3 l, float camAlt, int steps) {
   vec2 tg = raySphere(ro, rd, PLANET_R);
   float tMax = ta.y;
   if (tg.x > 0.0) tMax = min(tMax, tg.x);
+  // Cap the view path: without multiple scattering, the far end of a grazing ray only adds
+  // red-shifted light and turns a clear daytime horizon yellow.
+  tMax = min(tMax, 120e3);
   float dt = tMax / float(steps);
   float mu = dot(rd, l);
   float phR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);

@@ -21,7 +21,7 @@ void main() {
   // multiple scattering keeps a daytime horizon white-blue rather than yellow; approximate that
   float horizon = 1.0 - smoothstep(0.0, 0.3, abs(dir.y));
   float lit = max(smoothstep(0.04, 0.35, uSunDir.y), smoothstep(0.04, 0.35, uMoonDir.y) * (1.0 - smoothstep(-0.2, 0.0, uSunDir.y)) * 1.4);
-  col = mix(col, vec3(luma(col)) * vec3(0.9, 0.97, 1.1), min(0.4 * horizon * lit, 0.7));
+  col = mix(col, vec3(luma(col)) * vec3(0.92, 0.98, 1.08), min(0.2 * horizon * lit, 0.4));
   // single scattering underestimates sky radiance; scale into balance with the terrain lighting
   oColor = vec4(col * 1.7, 1.0);
 }

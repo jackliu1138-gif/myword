@@ -408,7 +408,8 @@ export class Renderer {
     const a = dayTime * Math.PI * 2;
     const sun = [Math.cos(a), Math.sin(a) * Math.cos(SUN_TILT), Math.sin(a) * Math.sin(SUN_TILT)];
     const moon = [-sun[0], -sun[1], -sun[2]];
-    const key = sun.map((v) => Math.round(v * 800)).join(',');
+    // sky irradiance costs a few ms on the CPU: refresh it in ~0.25 degree steps of sun motion
+    const key = sun.map((v) => Math.round(v * 240)).join(',');
     if (this.skyCache.key !== key) {
       const alt = 200;
       const p = [0, PLANET_RADIUS + alt, 0];
@@ -508,7 +509,7 @@ export class Renderer {
     v4(152, L.ground[0], L.ground[1], L.ground[2], 0);
     const rd = state.renderDistance * 16;
     const fog = state.fog;
-    v4(156, fog.density, fog.falloff, rd * 0.72, rd * 0.98);
+    v4(156, fog.density, fog.falloff, rd * 0.62, rd * 0.98);
     v4(160, w, h, 1 / w, 1 / h);
     // w: 0 above water, otherwise 1 + depth of the eye below the surface
     v4(164, near, far, this.frame, state.underwater ? 1 + (state.waterDepth || 0) : 0);
@@ -754,8 +755,8 @@ export class Renderer {
       this.historyValid = true;
     }
 
-    // ---- bloom
-    if (s.bloom) {
+    // ---- bloom (the downsample chain also feeds exposure metering, so it always runs)
+    {
       let src = sceneTex;
       for (let i = 0; i < t.bloom.length; i++) {
         t.bloom[i].bind();
@@ -763,18 +764,14 @@ export class Renderer {
         this.fullscreen();
         src = t.bloom[i].texture;
       }
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      for (let i = t.bloom.length - 1; i > 0; i--) {
-        t.bloom[i - 1].bind();
-        this.prog.bloomUp.use().tex('uSrc', t.bloom[i].texture, gl.TEXTURE_2D, this.linearSampler).f1('uRadius', 1.0);
-        this.fullscreen();
-      }
-      gl.disable(gl.BLEND);
     }
-
-    // ---- exposure (meter the 1/16 bloom level)
-    const expSrc = s.bloom ? t.bloom[Math.min(4, t.bloom.length - 1)].texture : null;
+    // ---- exposure: meter the first bloom level small enough for the 64x64 metering loop
+    let meter = t.bloom.length - 1;
+    for (let i = 0; i < t.bloom.length; i++) {
+      if (t.bloom[i].width <= 64 && t.bloom[i].height <= 64) { meter = i; break; }
+    }
+    // metering reads the downsampled chain before the upsample pass adds into it
+    const expSrc = t.bloom[meter].texture;
     const eCur = this.exposure[this.exposureIndex], ePrev = this.exposure[1 - this.exposureIndex];
     if (expSrc) {
       eCur.bind();
@@ -789,6 +786,17 @@ export class Renderer {
       this.fullscreen();
       this.exposureIndex = 1 - this.exposureIndex;
       this.exposureReset = false;
+    }
+
+    if (s.bloom) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      for (let i = t.bloom.length - 1; i > 0; i--) {
+        t.bloom[i - 1].bind();
+        this.prog.bloomUp.use().tex('uSrc', t.bloom[i].texture, gl.TEXTURE_2D, this.linearSampler).f1('uRadius', 1.0);
+        this.fullscreen();
+      }
+      gl.disable(gl.BLEND);
     }
 
     // ---- tone map into LDR (+ selection outline on top)

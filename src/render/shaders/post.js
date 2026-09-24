@@ -14,7 +14,8 @@ out vec4 oColor;
 void main() {
   ivec2 full = ivec2(gl_FragCoord.xy) * 2;
   float depth = texelFetch(uDepth, full, 0).r;
-  if (depth >= 1.0) { oColor = vec4(1.0); return; }
+  // sky, and the held block (drawn in the first 2% of the depth range), get no AO
+  if (depth >= 1.0 || depth < 0.021) { oColor = vec4(1.0, linearDepth(depth), 0.0, 1.0); return; }
   vec2 uv = (vec2(full) + 0.5) * uScreen.zw;
   vec3 P = reconstructRel(uv, depth);
   vec3 N = octDecode(texelFetch(uGNormal, full, 0).zw);

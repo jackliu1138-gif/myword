@@ -31,13 +31,15 @@ float cloudDensity(vec3 p, bool detail) {
   float d = saturate(remap(shape * profile, 1.0 - coverage * 0.85, 1.0, 0.0, 1.0)) * coverage;
   if (d <= 0.0) return 0.0;
   if (detail) {
-    vec3 dp = np * 6.0 + vec3(uCamPos.w * 0.004, -uCamPos.w * 0.002, 0.0);
+    // high-frequency erosion: wispy undersides, billowy cauliflower tops
+    vec3 dp = np * 6.5 + vec3(uCamPos.w * 0.004, -uCamPos.w * 0.002, 0.0);
     vec4 dn = texture(uNoise3D, dp);
     float dfbm = dn.g * 0.625 + dn.b * 0.25 + dn.a * 0.125;
-    float erode = mix(dfbm, 1.0 - dfbm, saturate(h * 3.0)) * 0.35;
+    float erode = mix(dfbm, 1.0 - dfbm, saturate(h * 3.0)) * 0.42;
     d = remap(d, erode, 1.0, 0.0, 1.0);
   }
-  return max(d, 0.0);
+  // dense interiors make crisp silhouettes and dark, self-shadowed bases
+  return max(d, 0.0) * 2.8;
 }
 
 // Approximate shadow cast by the cloud layer onto a point (used by terrain and god rays).
@@ -47,7 +49,7 @@ float cloudShadow(vec3 world) {
   float t = (mid - world.y) / max(L.y, 0.08);
   vec3 p = world + L * t;
   float d = cloudDensity(p, false);
-  return mix(1.0, exp(-d * 9.0), smoothstep(0.02, 0.15, L.y) * 0.85 + 0.15);
+  return mix(1.0, exp(-d * 3.5), smoothstep(0.02, 0.15, L.y) * 0.85 + 0.15);
 }
 `;
 
@@ -104,7 +106,7 @@ void main() {
   float phase = mix(hgPhase(cosT, 0.72), hgPhase(cosT, -0.2), 0.32) + 0.03;
   vec3 lightCol = uLightColor.rgb * 1.15;
   vec3 ambTop = uSkyColor.rgb * 0.95;
-  vec3 ambBot = mix(uHorizonColor.rgb, uGroundColor.rgb, 0.4) * 0.55;
+  vec3 ambBot = mix(uHorizonColor.rgb, uGroundColor.rgb, 0.4) * 0.42;
 
   float T = 1.0;
   vec3 S = vec3(0.0);
@@ -120,7 +122,7 @@ void main() {
       float h = saturate((p.y - base) / (top - base));
       float beer = exp(-od * SIGMA) ;
       float beer2 = exp(-od * SIGMA * 0.25) * 0.3;
-      float powder = 1.0 - exp(-d * 18.0);
+      float powder = 1.0 - exp(-d * 6.0);
       vec3 sun = lightCol * phase * max(beer, beer2) * mix(1.0, powder, 0.6) * 4.0;
       vec3 amb = mix(ambBot, ambTop, h) * (0.55 + 0.45 * h);
       float ext = d * SIGMA;
