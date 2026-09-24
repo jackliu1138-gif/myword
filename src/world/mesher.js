@@ -16,6 +16,12 @@ const RSY = RW * RW; // y stride
 const REGION = RSY * H;
 
 export const VERTEX_BYTES = 16;
+// Vertex positions are stored in 1/16 block units plus this bias (2 blocks), so geometry that
+// reaches past a chunk's corner (leaf cards) still fits the unsigned format.
+export const POS_BIAS = 32;
+// Per grass block that can carry 3D grass blades: x, y, z, variant, temperature, humidity, sky, block light.
+export const GRASS_BYTES = 8;
+const MAX_GRASS = CS * CS * 6;
 
 // Per-block lookups for the mesher
 const TINT_OF = new Uint8Array(256);
@@ -85,7 +91,7 @@ class VertexBuffer {
   push(x, y, z, u, v, layer, faceFlags, aoFlags, sky, block, temp, hum) {
     const i = this.count++;
     const o16 = i * 8, o8 = i * 16;
-    this.u16[o16] = x; this.u16[o16 + 1] = y; this.u16[o16 + 2] = z;
+    this.u16[o16] = x + POS_BIAS; this.u16[o16 + 1] = y + POS_BIAS; this.u16[o16 + 2] = z + POS_BIAS;
     const b = this.u8;
     b[o8 + 6] = u; b[o8 + 7] = v; b[o8 + 8] = layer; b[o8 + 9] = faceFlags;
     b[o8 + 10] = aoFlags; b[o8 + 11] = sky; b[o8 + 12] = block; b[o8 + 13] = temp;
@@ -106,6 +112,9 @@ export class ChunkMesher {
     this.queue = new Int32Array(1 << 19);
     this.buffers = [new VertexBuffer(1 << 21), new VertexBuffer(1 << 20), new VertexBuffer(1 << 18)];
     this.climate = new Uint8Array(CS * CS * 2);
+    this.grass = new Uint8Array(MAX_GRASS * GRASS_BYTES);
+    this.grassCount = 0;
+    this.options = { fancyLeaves: true };
   }
 
   // chunks: array of 9 Uint8Arrays, index (dz+1)*3 + (dx+1)
@@ -225,12 +234,15 @@ export class ChunkMesher {
   }
 
   // Build meshes for the centre chunk. Returns transferable buffers.
-  mesh(cx, cz, chunks) {
+  // options.fancyLeaves adds leaf cards that break up the cube outline of tree canopies.
+  mesh(cx, cz, chunks, options) {
+    if (options) this.options = { ...this.options, ...options };
     this.loadRegion(chunks);
     this.computeLight();
     this.computeClimate(cx, cz);
     const R = this.blocks;
     for (const b of this.buffers) b.reset();
+    this.grassCount = 0;
     let minY = H, maxY = 0;
 
     for (let y = 0; y < H; y++) {
@@ -245,6 +257,7 @@ export class ChunkMesher {
           let emitted = false;
           if (shape === SHAPE.CUBE || shape === SHAPE.CACTUS) {
             emitted = this.cube(ri, b, x, y, z, temp, hum, shape === SHAPE.CACTUS);
+            if (b === BLOCK.GRASS && y < H - 1) this.grassSpot(ri, x, y, z, temp, hum);
           } else if (shape === SHAPE.LIQUID) {
             emitted = this.liquid(ri, b, x, y, z, temp, hum);
           } else if (shape === SHAPE.CROSS) {
@@ -275,6 +288,8 @@ export class ChunkMesher {
       opaque: this.buffers[0].take(),
       cutout: this.buffers[1].take(),
       translucent: this.buffers[2].take(),
+      grass: this.grass.slice(0, this.grassCount * GRASS_BYTES).buffer,
+      grassCount: this.grassCount,
       minY: minY === H ? 0 : minY,
       maxY: minY === H ? 0 : maxY + 1,
     };
@@ -334,7 +349,61 @@ export class ChunkMesher {
         buf.push(px, py, pz, uv[0] * 16, uv[1] * 16, tex, faceFlags, ao[v] | (c[1] ? 4 : 0) | (mat << 3), sl[v], bl[v], temp, hum);
       }
     }
+    if (leaves && this.options.fancyLeaves && this.exposedToAir(ri)) this.leafCards(ri, b, x, y, z, temp, hum);
     return any;
+  }
+
+  exposedToAir(ri) {
+    const R = this.blocks;
+    for (let f = 0; f < 6; f++) if (R[ri + FACE_NOFF[f]] === 0) return true;
+    return false;
+  }
+
+  // A grass block open to the sky above (or under a plant) gets a patch of 3D blades.
+  grassSpot(ri, x, y, z, temp, hum) {
+    const above = this.blocks[ri + RSY];
+    if (above !== 0 && SHAPE_OF[above] !== SHAPE.CROSS) return;
+    if (this.grassCount >= MAX_GRASS) return;
+    const o = this.grassCount++ * GRASS_BYTES;
+    const g = this.grass;
+    g[o] = x; g[o + 1] = y; g[o + 2] = z;
+    g[o + 3] = above ? 1 : 0; // a flower or fern here: fewer blades
+    g[o + 4] = temp; g[o + 5] = hum;
+    // light levels 0..15 scaled to bytes like the vertex light
+    g[o + 6] = this.sky[ri + RSY] * 17; g[o + 7] = this.blk[ri + RSY] * 17;
+  }
+
+  // Two crossed, slightly tilted cards per exposed leaf block, reaching past the block so canopies
+  // read as foliage rather than cubes.
+  leafCards(ri, b, x, y, z, temp, hum) {
+    const buf = this.buffers[LAYER.CUTOUT];
+    const tex = FACE_TEX[b * 4 + 2];
+    const s = Math.round(this.sky[ri] * 17), k = Math.round(this.blk[ri] * 17);
+    const tint = TINT_OF[b], wave = WAVE_OF[b], mat = MAT_OF[b];
+    const faceFlags = 2 | (wave << 3) | (tint << 5);
+    const h1 = hash2(x * 31 + y * 7, z * 17 - y * 3, 99), h2 = hash2(z * 23 + y, x * 13 + y * 5, 77), h3 = hash2(x + z * 5, y * 11, 55);
+    const cxp = x * 16 + 8 + (h1 - 0.5) * 4, cyp = y * 16 + 8 + (h3 - 0.5) * 3, czp = z * 16 + 8 + (h2 - 0.5) * 4;
+    const yaw = h1 * Math.PI;
+    const half = 11.5, halfH = 10.5;
+    buf.ensure(16);
+    for (let p = 0; p < 2; p++) {
+      const a = yaw + p * Math.PI / 2;
+      const dx = Math.cos(a) * half, dz = Math.sin(a) * half;
+      // tilt the card a little around its horizontal axis
+      const tilt = (p ? h2 : h3) - 0.5;
+      const tx = -Math.sin(a) * tilt * 6, tz = Math.cos(a) * tilt * 6;
+      const q = [
+        [cxp - dx - tx, cyp - halfH, czp - dz - tz, 0, 16], [cxp + dx - tx, cyp - halfH, czp + dz - tz, 16, 16],
+        [cxp + dx + tx, cyp + halfH, czp + dz + tz, 16, 0], [cxp - dx + tx, cyp + halfH, czp - dz + tz, 0, 0],
+      ];
+      // both windings so back-face culling can stay on
+      for (const order of [[0, 1, 2, 3], [1, 0, 3, 2]]) {
+        for (const vi of order) {
+          const v = q[vi];
+          buf.push(Math.round(v[0]), Math.round(v[1]), Math.round(v[2]), v[3], v[4], tex, faceFlags, 3 | (vi >= 2 ? 4 : 0) | (mat << 3), s, k, temp, hum);
+        }
+      }
+    }
   }
 
   liquid(ri, b, x, y, z, temp, hum) {

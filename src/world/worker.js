@@ -17,11 +17,11 @@ function handle(msg) {
       return { result: { id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, blocks }, transfer: [blocks.buffer] };
     }
     case 'mesh': {
-      const m = mesher.mesh(msg.cx, msg.cz, msg.chunks);
+      const m = mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options);
       m.id = msg.id;
       m.type = 'mesh';
       m.version = msg.version;
-      return { result: m, transfer: [m.opaque, m.cutout, m.translucent, m.light.buffer] };
+      return { result: m, transfer: [m.opaque, m.cutout, m.translucent, m.grass, m.light.buffer] };
     }
     default:
       return null;

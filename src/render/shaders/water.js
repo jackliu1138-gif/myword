@@ -17,7 +17,7 @@ out vec2 vUV;
 out vec2 vLight;
 flat out uvec3 vFlags;
 void main() {
-  vec3 rel = uChunkOffset + aPos * (1.0 / 16.0);
+  vec3 rel = uChunkOffset + (aPos - 32.0) * (1.0 / 16.0);
   vec3 world = rel + uCamPos.xyz;
   uint ff = aInfo0.y;
   bool top = (aInfo0.z & 4u) != 0u;

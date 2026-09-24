@@ -42,7 +42,10 @@ const full = html
   .replace(/<!--SCRIPT-->[\s\S]*?<!--\/SCRIPT-->/, () => workerTag + '\n' + mainTag);
 
 const title = (html.match(/<title>[\s\S]*?<\/title>/) || [''])[0];
-const fragment = [title, section('FONTS').trim(), styleTag, section('BODY').trim(), workerTag, mainTag].join('\n');
+// hosts that supply the skeleton get the font stylesheet as a tag (the full page loads it from script)
+const fontCss = (mainSrc.match(/https:\/\/fonts\.googleapis\.com\/css2\?[^"'`]+/) || [''])[0];
+const fontTag = fontCss ? `<link rel="stylesheet" href="${fontCss.replace(/&/g, '&amp;')}" data-fonts="1">` : '';
+const fragment = [title, section('FONTS').trim(), fontTag, styleTag, section('BODY').trim(), workerTag, mainTag].join('\n');
 
 await mkdir('dist/icons', { recursive: true });
 await writeFile('dist/index.html', full);

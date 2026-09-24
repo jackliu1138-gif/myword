@@ -327,7 +327,9 @@ void main() {
   vec3 Ng = octDecode(g1.zw);
   float skyL = g2.r;
   float blockL = g2.g;
-  float ao = g2.b;
+  int aoPacked = int(g2.b * 255.0 + 0.5);
+  float ao = float(aoPacked >> 4) / 15.0;
+  float selfShadow = float(aoPacked & 15) / 15.0;
   int packed = int(g2.a * 255.0 + 0.5);
   int mat = packed >> 4;
   float metal = float(packed & 15) / 15.0;
@@ -363,6 +365,16 @@ void main() {
     }
   }
 
+  // glints: scattered ice crystals in snow and quartz grains in sand catch the light as you move
+  if ((mat == MAT_SNOW || mat == MAT_SAND) && dist < 48.0 && Ng.y > 0.5) {
+    vec3 cell = floor(world * 22.0);
+    float h = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+    if (h > (mat == MAT_SNOW ? 0.965 : 0.985)) {
+      rough = 0.035;
+      N = normalize(Ng + (vec3(fract(h * 13.1), fract(h * 71.7), fract(h * 37.3)) - 0.5) * 0.9);
+    }
+  }
+
   vec3 L = uLightDir.xyz;
   float NdotL = dot(N, L);
   float NgdotL = dot(Ng, L);
@@ -373,7 +385,7 @@ void main() {
     if (uUseClouds > 0.5) shadow *= cloudShadow(world);
   }
   // no direct light where the sky can't reach (deep caves) -- shadow map may not cover it
-  shadow *= smoothstep(0.0, 0.25, skyL);
+  shadow *= smoothstep(0.0, 0.25, skyL) * selfShadow;
   vec3 lightCol = uLightColor.rgb * lightTint;
 
   // --- direct: GGX specular + Lambert diffuse

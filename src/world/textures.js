@@ -4,6 +4,7 @@
 
 import { hash2, hash3, mulberry32 } from './noise.js';
 import { TEXTURE_NAMES, WOOL_COLORS } from './blocks.js';
+import { generateHdTextures } from './textures_hd.js';
 
 export const TEX_SIZE = 16;
 const S = TEX_SIZE;
@@ -31,7 +32,7 @@ function ramp(stops, t) {
   }
   return stops[stops.length - 1][1];
 }
-function strSeed(s) {
+export function strSeed(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
@@ -87,28 +88,32 @@ function voronoi(px, py, n, seed, jitter = 0.8) {
   return { id, f1, f2, fx, fy };
 }
 
-class Tex {
-  constructor(name) {
+export class Tex {
+  constructor(name, size = S) {
+    const n = size * size;
     this.name = name;
-    this.albedo = new Float32Array(S * S * 4); // 0..255 sRGB + alpha 0..1
-    this.height = new Float32Array(S * S).fill(0.5);
-    this.rough = new Float32Array(S * S).fill(0.85);
-    this.metal = new Float32Array(S * S);
-    this.emit = new Float32Array(S * S);
+    this.size = size;
+    this.albedo = new Float32Array(n * 4); // 0..255 sRGB + alpha 0..1
+    this.height = new Float32Array(n).fill(0.5);
+    this.rough = new Float32Array(n).fill(0.85);
+    this.metal = new Float32Array(n);
+    this.emit = new Float32Array(n);
     this.normalStrength = 1.0;
     this.cutout = false;
     this.seed = strSeed(name);
   }
   set(x, y, c, a = 1) {
-    const i = (y * S + x) * 4;
+    const i = (y * this.size + x) * 4;
     this.albedo[i] = c[0]; this.albedo[i + 1] = c[1]; this.albedo[i + 2] = c[2]; this.albedo[i + 3] = a;
   }
   get(x, y) {
-    const i = (wrap(y, S) * S + wrap(x, S)) * 4;
+    const z = this.size;
+    const i = (wrap(y, z) * z + wrap(x, z)) * 4;
     return [this.albedo[i], this.albedo[i + 1], this.albedo[i + 2], this.albedo[i + 3]];
   }
   each(fn) {
-    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) fn(x, y, y * S + x);
+    const z = this.size;
+    for (let y = 0; y < z; y++) for (let x = 0; x < z; x++) fn(x, y, y * z + x);
   }
 }
 
@@ -819,13 +824,16 @@ for (const [c, h] of WOOL_COLORS) GEN[c + '_wool'] = (t) => woolPattern(t, h);
 
 // ---------- derived maps + packing ----------
 function deriveNormals(t) {
-  const n = new Float32Array(S * S * 3);
-  const ao = new Float32Array(S * S);
-  const hAt = (x, y) => t.height[wrap(y, S) * S + wrap(x, S)];
-  const k = t.normalStrength;
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const i = y * S + x;
+  const Z = t.size;
+  const n = new Float32Array(Z * Z * 3);
+  const ao = new Float32Array(Z * Z);
+  const hAt = (x, y) => t.height[wrap(y, Z) * Z + wrap(x, Z)];
+  // the same height range over more texels means gentler slopes per texel
+  const k = t.normalStrength * (Z / S);
+  const aoK = Math.min(t.normalStrength, 2);
+  for (let y = 0; y < Z; y++) {
+    for (let x = 0; x < Z; x++) {
+      const i = y * Z + x;
       if (t.cutout && t.albedo[i * 4 + 3] < 0.5) {
         n[i * 3] = 0; n[i * 3 + 1] = 0; n[i * 3 + 2] = 1; ao[i] = 1;
         continue;
@@ -835,11 +843,12 @@ function deriveNormals(t) {
       let nx = -dx * k, ny = -dy * k, nz = 1;
       const l = Math.hypot(nx, ny, nz);
       n[i * 3] = nx / l; n[i * 3 + 1] = ny / l; n[i * 3 + 2] = nz / l;
-      // cavity: lower than neighbourhood average -> occluded
-      let avg = 0;
-      for (let j = -1; j <= 1; j++) for (let q = -1; q <= 1; q++) avg += hAt(x + q, y + j);
-      avg /= 9;
-      ao[i] = clamp01(1 - Math.max(0, avg - t.height[i]) * 1.6 * Math.min(k, 2));
+      // cavity: lower than neighbourhood average -> occluded (a wider neighbourhood on big textures)
+      const r = Z > S ? 2 : 1;
+      let avg = 0, cnt = 0;
+      for (let j = -r; j <= r; j++) for (let q = -r; q <= r; q++) { avg += hAt(x + q, y + j); cnt++; }
+      avg /= cnt;
+      ao[i] = clamp01(1 - Math.max(0, avg - t.height[i]) * 1.6 * aoK);
     }
   }
   return { n, ao };
@@ -848,16 +857,17 @@ function deriveNormals(t) {
 // Fill RGB of transparent texels from their neighbours so mip filtering doesn't bleed black.
 function dilate(t) {
   const a = t.albedo;
-  for (let pass = 0; pass < 4; pass++) {
+  const Z = t.size;
+  for (let pass = 0; pass < (Z > S ? 8 : 4); pass++) {
     const copy = a.slice();
-    for (let y = 0; y < S; y++) {
-      for (let x = 0; x < S; x++) {
-        const i = (y * S + x) * 4;
+    for (let y = 0; y < Z; y++) {
+      for (let x = 0; x < Z; x++) {
+        const i = (y * Z + x) * 4;
         if (copy[i + 3] >= 0.5) continue;
         let r = 0, g = 0, b = 0, c = 0;
         for (let j = -1; j <= 1; j++) {
           for (let q = -1; q <= 1; q++) {
-            const k = (wrap(y + j, S) * S + wrap(x + q, S)) * 4;
+            const k = (wrap(y + j, Z) * Z + wrap(x + q, Z)) * 4;
             if (copy[k + 3] >= 0.5 || (copy[k] + copy[k + 1] + copy[k + 2]) > 0) {
               if (copy[k + 3] < 0.5 && pass === 0) continue;
               r += copy[k]; g += copy[k + 1]; b += copy[k + 2]; c++;
@@ -870,7 +880,9 @@ function dilate(t) {
   }
 }
 
-export function generateTextures() {
+// pack: 'pixel' (16x16 pixel art) or 'hd' (64x64 detailed, see textures_hd.js)
+export function generateTextures(pack = 'pixel') {
+  if (pack === 'hd') return generateHdTextures();
   const textures = TEXTURE_NAMES.map((name) => {
     const t = new Tex(name);
     const gen = GEN[name];
@@ -885,6 +897,7 @@ export function generateTextures() {
 // Returns { levels: [{ size, albedo, normal, material }], count }.
 export function buildTextureArrays(textures) {
   const count = textures.length;
+  const S = textures[0].size;
   const base = {
     albedo: new Uint8Array(S * S * 4 * count),
     normal: new Uint8Array(S * S * 4 * count),
@@ -980,8 +993,9 @@ function preserveCoverage(base, bs, mip, ms, layer) {
 // ---------- 2D canvas helpers for UI icons ----------
 export function textureToImageData(textures, name, tint) {
   const t = textures.find((x) => x.name === name);
-  const img = new ImageData(S, S);
-  for (let i = 0; i < S * S; i++) {
+  const Z = t.size;
+  const img = new ImageData(Z, Z);
+  for (let i = 0; i < Z * Z; i++) {
     let r = t.albedo[i * 4], g = t.albedo[i * 4 + 1], b = t.albedo[i * 4 + 2];
     let a = t.albedo[i * 4 + 3];
     if (tint) {

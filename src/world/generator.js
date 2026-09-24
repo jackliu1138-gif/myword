@@ -372,8 +372,8 @@ export class TerrainGenerator {
       else if (b !== B.OAK_LEAVES && b !== B.BIRCH_LEAVES && b !== B.SPRUCE_LEAVES && (cur === B.OAK_LEAVES || cur === B.BIRCH_LEAVES || cur === B.SPRUCE_LEAVES)) blocks[i] = b;
     };
     const c = {};
-    // trees in cells overlapping the chunk plus margin
-    const margin = 5;
+    // trees in cells overlapping the chunk plus margin (the widest trees reach 7 blocks out)
+    const margin = 8;
     const cx0 = Math.floor((x0 - margin) / TREE_CELL), cx1 = Math.floor((x0 + CS + margin) / TREE_CELL);
     const cz0 = Math.floor((z0 - margin) / TREE_CELL), cz1 = Math.floor((z0 + CS + margin) / TREE_CELL);
     for (let tcz = cz0; tcz <= cz1; tcz++) {
@@ -384,17 +384,28 @@ export class TerrainGenerator {
         this.column(wx, wz, c);
         if (c.height <= SEA_LEVEL || c.mountain > 0.3 || this.caveEntrance(wx, wz)) continue;
         const dens = [0, 0, 0.05, 0.85, 0.8, 0.72, 0.38, 0.14, 0.06, 0][c.biome];
-        if (r0 >= dens) continue;
+        // bushes fill some of the gaps between trees
+        const bushDens = [0, 0, 0.06, 0.1, 0.08, 0.08, 0, 0, 0.03, 0][c.biome];
+        if (r0 >= dens + bushDens) continue;
+        const bush = r0 >= dens;
         // slope check (trees don't grow on cliffs)
         const hx = this.column(wx + 2, wz, {}).height, hz = this.column(wx, wz + 2, {}).height;
         if (Math.abs(hx - c.height) > 3 || Math.abs(hz - c.height) > 3) continue;
         const rnd = mulberry32(hash2(wx, wz, this.seed ^ 0xa11) * 4294967296);
         const y = c.height + 1;
+        if (bush) {
+          const spruce = c.biome === BIOME.TAIGA;
+          this.bush(set, wx, y, wz, rnd, spruce ? B.SPRUCE_LOG : B.OAK_LOG, spruce ? B.SPRUCE_LEAVES : B.OAK_LEAVES);
+          continue;
+        }
         switch (c.biome) {
           case BIOME.DESERT:
             this.cactus(set, wx, y, wz, rnd);
             break;
           case BIOME.TAIGA:
+            if (rnd() < 0.14 && this.flatFor(wx, wz, c.height, 2)) this.megaSpruce(set, wx, y, wz, rnd);
+            else this.spruce(set, wx, y, wz, rnd);
+            break;
           case BIOME.SNOWY:
             this.spruce(set, wx, y, wz, rnd);
             break;
@@ -452,74 +463,137 @@ export class TerrainGenerator {
     }
   }
 
+  // Ground under a 2x2 trunk is level enough.
+  flatFor(x, z, h, size) {
+    const c = {};
+    for (let dz = 0; dz < size; dz++) for (let dx = 0; dx < size; dx++) {
+      if (this.column(x + dx, z + dz, c).height !== h) return false;
+    }
+    return true;
+  }
+
+  // Ellipsoid of leaves with a ragged edge.
+  blob(set, cx, cy, cz, rx, ry, rz, leaves, rnd) {
+    const ix = Math.ceil(rx), iy = Math.ceil(ry), iz = Math.ceil(rz);
+    for (let dy = -iy; dy <= iy; dy++) {
+      for (let dz = -iz; dz <= iz; dz++) {
+        for (let dx = -ix; dx <= ix; dx++) {
+          const d = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) + (dz * dz) / (rz * rz);
+          if (d < 1 - rnd() * 0.28) set(cx + dx, cy + dy, cz + dz, leaves);
+        }
+      }
+    }
+  }
+
+  // Oak and birch. Oaks get a broad crown of several leaf clusters on short branches;
+  // birches a tall, slim trunk with a narrow crown.
   oak(set, x, y, z, rnd, log, leaves, height) {
+    const birch = log === B.BIRCH_LOG;
+    if (birch) height += 1 + Math.floor(rnd() * 3);
     set(x, y - 1, z, B.DIRT, true);
     for (let k = 0; k < height; k++) set(x, y + k, z, log, true);
     const topY = y + height - 1;
-    for (let dy = -2; dy <= 1; dy++) {
-      const r = dy >= 0 ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const corner = Math.abs(dx) === r && Math.abs(dz) === r;
-          if (corner && (dy === 1 || rnd() < 0.5)) continue;
-          if (dy === 1 && r === 1 && corner) continue;
-          set(x + dx, topY + dy, z + dz, leaves);
-        }
+    if (birch) {
+      this.blob(set, x, topY - 1, z, 2.1 + rnd() * 0.4, 2.8 + rnd() * 0.8, 2.1 + rnd() * 0.4, leaves, rnd);
+      this.blob(set, x + Math.round(rnd() * 2 - 1), topY + 1, z + Math.round(rnd() * 2 - 1), 1.3, 1.6, 1.3, leaves, rnd);
+      set(x, topY + 2, z, leaves);
+      return;
+    }
+    this.blob(set, x, topY, z, 2.5 + rnd() * 0.7, 1.8 + rnd() * 0.5, 2.5 + rnd() * 0.7, leaves, rnd);
+    const branches = 1 + Math.floor(rnd() * 3);
+    for (let b = 0; b < branches; b++) {
+      const ang = rnd() * Math.PI * 2;
+      const len = 1 + Math.floor(rnd() * 2);
+      const by = topY - 1 - Math.floor(rnd() * 2);
+      let bx = x, bz = z;
+      for (let s = 1; s <= len; s++) {
+        bx = Math.round(x + Math.cos(ang) * s * 1.3);
+        bz = Math.round(z + Math.sin(ang) * s * 1.3);
+        set(bx, by + s - 1, bz, log, true);
       }
+      this.blob(set, bx, by + len, bz, 1.6 + rnd() * 0.6, 1.3 + rnd() * 0.4, 1.6 + rnd() * 0.6, leaves, rnd);
     }
     set(x, topY + 1, z, leaves);
+    set(x, topY + 2, z, leaves);
   }
 
   bigOak(set, x, y, z, rnd) {
-    const height = 7 + Math.floor(rnd() * 4);
+    const height = 8 + Math.floor(rnd() * 5);
     set(x, y - 1, z, B.DIRT, true);
     for (let k = 0; k < height; k++) set(x, y + k, z, B.OAK_LOG, true);
-    const blobs = [[x, y + height, z, 3.2]];
-    const branches = 2 + Math.floor(rnd() * 3);
+    const blobs = [[x, y + height, z, 3.0 + rnd() * 0.6]];
+    const branches = 3 + Math.floor(rnd() * 3);
     for (let b = 0; b < branches; b++) {
-      const ang = rnd() * Math.PI * 2;
-      const len = 2 + rnd() * 2;
-      const by = y + height - 2 - Math.floor(rnd() * 3);
-      let bx = x, bz = z;
+      const ang = (b / branches) * Math.PI * 2 + rnd() * 0.9;
+      const len = 3 + rnd() * 2.5;
+      const by = y + Math.floor(height * (0.45 + rnd() * 0.35));
+      let bx = x, bz = z, byy = by;
       for (let s = 1; s <= len; s++) {
         bx = Math.round(x + Math.cos(ang) * s);
         bz = Math.round(z + Math.sin(ang) * s);
-        set(bx, by + Math.floor(s / 2), bz, B.OAK_LOG, true);
+        byy = by + Math.floor(s * 0.6);
+        set(bx, byy, bz, B.OAK_LOG, true);
       }
-      blobs.push([bx, by + Math.floor(len / 2) + 1, bz, 2.3 + rnd() * 0.6]);
+      blobs.push([bx, byy + 1, bz, 2.1 + rnd() * 0.8]);
     }
-    for (const [bx, by, bz, r] of blobs) {
-      const ri = Math.ceil(r);
-      for (let dy = -ri + 1; dy <= ri - 1; dy++) {
-        for (let dz = -ri; dz <= ri; dz++) {
-          for (let dx = -ri; dx <= ri; dx++) {
-            const d = Math.sqrt(dx * dx + dy * dy * 1.7 + dz * dz);
-            if (d < r - rnd() * 0.6) set(bx + dx, by + dy, bz + dz, B.OAK_LEAVES);
-          }
-        }
-      }
-    }
+    for (const [bx, by, bz, r] of blobs) this.blob(set, bx, by, bz, r, r * 0.72, r, B.OAK_LEAVES, rnd);
   }
 
+  // Spruce: stacked, slightly uneven tiers that widen towards the bottom.
   spruce(set, x, y, z, rnd) {
-    const height = 7 + Math.floor(rnd() * 5);
+    const height = 8 + Math.floor(rnd() * 6);
     set(x, y - 1, z, B.DIRT, true);
     for (let k = 0; k < height - 1; k++) set(x, y + k, z, B.SPRUCE_LOG, true);
     const topY = y + height;
     set(x, topY, z, B.SPRUCE_LEAVES);
     set(x, topY - 1, z, B.SPRUCE_LEAVES);
-    let r = 0;
-    for (let yy = topY - 2; yy >= y + 2; yy--) {
+    const bare = 2 + Math.floor(rnd() * 2);
+    const maxR = 2 + (height > 11 ? 1 : 0) + (rnd() < 0.3 ? 1 : 0);
+    for (let yy = topY - 2; yy >= y + bare; yy--) {
       const layer = topY - 2 - yy;
-      r = layer % 2 === 0 ? Math.min(1 + Math.floor(layer / 3), 3) : Math.max(1, Math.min(Math.floor(layer / 3), 2));
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (Math.abs(dx) + Math.abs(dz) > r + (r > 1 ? 1 : 0)) continue;
+      const grow = Math.min(maxR, 1 + layer / (height / (maxR + 0.5)));
+      const r = layer % 2 === 0 ? grow : Math.max(1, grow - 1.2);
+      const ox = rnd() * 0.8 - 0.4, oz = rnd() * 0.8 - 0.4;
+      const ir = Math.ceil(r);
+      for (let dz = -ir; dz <= ir; dz++) {
+        for (let dx = -ir; dx <= ir; dx++) {
           if (dx === 0 && dz === 0) continue;
-          set(x + dx, yy, z + dz, B.SPRUCE_LEAVES);
+          const d = Math.hypot(dx - ox, dz - oz);
+          if (d < r + 0.35 - rnd() * 0.3) set(x + dx, yy, z + dz, B.SPRUCE_LEAVES);
         }
       }
     }
+  }
+
+  // Giant spruce with a 2x2 trunk and a crown high above a bare stem.
+  megaSpruce(set, x, y, z, rnd) {
+    const height = 16 + Math.floor(rnd() * 9);
+    for (let dz = 0; dz < 2; dz++) for (let dx = 0; dx < 2; dx++) {
+      set(x + dx, y - 1, z + dz, B.DIRT, true);
+      for (let k = 0; k < height - 2; k++) set(x + dx, y + k, z + dz, B.SPRUCE_LOG, true);
+    }
+    const topY = y + height;
+    const cx = x + 0.5, cz = z + 0.5;
+    const crownBottom = y + Math.floor(height * 0.4);
+    for (let yy = topY; yy >= crownBottom; yy--) {
+      const layer = topY - yy;
+      const t = layer / (topY - crownBottom);
+      const r = (0.8 + t * 4.2) * (layer % 3 === 2 ? 0.7 : 1);
+      const ir = Math.ceil(r) + 1;
+      for (let dz = -ir; dz <= ir + 1; dz++) {
+        for (let dx = -ir; dx <= ir + 1; dx++) {
+          const d = Math.hypot(x + dx - cx, z + dz - cz);
+          if (d < r + 0.3 - rnd() * 0.5) set(x + dx, yy, z + dz, B.SPRUCE_LEAVES);
+        }
+      }
+    }
+  }
+
+  // A low shrub: one log and a round clump of leaves.
+  bush(set, x, y, z, rnd, log, leaves) {
+    set(x, y, z, log, true);
+    const r = 1.1 + rnd() * 0.8;
+    this.blob(set, x, y, z, r + 0.4, r * 0.8, r + 0.4, leaves, rnd);
   }
 
   cactus(set, x, y, z, rnd) {

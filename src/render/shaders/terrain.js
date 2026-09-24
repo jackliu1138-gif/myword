@@ -1,5 +1,5 @@
 // Terrain geometry passes: G-buffer fill and shadow map depth.
-import { HEADER, FRAME_UBO, UTIL, TINTS, WAVES, SHADOW, PIXEL_ART } from './common.js';
+import { HEADER, FRAME_UBO, UTIL, TINTS, WAVES, SHADOW, PIXEL_ART, GPACK } from './common.js';
 
 const ATTRIBS = `
 layout(location = 0) in vec3 aPos;     // 1/16 block units, chunk relative
@@ -29,7 +29,7 @@ out vec3 vLight;
 flat out uvec3 vFlags;
 
 void main() {
-  vec3 rel = uChunkOffset + aPos * (1.0 / 16.0);
+  vec3 rel = uChunkOffset + (aPos - 32.0) * (1.0 / 16.0);
   vec3 world = rel + uCamPos.xyz;
   uint ff = aInfo0.y;
   uint wave = (ff >> 3) & 3u;
@@ -50,10 +50,12 @@ ${cutout ? '#define CUTOUT' : ''}
 ${FRAME_UBO}
 ${UTIL}
 ${PIXEL_ART}
+${GPACK}
 ${FACE_TABLES}
 uniform sampler2DArray uAlbedo;
 uniform sampler2DArray uNormalMap;
 uniform sampler2DArray uMaterialMap;
+uniform vec4 uTexMode;   // x texels per block face, y 1 = pixel-art sampling, z parallax steps (0 = off), w parallax depth
 in vec2 vUV;
 in vec3 vRel;
 in vec3 vTint;
@@ -61,12 +63,73 @@ in vec3 vLight;
 flat in uvec3 vFlags;
 layout(location = 0) out vec4 oAlbedo;   // rgb albedo (sRGB), a roughness (emission for emissive)
 layout(location = 1) out vec4 oNormal;   // xy mapped normal (oct), zw geometric normal (oct)
-layout(location = 2) out vec4 oLight;    // sky light, block light, ao, material
+layout(location = 2) out vec4 oLight;    // sky light, block light, ao | self-shadow, material
+
+// Parallax occlusion mapping on the material map's height (alpha): steps into the surface along the
+// view ray, then marches towards the sun to find whether the found point is shadowed by the relief.
+vec2 parallax(vec2 uv, float layer, vec3 Vt, vec2 gx, vec2 gy, out float depthOut) {
+  float steps = mix(uTexMode.z, uTexMode.z * 0.4, Vt.z);
+  float dl = 1.0 / steps;
+  vec2 duv = Vt.xy / max(Vt.z, 0.25) * uTexMode.w * dl;
+  float d = 0.0;
+  float h = 1.0 - textureGrad(uMaterialMap, vec3(uv, layer), gx, gy).a;
+  vec2 prevUV = uv;
+  float prevH = h, prevD = 0.0;
+  for (int i = 0; i < 32; i++) {
+    if (float(i) >= steps || d >= h) break;
+    prevUV = uv; prevH = h; prevD = d;
+    uv -= duv;
+    d += dl;
+    h = 1.0 - textureGrad(uMaterialMap, vec3(uv, layer), gx, gy).a;
+  }
+  // linear refinement between the last two samples
+  float after = h - d, before = prevH - prevD;
+  float w = after / min(after - before, -1e-4);
+  uv = mix(uv, prevUV, clamp(w, 0.0, 1.0));
+  depthOut = mix(d, prevD, clamp(w, 0.0, 1.0));
+  return uv;
+}
+
+float parallaxShadow(vec2 uv, float layer, float depth, vec3 Lt, vec2 gx, vec2 gy) {
+  if (Lt.z <= 0.02) return 1.0;
+  float lit = 1.0;
+  vec2 duv = Lt.xy / Lt.z * uTexMode.w / 8.0;
+  float d = depth;
+  for (int i = 1; i <= 8; i++) {
+    d -= 1.0 / 8.0;
+    if (d <= 0.0) break;
+    float h = 1.0 - textureGrad(uMaterialMap, vec3(uv + duv * float(i), layer), gx, gy).a;
+    if (h < d - 0.02) lit = min(lit, 1.0 - (d - h) * 9.0);
+  }
+  return clamp(lit, 0.0, 1.0);
+}
 
 void main() {
   float layer = float(vFlags.x);
+  uint face = vFlags.y;
+  uint mat = vFlags.z;
+  vec3 N = FACE_N[face];
   vec2 gx = dFdx(vUV), gy = dFdy(vUV);
-  vec3 tc = vec3(pixelArtUV(vUV, 16.0), layer);
+  vec2 uv = vUV;
+  float dist = length(vRel);
+  float selfShadow = 1.0;
+#ifndef CUTOUT
+  if (uTexMode.z > 0.5 && dist < 18.0 && mat != 3u) {
+    vec3 T = FACE_T[face], B = FACE_B[face];
+    vec3 V = -vRel / max(dist, 1e-4);
+    vec3 Vt = vec3(dot(V, T), dot(V, B), dot(V, N));
+    if (Vt.z > 0.05) {
+      float depth;
+      vec2 puv = parallax(uv, layer, Vt, gx, gy, depth);
+      float fade = smoothstep(18.0, 12.0, dist);
+      uv = mix(uv, puv, fade);
+      vec3 L = uLightDir.xyz;
+      vec3 Lt = vec3(dot(L, T), dot(L, B), dot(L, N));
+      selfShadow = mix(1.0, parallaxShadow(uv, layer, depth, Lt, gx, gy), fade * uLightColor.a);
+    }
+  }
+#endif
+  vec3 tc = vec3(uTexMode.y > 0.5 ? pixelArtUV(uv, uTexMode.x) : uv, layer);
   vec4 albedo = textureGrad(uAlbedo, tc, gx, gy);
 #ifdef CUTOUT
   if (albedo.a < 0.5) discard;
@@ -75,9 +138,6 @@ void main() {
   float tintMask = albedo.a;
 #endif
   albedo.rgb *= mix(vec3(1.0), vTint, tintMask);
-  uint face = vFlags.y;
-  uint mat = vFlags.z;
-  vec3 N = FACE_N[face];
   vec4 nm = textureGrad(uNormalMap, tc, gx, gy);
   vec3 tn = nm.xyz * 2.0 - 1.0;
   vec3 mapped = normalize(FACE_T[face] * tn.x + FACE_B[face] * tn.y + N * tn.z);
@@ -86,12 +146,11 @@ void main() {
   float metal = m.g;
   if (mat == 2u) mapped = N; // plants: lit like the ground they stand on
   if (mat == 3u) rough = m.b; // emissive blocks store emission in the roughness slot
-  // fade normal detail with distance: reduces shimmering of 16px normal maps far away
-  float dist = length(vRel);
+  // fade normal detail with distance: reduces shimmering of small normal maps far away
   mapped = normalize(mix(mapped, N, smoothstep(24.0, 96.0, dist)));
   oAlbedo = vec4(albedo.rgb, rough);
   oNormal = vec4(octEncode(mapped), octEncode(N));
-  oLight = vec4(vLight.x, vLight.y, vLight.z * mix(1.0, nm.w, 0.8), (float(mat) * 16.0 + floor(metal * 15.0 + 0.5)) / 255.0);
+  oLight = vec4(vLight.x, vLight.y, packAO(vLight.z * mix(1.0, nm.w, 0.8), selfShadow), (float(mat) * 16.0 + floor(metal * 15.0 + 0.5)) / 255.0);
 }
 `;
 
@@ -105,7 +164,7 @@ ${ATTRIBS}
 out vec2 vUV;
 flat out float vLayer;
 void main() {
-  vec3 rel = uChunkOffset + aPos * (1.0 / 16.0);
+  vec3 rel = uChunkOffset + (aPos - 32.0) * (1.0 / 16.0);
   vec3 world = rel + uCamPos.xyz;
   uint ff = aInfo0.y;
   bool top = (aInfo0.z & 4u) != 0u;

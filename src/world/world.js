@@ -85,7 +85,7 @@ class WorkerPool {
       if (msg.type === 'gen') {
         this.onResult({ id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, blocks: this.fallback.gen.generateChunk(msg.cx, msg.cz) });
       } else if (msg.type === 'mesh') {
-        const m = this.fallback.mesher.mesh(msg.cx, msg.cz, msg.chunks);
+        const m = this.fallback.mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options);
         m.type = 'mesh';
         m.version = msg.version;
         this.onResult(m);
@@ -114,8 +114,9 @@ class Chunk {
 }
 
 export class World {
-  constructor(seed, { renderDistance = 8, workers = 3, edits = null } = {}) {
+  constructor(seed, { renderDistance = 8, workers = 3, edits = null, meshOptions = null } = {}) {
     this.seed = seed;
+    this.meshOptions = meshOptions || { fancyLeaves: true };
     this.generator = new TerrainGenerator(seed);
     this.chunks = new Map();
     this.edits = edits || new Map(); // chunkKey -> Map(index -> id)
@@ -260,6 +261,12 @@ export class World {
     return true;
   }
 
+  // Mesh options changed (e.g. fancy leaves): rebuild every loaded chunk's mesh.
+  setMeshOptions(opts) {
+    this.meshOptions = { ...this.meshOptions, ...opts };
+    for (const c of this.chunks.values()) if (c.blocks) c.version++;
+  }
+
   requestMesh(c) {
     const chunks = [];
     for (let dz = -1; dz <= 1; dz++) {
@@ -267,7 +274,7 @@ export class World {
     }
     c.meshInFlight = true;
     c.urgent = false;
-    this.pool.submit({ type: 'mesh', id: ++this.jobId, cx: c.cx, cz: c.cz, version: c.version, chunks }, chunks.map((a) => a.buffer));
+    this.pool.submit({ type: 'mesh', id: ++this.jobId, cx: c.cx, cz: c.cz, version: c.version, chunks, options: this.meshOptions }, chunks.map((a) => a.buffer));
   }
 
   // Stream chunks around (px, pz). viewDir is used to prioritise what's in front.

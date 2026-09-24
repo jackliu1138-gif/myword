@@ -120,6 +120,13 @@ vec2 pixelArtUV(vec2 uv, float texSize) {
 }
 `;
 
+// G-buffer light channel b: ambient occlusion (high 4 bits) and parallax self-shadow (low 4 bits).
+export const GPACK = `
+float packAO(float ao, float selfShadow) {
+  return (floor(saturate(ao) * 15.0 + 0.5) * 16.0 + floor(saturate(selfShadow) * 15.0 + 0.5)) / 255.0;
+}
+`;
+
 // Shadow map distortion: spends resolution near the player.
 export const SHADOW = `
 vec2 shadowDistort(vec2 p) {

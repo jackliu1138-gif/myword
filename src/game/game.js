@@ -42,6 +42,7 @@ export function defaultSettings() {
     brightness: 1,
     weather: 'auto',
     language: detectLanguage(),
+    texturePack: preset === 'high' || preset === 'ultra' ? 'hd' : 'pixel',
     dynamicRes: preset === 'lite' || preset === 'low',
     targetFps: 30,
     padSensitivity: 1,
@@ -61,6 +62,11 @@ function seedFromString(s) {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h | 0;
 }
+
+// average canopy colours for falling leaves
+const LEAF_TINT = {
+  [BLOCK.OAK_LEAVES]: [0.42, 0.66, 0.26], [BLOCK.BIRCH_LEAVES]: [0.55, 0.68, 0.33], [BLOCK.SPRUCE_LEAVES]: [0.36, 0.52, 0.36],
+};
 
 const TINT_RGB = {
   [TINT.GRASS]: [0.5, 0.76, 0.33], [TINT.FOLIAGE]: [0.42, 0.7, 0.27], [TINT.BIRCH]: [0.52, 0.68, 0.36], [TINT.SPRUCE]: [0.4, 0.58, 0.4],
@@ -103,11 +109,16 @@ export class Game {
   async start() {
     const saved = store.loadSettings();
     this.settings = { ...defaultSettings(), ...(saved || {}) };
+    // settings added since the save was written follow the saved preset
+    const preset = QUALITY_PRESETS[this.settings.preset];
+    if (saved && preset) for (const k of Object.keys(preset)) if (!(k in saved)) this.settings[k] = preset[k];
     if (this.opts.settingsOverride) Object.assign(this.settings, this.opts.settingsOverride);
-    this.textures = generateTextures();
+    // interface icons always come from the pixel-art pack; the world can use either pack
+    this.pixelTextures = generateTextures('pixel');
+    this.textures = this.settings.texturePack === 'hd' ? generateTextures('hd') : this.pixelTextures;
     const arrays = buildTextureArrays(this.textures);
     this.renderer = new Renderer(this.canvas, arrays, this.settings);
-    this.icons = buildIcons(this.textures);
+    this.icons = buildIcons(this.pixelTextures);
     this.ui.buildInventory(this.icons);
     this.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
@@ -155,7 +166,7 @@ export class Game {
     }
     const edits = data ? World.deserializeEdits(data.edits) : null;
     const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
-    this.world = new World(seed, { renderDistance: this.settings.renderDistance, workers, edits });
+    this.world = new World(seed, { renderDistance: this.settings.renderDistance, workers, edits, meshOptions: { fancyLeaves: this.settings.fancyLeaves !== false } });
     this.world.onChunkUnload = (c) => this.renderer.freeChunk(c);
     this.player = new Player(this.world);
     this.particles = new Particles(this.world);
@@ -272,14 +283,17 @@ export class Game {
 
   changeSetting(key, value, live) {
     const s = this.settings;
+    const leavesBefore = s.fancyLeaves;
     if (key === 'preset') {
       Object.assign(s, QUALITY_PRESETS[value]);
       s.preset = value;
       if (this.state !== 'playing') s.autoTuned = true;
     } else {
       s[key] = value;
-      if (['shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'].includes(key)) s.preset = 'custom';
+      if (['shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa', 'grass3d', 'fancyLeaves', 'pom'].includes(key)) s.preset = 'custom';
     }
+    if (s.fancyLeaves !== leavesBefore && this.world) this.world.setMeshOptions({ fancyLeaves: s.fancyLeaves });
+    if (key === 'texturePack') this.applyTexturePack(value);
     if (key === 'timeOfDay') this.dayTime = value;
     if (key === 'renderDistance') {
       this.world.renderDistance = value;
@@ -293,9 +307,14 @@ export class Game {
     if (key.startsWith('touch') && this.touch) this.touch.applySettings();
     if (key === 'volume') this.audio.setVolume(value);
     if (key === 'ambience') this.audio.ambientOn = value;
-    const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'];
+    const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa', 'grass3d', 'grassShadows', 'pom'];
     if (!live && graphics.includes(key)) this.renderer.applySettings(s);
     store.saveSettings(s);
+  }
+
+  applyTexturePack(pack) {
+    this.textures = pack === 'hd' ? generateTextures('hd') : this.pixelTextures;
+    this.renderer.setTextureArrays(buildTextureArrays(this.textures));
   }
 
   onGlobalKey(e) {
@@ -543,7 +562,8 @@ export class Game {
     // interaction
     this.selection = null;
     if (playing && !this.spawnPending) this.interact(dt);
-    this.particles.update(dt);
+    this.spawnLeaves(dt, cam);
+    this.particles.update(dt, [1.2 + this.weather.storm * 2.5, 0.4 + this.weather.storm], performance.now() / 1000);
     this.swing = Math.max(0, this.swing - dt * 4);
 
     // environment
@@ -564,6 +584,30 @@ export class Game {
       this.save();
     }
     if (this.debug && this.ui.current === 'settings') this.ui.refreshLive('timeOfDay', this.dayTime);
+  }
+
+  // Leaves now and then let go of the canopy above and around the camera (more in wind and rain).
+  spawnLeaves(dt, cam) {
+    if (this.state === 'boot' || !this.settings.fancyLeaves) return;
+    this.leafTimer = (this.leafTimer || 0) - dt;
+    if (this.leafTimer > 0) return;
+    this.leafTimer = 0.12 / (1 + this.weather.storm * 2);
+    const w = this.world;
+    for (let tries = 0; tries < 4; tries++) {
+      const x = Math.floor(cam.pos[0] + (Math.random() - 0.5) * 28);
+      const z = Math.floor(cam.pos[2] + (Math.random() - 0.5) * 28);
+      const y0 = Math.floor(cam.pos[1]);
+      for (let y = y0 + 10; y > y0 - 8; y--) {
+        const b = w.getBlock(x, y, z);
+        const d = BLOCKS[b];
+        if (!d || d.wave !== 1) continue; // leaves
+        if (w.getBlock(x, y - 1, z) !== 0) break;
+        const [sl, bl] = w.getLight(x, y - 1, z);
+        const tint = LEAF_TINT[b] || [0.45, 0.68, 0.28];
+        this.particles.leaf(x + Math.random(), y - 0.05, z + Math.random(), FACE_TEX[b * 4 + 2], tint, sl / 15, bl / 15);
+        return;
+      }
+    }
   }
 
   // Controller in the game world: sticks, triggers, face buttons, bumpers, D-pad.
@@ -939,6 +983,7 @@ export class Game {
       selection: this.hudHidden ? null : this.selection,
       particles: this.particles,
       hand: this.handState(),
+      playerFeet: this.state === 'playing' ? this.player.pos : null,
     };
     this.renderer.render(state, dt);
   }

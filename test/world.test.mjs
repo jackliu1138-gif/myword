@@ -120,3 +120,31 @@ test('every block texture is generated with a full mip chain', () => {
   assert.equal(arrays.levels.length, Math.log2(TEX_SIZE) + 1);
   assert.equal(arrays.levels[0].albedo.length, TEX_SIZE * TEX_SIZE * 4 * arrays.count);
 });
+
+test('the HD texture pack has every texture at 64x64 with a full mip chain', () => {
+  const arrays = buildTextureArrays(generateTextures('hd'));
+  assert.equal(arrays.size, 64);
+  assert.equal(arrays.count, TEXTURE_NAMES.length);
+  assert.equal(arrays.levels.length, 7);
+  // parallax needs a height channel with real relief on rough materials
+  const layer = TEXTURE_NAMES.indexOf('cobblestone');
+  const mat = arrays.levels[0].material;
+  let lo = 255, hi = 0;
+  for (let i = 0; i < 64 * 64; i++) { const h = mat[(layer * 64 * 64 + i) * 4 + 3]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  assert.ok(hi - lo > 150, 'cobblestone height range ' + (hi - lo));
+});
+
+test('grass blocks open to the sky get 3D grass spots, and exposed leaves get leaf cards', () => {
+  const chunks = flatChunks((c, n) => {
+    if (n !== 4) return;
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) c[idx(x, 40, z)] = BLOCK.GRASS;
+    c[idx(3, 41, 3)] = BLOCK.STONE; // covered: no blades there
+    c[idx(8, 45, 8)] = BLOCK.OAK_LEAVES;
+  });
+  const plain = new ChunkMesher(null).mesh(0, 0, chunks, { fancyLeaves: false });
+  assert.equal(plain.grassCount, 255);
+  assert.equal(plain.grass.byteLength, 255 * 8);
+  const fancy = new ChunkMesher(null).mesh(0, 0, chunks, { fancyLeaves: true });
+  // two crossed cards, each drawn with both windings = 4 extra quads in the cutout layer
+  assert.equal((fancy.cutout.byteLength - plain.cutout.byteLength) / VERTEX_BYTES / 4, 4);
+});

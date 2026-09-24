@@ -34,11 +34,14 @@ layout(location = 0) in vec3 aCenter;
 layout(location = 1) in vec2 aCorner;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec3 aData; // layer, sky light, block light
+layout(location = 4) in vec4 aTint; // rgb tint, a > 0.5: alpha-tested (leaves)
 out vec2 vUV;
 flat out float vLayer;
 out vec2 vLight;
 out vec3 vRel;
+out vec4 vTint;
 void main() {
+  vTint = aTint;
   vec3 right = vec3(uView[0][0], uView[1][0], uView[2][0]);
   vec3 up = vec3(uView[0][1], uView[1][1], uView[2][1]);
   vec3 p = aCenter + right * aCorner.x + up * aCorner.y;
@@ -58,11 +61,13 @@ in vec2 vUV;
 flat in float vLayer;
 in vec2 vLight;
 in vec3 vRel;
+in vec4 vTint;
 out vec4 oColor;
 void main() {
   vec4 t = texture(uAlbedo, vec3(vUV, vLayer));
-  if (t.a < 0.3) t = vec4(t.rgb, 1.0);
-  vec3 albedo = srgbToLinear(t.rgb);
+  if (vTint.a > 0.5) { if (t.a < 0.5) discard; }
+  else if (t.a < 0.3) t = vec4(t.rgb, 1.0);
+  vec3 albedo = srgbToLinear(t.rgb * vTint.rgb);
   float sky = vLight.x * vLight.x;
   vec3 light = uSkyColor.rgb * sky + uLightColor.rgb * max(uLightDir.y, 0.0) * sky * 0.3 + vec3(1.0, 0.58, 0.26) * pow(vLight.y, 3.0) * 1.2 + 0.003;
   oColor = vec4(albedo * light, 1.0);
@@ -102,6 +107,7 @@ uniform sampler2DArray uNormalMap;
 uniform sampler2DArray uMaterialMap;
 uniform vec4 uLayers;   // top, bottom, side, cutout flag
 uniform vec4 uLight;    // sky, block, tint on/off, material
+uniform vec4 uTexMode;  // texels per face, pixel-art sampling
 uniform vec3 uTint;
 in vec2 vUV;
 in vec3 vNormal;
@@ -112,7 +118,7 @@ layout(location = 2) out vec4 oLight;
 void main() {
   float layer = vFace == 2 ? uLayers.x : vFace == 3 ? uLayers.y : uLayers.z;
   vec2 gx = dFdx(vUV), gy = dFdy(vUV);
-  vec2 puv = pixelArtUV(vUV, 16.0);
+  vec2 puv = uTexMode.y > 0.5 ? pixelArtUV(vUV, uTexMode.x) : vUV;
   vec4 a = textureGrad(uAlbedo, vec3(puv, layer), gx, gy);
   bool cutout = uLayers.w > 0.5;
   if (cutout && a.a < 0.5) discard;

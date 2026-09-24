@@ -6,7 +6,7 @@ import { GLYPHS } from '../game/gamepad.js';
 
 const $ = (id) => document.getElementById(id);
 
-const PRESET_KEYS = ['shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'];
+const PRESET_KEYS = ['shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa', 'grass3d', 'fancyLeaves', 'pom'];
 export const PRESET_ORDER = ['lite', 'low', 'medium', 'high', 'ultra'];
 
 const pct = (v) => Math.round(v * 100) + '%';
@@ -23,6 +23,7 @@ const SCHEMA = [
     tab: 'graphics',
     items: [
       { key: 'preset', type: 'preset', label: 'set.preset', full: true, desc: 'set.preset.desc' },
+      { key: 'texturePack', type: 'choice', label: 'set.texturePack', full: true, options: [['pixel', 'pack.pixel'], ['hd', 'pack.hd']], desc: 'set.texturePack.desc' },
       { key: 'renderDistance', type: 'range', label: 'set.renderDistance', min: 3, max: 16, step: 1, fmt: (v) => t('unit.chunks', { n: v }) },
       { key: 'renderScale', type: 'range', label: 'set.renderScale', min: 0.35, max: 1, step: 0.05, fmt: pct },
       { key: 'dynamicRes', type: 'toggle', label: 'set.dynamicRes', desc: 'set.dynamicRes.desc' },
@@ -34,6 +35,9 @@ const SCHEMA = [
       { key: 'ssao', type: 'toggle', label: 'set.ssao', desc: 'set.ssao.desc' },
       { key: 'bloom', type: 'toggle', label: 'set.bloom', desc: 'set.bloom.desc' },
       { key: 'taa', type: 'toggle', label: 'set.taa', desc: 'set.taa.desc' },
+      { key: 'grass3d', type: 'toggle', label: 'set.grass3d', desc: 'set.grass3d.desc' },
+      { key: 'fancyLeaves', type: 'toggle', label: 'set.fancyLeaves', desc: 'set.fancyLeaves.desc' },
+      { key: 'pom', type: 'toggle', label: 'set.pom', desc: 'set.pom.desc' },
     ],
   },
   {
