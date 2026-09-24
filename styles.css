@@ -15,10 +15,16 @@
   --danger: #ff8a7a;
   --ground: #06080c;
   --radius: 10px;
-  --font-ui: 'Figtree', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-pixel: 'Pixelify Sans', 'Courier New', ui-monospace, monospace;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', 'Source Han Sans SC';
+  --font-ui: 'Figtree', system-ui, -apple-system, 'Segoe UI', Roboto, var(--font-cjk), sans-serif;
+  --font-pixel: 'Pixelify Sans', system-ui, -apple-system, 'Segoe UI', Roboto, var(--font-cjk), sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, var(--font-cjk), monospace;
 }
+/* Chinese headings: the pixel face has no CJK glyphs, so use a clean sans with a heavier weight */
+:root:lang(zh) {
+  --font-pixel: 'Pixelify Sans', var(--font-cjk), sans-serif;
+}
+:lang(zh) .eyebrow, :lang(zh) .title-card h2 { letter-spacing: 0.08em; }
 
 html, body {
   margin: 0;
@@ -79,6 +85,13 @@ html, body {
   box-shadow: 0 6px 24px rgba(255, 170, 60, 0.25);
 }
 .btn.primary:hover { filter: brightness(1.06); }
+.btn.subtle { background: transparent; border-color: var(--line); color: var(--ink-soft); font-weight: 500; min-height: 38px; padding: 9px 18px; }
+
+/* focus shown while a controller or remote drives the menus */
+html.pad-nav :focus { outline: 3px solid var(--sky); outline-offset: 3px; }
+html.pad-nav .toggle:focus-within { outline: 3px solid var(--sky); outline-offset: 4px; border-radius: 8px; }
+html.pad-nav .toggle input:focus { outline: none; }
+html.pad-nav input[type="range"]:focus { outline-offset: 6px; border-radius: 4px; }
 
 kbd {
   font: 600 12px/1 var(--font-mono);
@@ -196,6 +209,46 @@ kbd {
 .keys dt { white-space: nowrap; }
 .keys dd { margin: 0; color: var(--ink-soft); font-size: 13px; text-align: right; }
 .keys.two-col { grid-template-columns: 1fr 1fr; column-gap: 28px; }
+.keys dt kbd:last-child { margin-right: 0; }
+
+.lang-toggle {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.lang-toggle button {
+  font: 600 13px/1 var(--font-ui);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  min-width: 44px;
+  cursor: pointer;
+}
+.lang-toggle button[aria-pressed="true"] { color: #231605; background: var(--sun); }
+.lang-toggle button:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- help & device check */
+.help-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 28px; align-items: start; }
+.help-sec { display: grid; gap: 10px; }
+.help-sec h3 { margin: 0; font: 700 12px/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--sun); }
+.help-sec .keys dd { text-align: right; }
+.device-list { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); column-gap: 24px; }
+.device-list > div { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.device-list > div.wide { grid-column: 1 / -1; }
+.device-list dt { color: var(--ink-soft); font-size: 13px; flex: none; white-space: nowrap; }
+.device-list dd { margin: 0; font: 500 12px/1.4 var(--font-mono); text-align: right; overflow-wrap: anywhere; }
+.device-list .good dd { color: #9be39b; }
+.device-list .bad dd { color: var(--danger); }
 
 /* ---------------------------------------------------------------- settings */
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -217,7 +270,7 @@ kbd {
 .setting .value { font: 500 12px var(--font-mono); color: var(--sun); font-variant-numeric: tabular-nums; }
 .setting .desc { margin: 0; font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
 .setting input[type="range"] { width: 100%; accent-color: var(--sun); }
-.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.seg { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 6px; }
 .seg button {
   font: 600 13px var(--font-ui);
   color: var(--ink-soft);
@@ -368,27 +421,58 @@ kbd {
 #error p { margin: 0; line-height: 1.5; }
 
 /* ---------------------------------------------------------------- touch */
-.touch-ui { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.touch-ui { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 6; --touch-scale: 1; --touch-alpha: 0.7; }
 .touch-ui.visible { display: block; }
 .touch-stick {
-  position: absolute; left: calc(24px + env(safe-area-inset-left, 0px)); bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-  width: 120px; height: 120px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line-strong);
-  pointer-events: auto; touch-action: none;
+  --size: calc(128px * var(--touch-scale));
+  position: absolute; left: calc(28px + env(safe-area-inset-left, 0px)); bottom: calc(92px * var(--touch-scale) + env(safe-area-inset-bottom, 0px));
+  width: var(--size); height: var(--size); border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.04) 0 55%, rgba(255, 255, 255, 0.1) 56% 100%);
+  border: 1px solid var(--line-strong);
+  opacity: calc(var(--touch-alpha) * 0.85);
+  pointer-events: none; touch-action: none;
+  transition: opacity 0.15s;
 }
+.touch-stick.floating { bottom: auto; opacity: 1; }
+.touch-stick.sprint { border-color: var(--sun); box-shadow: 0 0 18px rgba(255, 190, 100, 0.35); }
 .touch-knob {
-  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
-  background: rgba(255, 255, 255, 0.28); border: 1px solid rgba(255, 255, 255, 0.4);
+  position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; transform: translate(0, 0);
+  margin: -21% 0 0 -21%; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3); border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 .touch-btn {
+  --size: calc(58px * var(--touch-scale));
   position: absolute; pointer-events: auto; touch-action: none;
-  width: 58px; height: 58px; border-radius: 50%; border: 1px solid var(--line-strong);
-  background: rgba(10, 12, 18, 0.45); color: var(--ink); font: 700 15px var(--font-ui);
+  width: var(--size); height: var(--size); border-radius: 50%; border: 1px solid var(--line-strong);
+  background: rgba(10, 12, 18, 0.5); color: var(--ink);
+  font: 700 calc(14px * var(--touch-scale)) var(--font-ui);
+  display: grid; place-items: center; padding: 0;
+  opacity: var(--touch-alpha);
+  -webkit-touch-callout: none;
+  transition: transform 0.08s, background 0.1s;
 }
-.touch-jump { right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(110px + env(safe-area-inset-bottom, 0px)); width: 70px; height: 70px; }
-.touch-sneak { right: calc(104px + env(safe-area-inset-right, 0px)); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
-.touch-fly { right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(194px + env(safe-area-inset-bottom, 0px)); font-size: 12px; }
-.touch-inv { right: calc(24px + env(safe-area-inset-right, 0px)); top: calc(16px + env(safe-area-inset-top, 0px)); width: 46px; height: 46px; }
-.touch-menu { right: calc(80px + env(safe-area-inset-right, 0px)); top: calc(16px + env(safe-area-inset-top, 0px)); width: 46px; height: 46px; }
+.touch-btn svg { width: 46%; height: 46%; }
+.touch-btn.down { opacity: 1; background: rgba(255, 194, 102, 0.35); border-color: var(--sun); transform: scale(0.94); }
+.touch-jump { --size: calc(74px * var(--touch-scale)); right: calc(22px + env(safe-area-inset-right, 0px)); bottom: calc(92px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-sneak { right: calc(22px + 84px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(74px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-break { right: calc(22px + 96px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(148px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-place { right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(178px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-fly { --size: calc(48px * var(--touch-scale)); right: calc(22px + 170px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(86px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); font-size: calc(12px * var(--touch-scale)); }
+.touch-top { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); display: flex; gap: 10px; }
+.touch-top .touch-btn { position: static; --size: calc(44px * var(--touch-scale)); border-radius: 12px; }
+.touch-rotate {
+  position: absolute; left: 50%; top: 40%; transform: translateX(-50%);
+  font: 600 14px var(--font-ui); color: var(--ink); background: var(--glass); border: 1px solid var(--line);
+  padding: 10px 16px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+}
+/* the HUD hotbar takes taps on touch screens */
+@media (pointer: coarse) {
+  #hotbar .slot { pointer-events: auto; }
+  #hotbar { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+}
+.touch-ui.portrait .touch-stick { bottom: calc(110px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-ui.portrait .touch-jump { bottom: calc(110px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
 
 /* ---------------------------------------------------------------- small screens */
 @media (max-width: 760px) {

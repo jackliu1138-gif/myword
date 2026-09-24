@@ -5,7 +5,7 @@ import { createContext, Program, RenderTarget, createTexture2D, FULLSCREEN_VS, U
 import { mat4, Frustum, halton } from '../engine/math.js';
 import { gbufferVS, gbufferFS, shadowVS, shadowFS } from './shaders/terrain.js';
 import { skyLutFS } from './shaders/sky.js';
-import { cloudsFS } from './shaders/clouds.js';
+import { cloudsFS, cloudsResolveFS } from './shaders/clouds.js';
 import { lightingFS } from './shaders/lighting.js';
 import { waterVS, waterFS } from './shaders/water.js';
 import {
@@ -22,11 +22,13 @@ const SUN_E = 10.0;
 const MOON_E = 0.4;
 const SUN_TILT = 0.42; // orbit tilt (radians) so noon shadows are not axis aligned
 
+// cloudBlend: share of each new cloud frame in the cloud history (lower = smoother, more lag)
 export const QUALITY_PRESETS = {
-  low: { renderScale: 0.75, shadows: true, shadowRes: 1024, shadowDistance: 72, pcf: 1, clouds: true, cloudSteps: 18, cloudRes: 0.35, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1 },
-  medium: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 96, pcf: 8, clouds: true, cloudSteps: 26, cloudRes: 0.5, volumetric: true, volSteps: 12, ssao: false, ssr: true, bloom: true, taa: true, maxDpr: 1 },
-  high: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 128, pcf: 12, clouds: true, cloudSteps: 36, cloudRes: 0.5, volumetric: true, volSteps: 20, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 1.25 },
-  ultra: { renderScale: 1.0, shadows: true, shadowRes: 4096, shadowDistance: 160, pcf: 16, clouds: true, cloudSteps: 48, cloudRes: 0.5, volumetric: true, volSteps: 28, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 2 },
+  lite: { renderScale: 0.6, shadows: true, shadowRes: 1024, shadowDistance: 48, pcf: 1, clouds: true, cloudSteps: 12, cloudRes: 0.3, cloudLightSteps: 3, cloudBlend: 0.08, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1 },
+  low: { renderScale: 0.75, shadows: true, shadowRes: 1024, shadowDistance: 72, pcf: 1, clouds: true, cloudSteps: 18, cloudRes: 0.35, cloudLightSteps: 4, cloudBlend: 0.1, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1 },
+  medium: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 96, pcf: 8, clouds: true, cloudSteps: 26, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.12, volumetric: true, volSteps: 12, ssao: false, ssr: true, bloom: true, taa: true, maxDpr: 1 },
+  high: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 128, pcf: 12, clouds: true, cloudSteps: 36, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.14, volumetric: true, volSteps: 20, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 1.25 },
+  ultra: { renderScale: 1.0, shadows: true, shadowRes: 4096, shadowDistance: 160, pcf: 16, clouds: true, cloudSteps: 48, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.15, volumetric: true, volSteps: 28, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 2 },
 };
 
 function createQuadIndices(gl, quads) {
@@ -97,6 +99,7 @@ export class Renderer {
       water: P(waterVS, waterFS, 'water'),
       skyLut: P(FS, skyLutFS, 'skyLut'),
       clouds: P(FS, cloudsFS, 'clouds'),
+      cloudsResolve: P(FS, cloudsResolveFS, 'cloudsResolve'),
       lighting: P(FS, lightingFS, 'lighting'),
       ssao: P(FS, ssaoFS, 'ssao'),
       aoBlur: P(FS, aoBlurFS, 'aoBlur'),
@@ -338,7 +341,8 @@ export class Renderer {
       this.canvas.width = cw;
       this.canvas.height = ch;
     }
-    const scale = this.settings.renderScale;
+    // dynScale (0.5..1) is the dynamic-resolution factor on top of the chosen resolution scale
+    const scale = this.settings.renderScale * (this.dynScale || 1);
     const w = Math.max(16, Math.floor(cw * scale));
     const h = Math.max(16, Math.floor(ch * scale));
     if (this.targets && this.targets.w === w && this.targets.h === h) return this.targets;
@@ -361,7 +365,12 @@ export class Renderer {
     t.ssao = new RenderTarget(gl, hw, hh, ['rg16f']);
     t.ssaoBlur = new RenderTarget(gl, hw, hh, ['rg16f']);
     t.volumetric = new RenderTarget(gl, hw, hh, ['rgba16f']);
-    t.clouds = new RenderTarget(gl, cloudW, cloudH, ['rgba16f']);
+    // raw march (colour + distance) and two history buffers the resolve pass ping-pongs between
+    t.cloudRaw = new RenderTarget(gl, cloudW, cloudH, ['rgba16f', 'r16f'], null, { filter: gl.NEAREST });
+    t.cloudHist = [new RenderTarget(gl, cloudW, cloudH, ['rgba16f', 'r16f']), new RenderTarget(gl, cloudW, cloudH, ['rgba16f', 'r16f'])];
+    t.cloudIndex = 0;
+    t.clouds = t.cloudHist[0];
+    this.cloudHistoryValid = false;
     t.bloom = [];
     let bw = w, bh = h;
     for (let i = 0; i < 6; i++) {
@@ -390,7 +399,8 @@ export class Renderer {
   disposeTargets() {
     const t = this.targets;
     const gl = this.gl;
-    for (const k of ['gbuffer', 'hdr', 'sceneCopy', 'depthCopy', 'composite', 'ldr', 'ssao', 'ssaoBlur', 'volumetric', 'clouds']) t[k].dispose();
+    for (const k of ['gbuffer', 'hdr', 'sceneCopy', 'depthCopy', 'composite', 'ldr', 'ssao', 'ssaoBlur', 'volumetric', 'cloudRaw']) t[k].dispose();
+    t.cloudHist.forEach((x) => x.dispose());
     t.taa.forEach((x) => x.dispose());
     t.bloom.forEach((x) => x.dispose());
     gl.deleteFramebuffer(t.hdrDepth.fbo);
@@ -725,11 +735,31 @@ export class Renderer {
       this.fullscreen();
     }
 
-    // ---- clouds (half res, independent of scene depth)
+    // ---- clouds (reduced resolution, independent of scene depth): jittered march + temporal resolve
     if (s.clouds) {
-      t.clouds.bind();
-      this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeatherMap', this.weatherTex).tex('uSkyLut', this.skyLut.texture);
+      t.cloudRaw.bind();
+      this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeatherMap', this.weatherTex).tex('uSkyLut', this.skyLut.texture)
+        .f2('uCloudSize', t.cloudRaw.width, t.cloudRaw.height)
+        .f1('uLightSteps', s.cloudLightSteps || 6);
       this.fullscreen();
+      const off = state.cloudOffset;
+      const po = this.prevCloudOffset || off;
+      const cur = t.cloudHist[t.cloudIndex], prev = t.cloudHist[1 - t.cloudIndex];
+      cur.bind();
+      this.prog.cloudsResolve.use()
+        .tex('uRaw', t.cloudRaw.textures[0], gl.TEXTURE_2D, this.nearestSampler)
+        .tex('uRawDist', t.cloudRaw.textures[1], gl.TEXTURE_2D, this.nearestSampler)
+        .tex('uHistory', prev.textures[0], gl.TEXTURE_2D, this.linearSampler)
+        .tex('uHistoryDist', prev.textures[1], gl.TEXTURE_2D, this.linearSampler)
+        .f1('uHistoryValid', this.cloudHistoryValid ? 1 : 0)
+        // features move against the offset: the noise is sampled at p + offset (shape) and p + 0.6 offset (coverage)
+        .f2('uWindDelta', (off[0] - po[0]) * 0.8, (off[1] - po[1]) * 0.8)
+        .f1('uBlend', s.cloudBlend || 0.12);
+      this.fullscreen();
+      t.cloudIndex = 1 - t.cloudIndex;
+      t.clouds = cur;
+      this.cloudHistoryValid = true;
+      this.prevCloudOffset = [off[0], off[1]];
     }
 
     // ---- deferred lighting
@@ -973,6 +1003,7 @@ export class Renderer {
 
   resetHistory() {
     this.historyValid = false;
+    this.cloudHistoryValid = false;
   }
 
   // Exposure predicted from the light reaching the eye: sun/moon, sky (occluded in caves) and torches.

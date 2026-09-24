@@ -4,6 +4,8 @@ A Minecraft-style voxel sandbox that runs in the browser, with a rendering pipel
 
 It is plain WebGL 2 and JavaScript with no runtime dependencies. Terrain, textures and sounds are all generated procedurally, so the repository ships no image or audio assets.
 
+The interface is in English and Simplified Chinese; switch on the title screen or in **Settings → General**. 中文说明见 [README.zh-CN.md](README.zh-CN.md).
+
 ## Play
 
 ```bash
@@ -19,9 +21,9 @@ To get a single self-contained file:
 npm run build    # writes dist/index.html (about 250 KB)
 ```
 
-`dist/index.html` runs straight from disk (double-click it) or from any static host.
+`dist/index.html` runs straight from disk (double-click it) or from any static host. Served over HTTP(S) it is also an installable web app (manifest and icons are copied next to it), so phones and tablets can add it to the home screen and run it full screen.
 
-`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving and weather, without a browser.
+`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather and the translations, without a browser.
 
 ### Controls
 
@@ -43,18 +45,37 @@ npm run build    # writes dist/index.html (about 250 KB)
 | `H` | Hide the interface |
 | `Esc` | Pause |
 
-Touch screens get an on-screen stick, jump/sneak/fly buttons, drag-to-look, tap to place and hold to break.
+Touch screens get a floating stick (push to the edge to sprint), drag-to-look, tap to place and hold to break, buttons for jump, sneak, fly, break, place, blocks, pause and full screen, and a tappable hotbar. Button size, opacity, look speed and haptics are in **Settings → Controls**.
+
+### Controllers and TV remotes
+
+Any controller the browser reports with the standard mapping works (Xbox, PlayStation, Switch Pro and most Android pads):
+
+| Button | Action |
+| --- | --- |
+| Left stick | Move (click: sprint) |
+| Right stick | Look (click: pick block) |
+| A | Jump, twice to fly |
+| B | Sneak, fly down |
+| X | Toggle flying |
+| Y | Open all blocks |
+| RT / LT | Break / place |
+| LB / RB | Previous / next hotbar slot |
+| D-pad up / down | Fast-forward time / hide the interface |
+| View / Menu | Debug overlay / pause |
+
+Menus follow the D-pad or stick (A chooses, B goes back, LB / RB switch settings tabs), and a TV remote's arrows, OK and Back keys do the same. Rumble is used for breaking and placing and can be turned off. **Device check** on the title screen lists what the browser supports (WebGL 2, float render targets, controllers, GPU) for troubleshooting.
 
 Your world (seed, position, time of day, hotbar and every block you change) is saved in the browser's IndexedDB. Use **New world** on the title screen to start over, optionally with a seed.
 
 ## Graphics
 
-Everything below can be toggled in **Settings → Graphics**, or chosen through the Low / Medium / High / Ultra presets. The first launch picks a preset from the GPU. During the first minutes of play it steps the preset down, one level at a time, while the game runs well under 30 fps.
+Everything below can be toggled in **Settings → Graphics**, or chosen through the Lite / Low / Medium / High / Ultra presets. Lite is meant for phones, TVs and projectors. The first launch picks a preset from the device and GPU. During the first minutes of play it steps the preset down, one level at a time, while the game runs well under 30 fps. **Dynamic resolution** then lowers the render resolution while the frame rate is under the target (30, 45 or 60 fps) and raises it again when there is headroom.
 
 - **Deferred PBR lighting.** A G-buffer stores albedo, normal-mapped and geometric normals, roughness, metalness, emission and the Minecraft-style sky/block light levels. Every block texture comes with a generated height, normal, roughness and emission map, and specular uses GGX.
 - **Atmosphere.** Single-scattering Rayleigh, Mie and ozone, with an approximation for multiple scattering. It is rendered into a sky-view lookup table, so sunrise and sunset colours, the sun's aureole and moonlit nights all come from the same model. The same model runs on the CPU to produce the sunlight colour and sky ambient. The moon goes through eight phases, one per day, so dark new-moon nights show the stars.
 - **Soft shadows.** A single distorted shadow map concentrates resolution near the player. Percentage-closer soft shadows (PCSS) give contact-hardened penumbrae, a normal-offset bias avoids acne, and texel snapping keeps shadows stable. Leaves and grass sway identically in the shadow pass.
-- **Volumetric clouds.** Raymarched cumulus built from GPU-generated 3D Perlin-Worley noise and a weather map, lit with Beer-Lambert extinction, a powder term and dual-lobe Henyey-Greenstein phase. They drift with the wind, cast moving shadows on the landscape, and fade into the horizon haze.
+- **Volumetric clouds.** Raymarched cumulus built from GPU-generated 3D Perlin-Worley noise and a weather map, lit with Beer-Lambert extinction, a powder term and dual-lobe Henyey-Greenstein phase. They drift with the wind, cast moving shadows on the landscape, and fade into the horizon haze. The jittered march is accumulated over frames in a cloud history buffer of its own (reprojected by cloud distance and wind) and upsampled with a Catmull-Rom filter, so the clouds stay smooth even on presets without TAA; noise mip levels follow the pixel footprint to avoid sparkle.
 - **God rays.** The view ray is marched through the shadow map and cloud shadows with height fog, giving light shafts through trees and cave mouths, and underwater beams.
 - **Water.** Animated wave normals, screen-space reflections that fall back to the sky, refraction, Beer-Lambert absorption that separates turquoise shallows from deep blue ocean, sun glints, shoreline foam, Snell's window from below, and caustics on the seabed derived from the curvature of the surface.
 - **Foliage.** Leaves and grass sway in the wind and let light through (subsurface scattering) when backlit.
@@ -90,9 +111,9 @@ src/engine/                WebGL helpers, matrix math
 src/world/                 blocks, noise, terrain generator, lighting + mesher, worker, chunk streaming, textures
 src/render/                renderer (pass orchestration), CPU atmosphere
 src/render/shaders/        GLSL: terrain, sky, clouds, lighting, water, post-processing, overlays, noise generation
-src/game/                  game loop, player physics, input, audio, particles, saving
-src/ui/                    menus, settings, hotbar, inventory, block icons
-tools/                     dev server and single-file build
+src/game/                  game loop, player physics, input (keyboard, mouse, touch, controllers), audio, particles, saving, device detection
+src/ui/                    menus, settings, hotbar, inventory, block icons, translations, focus navigation
+tools/                     dev server, single-file build, icon generator
 test/                      Node tests (npm test)
 ```
 

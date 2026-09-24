@@ -310,7 +310,7 @@ void main() {
   if (depth >= 1.0) {
     vec3 sky = renderSky(dir, true);
     if (uUseClouds > 0.5) {
-      vec4 cl = texture(uClouds, vUV);
+      vec4 cl = sampleClouds(uClouds, vUV);
       sky = sky * cl.a + cl.rgb;
     }
     sky += vec3(0.62, 0.67, 0.85) * uWeather.z * (0.5 + 0.8 * saturate(dir.y));

@@ -10,36 +10,25 @@ import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import * as store from './save.js';
 import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_LIQUID, TINT, MAT, CHUNK_SIZE } from '../world/blocks.js';
-import { clockText } from '../ui/ui.js';
+import { clockText, PRESET_ORDER } from '../ui/ui.js';
+import { t, tList, blockName, setLanguage, detectLanguage } from '../ui/i18n.js';
 import { buildIcons } from '../ui/icons.js';
-import { BIOME_NAMES, BIOME } from '../world/generator.js';
+import { BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
+import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
+import { Gamepads, PAD } from './gamepad.js';
+import { FocusNav } from '../ui/focusnav.js';
 
 const DEFAULT_HOTBAR = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE_BRICKS, BLOCK.OAK_PLANKS, BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, BLOCK.WATER, BLOCK.GLOWSTONE];
 const REACH = 6;
 const SAVE_VERSION = 1;
-
-function detectPreset() {
-  const touch = matchMedia('(pointer: coarse)').matches;
-  const small = Math.min(screen.width, screen.height) < 700;
-  if (touch && small) return 'low';
-  try {
-    const c = document.createElement('canvas');
-    const gl = c.getContext('webgl2');
-    const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
-    const r = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
-    if (/swiftshader|llvmpipe|software/i.test(r)) return 'low';
-    if (/intel|uhd|iris|mali|adreno|powervr|apple gpu/i.test(r)) return 'medium';
-  } catch (e) { /* ignore */ }
-  return 'high';
-}
 
 export function defaultSettings() {
   const preset = detectPreset();
   return {
     preset,
     ...QUALITY_PRESETS[preset],
-    renderDistance: preset === 'low' ? 6 : preset === 'medium' ? 7 : 9,
+    renderDistance: { lite: 4, low: 6, medium: 7, high: 9, ultra: 10 }[preset] || 7,
     fov: 75,
     sensitivity: 1,
     invertY: false,
@@ -52,6 +41,16 @@ export function defaultSettings() {
     cloudCoverage: 0.5,
     brightness: 1,
     weather: 'auto',
+    language: detectLanguage(),
+    dynamicRes: preset === 'lite' || preset === 'low',
+    targetFps: 30,
+    padSensitivity: 1,
+    padInvertY: false,
+    padVibration: true,
+    touchSize: 1,
+    touchOpacity: 0.7,
+    touchSensitivity: 1,
+    touchHaptics: true,
   };
 }
 
@@ -114,7 +113,7 @@ export class Game {
       e.preventDefault();
       cancelAnimationFrame(this.raf);
       this.save();
-      this.ui.showError('The graphics context was lost (the GPU was reset or ran out of memory). Your world was saved; reload the page to continue.');
+      this.ui.showError(t('err.contextLost'));
     });
     this.input = new Input(this.canvas);
     this.input.onLockChange = (locked) => this.onLockChange(locked);
@@ -122,11 +121,17 @@ export class Game {
       if (this.state === 'playing') this.ui.setLockHint(true);
     };
     if (matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window) {
-      this.touch = new TouchControls(document.getElementById('app'), this.input);
+      this.touch = new TouchControls(document.getElementById('app'), this.input, { settings: () => this.settings, t });
     }
     this.audio = new Audio();
     this.audio.setVolume(this.settings.volume);
     this.audio.ambientOn = this.settings.ambience;
+    this.pads = new Gamepads();
+    this.pads.onConnect = (p) => this.ui.toast(t('toast.padConnected', { name: String(p.id).replace(/\s*\(.*$/, '').slice(0, 40) }), 3000);
+    this.pads.onDisconnect = () => this.ui.toast(t('toast.padDisconnected'), 2500);
+    this.nav = new FocusNav();
+    this.padSprint = false;
+    this.lastPadA = 0;
     this.bindUi();
 
     const data = this.opts.freshWorld ? null : await store.loadWorld();
@@ -172,8 +177,8 @@ export class Game {
     this.titleAnchor = this.player.pos.slice();
     this.loadingDone = false;
     this.ui.renderHotbar(this.hotbar, this.selected);
-    this.ui.setTitleMeta(`Seed ${seed} · ${data ? 'saved world' : 'new world'}`);
-    this.ui.setPlayLabel(data ? 'Continue' : 'Play');
+    this.ui.setTitleMeta({ seed, saved: !!data });
+    this.ui.setPlayLabel(data ? 'title.continue' : 'title.play');
     this.player.onStep = (b) => this.audio.play('step', b < 0 ? 'water' : materialOf(BLOCKS[b]), 0.8);
     this.player.onLand = (speed, b) => { if (speed > 6) this.audio.play('step', materialOf(BLOCKS[b]), 1.4); };
     this.player.onSplash = () => this.audio.play('splash');
@@ -209,6 +214,15 @@ export class Game {
       ui.push('settings');
     });
     ui.on('openHelp', () => ui.push('help'));
+    ui.on('openDevice', () => {
+      ui.showDevice(collectDeviceInfo(this));
+      ui.push('device');
+      clearInterval(this.deviceTimer);
+      this.deviceTimer = setInterval(() => {
+        if (ui.current !== 'device') { clearInterval(this.deviceTimer); return; }
+        ui.showDevice(collectDeviceInfo(this));
+      }, 1000);
+    });
     ui.on('openNewWorld', () => {
       document.getElementById('seed-input').value = '';
       ui.push('newworld');
@@ -220,18 +234,35 @@ export class Game {
       await store.deleteWorld();
       this.loadWorld(seedFromString(seedText), null);
       this.enterTitle();
-      this.ui.toast('New world created');
+      this.ui.toast(t('toast.newWorld'));
     });
     ui.on('pickBlock', (id) => {
       this.hotbar[this.selected] = id;
       this.ui.renderHotbar(this.hotbar, this.selected);
-      this.ui.showBlockName(BLOCKS[id].name);
+      this.ui.showBlockName(blockName(BLOCKS[id]));
       this.audio.play('pop');
     });
     ui.on('selectSlot', (i) => {
-      this.selected = i;
-      this.ui.renderHotbar(this.hotbar, this.selected);
+      if (this.state === 'playing') this.selectSlot(i);
+      else {
+        this.selected = i;
+        this.ui.renderHotbar(this.hotbar, this.selected);
+      }
     });
+    ui.on('setLanguage', (lang) => this.changeSetting('language', lang));
+    ui.on('screen', (name) => this.nav.setRoot(name ? document.getElementById(name) : null));
+    // arrow keys / OK on a TV remote (or a keyboard) move through menus
+    document.addEventListener('keydown', (e) => this.onMenuKey(e), true);
+    window.addEventListener('pointerdown', () => document.documentElement.classList.remove('pad-nav'), true);
+    // the Back key of TV remotes and Android navigates history: turn it into the in-game back action
+    if (window.top === window && (isTvDevice() || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches)) {
+      try {
+        history.pushState({ lumen: true }, '');
+        window.addEventListener('popstate', () => {
+          if (this.handleBack()) history.pushState({ lumen: true }, '');
+        });
+      } catch (e) { /* ignore */ }
+    }
     this.canvas.addEventListener('click', () => {
       this.audio.unlock();
       if (this.state === 'playing' && !this.input.locked && !this.input.lockFailed) this.input.requestLock();
@@ -254,6 +285,12 @@ export class Game {
       this.world.renderDistance = value;
       this.world.lastCx = null; // re-scan the neighbourhood with the new radius
     }
+    if (key === 'language') {
+      setLanguage(value);
+      this.ui.refreshLanguage();
+      if (this.touch) this.touch.refreshLabels();
+    }
+    if (key.startsWith('touch') && this.touch) this.touch.applySettings();
     if (key === 'volume') this.audio.setVolume(value);
     if (key === 'ambience') this.audio.ambientOn = value;
     const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'];
@@ -264,12 +301,10 @@ export class Game {
   onGlobalKey(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
     const code = e.code;
-    if (code === 'Escape') {
-      if (this.state === 'inventory') { this.closeInventory(); e.preventDefault(); }
-      else if (this.state === 'playing' && !this.input.locked) this.pause();
-      else if (this.state === 'paused' || this.state === 'title') {
-        if (this.ui.current === 'settings' || this.ui.current === 'help' || this.ui.current === 'newworld') this.ui.pop();
-        else if (this.state === 'paused') this.play();
+    if (code === 'Escape' || e.key === 'GoBack' || e.key === 'BrowserBack') {
+      // (while pointer-locked, Esc releases the lock first and the lock change pauses)
+      if (!(this.state === 'playing' && this.input.locked)) {
+        if (this.handleBack()) e.preventDefault();
       }
       return;
     }
@@ -285,6 +320,46 @@ export class Game {
     if (code === 'KeyH' && (this.state === 'playing')) {
       this.hudHidden = !this.hudHidden;
       this.ui.setHud(!this.hudHidden);
+    }
+  }
+
+  // The shared "back" action: Esc, controller B, a TV remote's Back key. Returns false when there
+  // was nothing to go back from (the title screen), so the platform can handle it.
+  handleBack() {
+    if (this.state === 'inventory') { this.closeInventory(); return true; }
+    if (this.state === 'playing') { this.pause(); return true; }
+    if (['settings', 'help', 'newworld', 'device'].includes(this.ui.current)) { this.ui.pop(); return true; }
+    if (this.state === 'paused') { this.play(); return true; }
+    return false;
+  }
+
+  menuOpen() {
+    return this.state === 'inventory' || (this.state !== 'playing' && this.ui.current !== null);
+  }
+
+  // Arrow keys and OK / Enter in menus (TV remotes send these).
+  onMenuKey(e) {
+    if (!this.menuOpen()) return;
+    const el = document.activeElement;
+    if (el && el.tagName === 'INPUT' && el.type === 'text') return;
+    const dirs = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+    const dir = dirs[e.key];
+    if (dir) {
+      // sliders keep left / right for their value
+      if (el && el.type === 'range' && (dir === 'left' || dir === 'right')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      document.documentElement.classList.add('pad-nav');
+      this.nav.move(dir);
+      return;
+    }
+    if ((e.key === 'Enter' || e.key === 'Select') && el && el.type === 'checkbox') {
+      e.preventDefault();
+      el.click();
+    }
+    if (e.key === 'Backspace' && !(el && el.tagName === 'INPUT')) {
+      e.preventDefault();
+      this.handleBack();
     }
   }
 
@@ -315,14 +390,12 @@ export class Game {
     this.input.enabled = true;
     this.ui.setHud(!this.hudHidden);
     if (this.touch) this.touch.show(true);
-    if (!this.touch || !this.input.touch.active) {
+    const padUser = this.pads.connected && performance.now() - this.pads.lastActive < 1500;
+    if ((!this.touch || !this.input.touch.active) && !padUser) {
       if (!this.input.lockFailed) this.input.requestLock();
     }
-    this.ui.setLockHint(this.input.lockFailed && !this.touch);
-    if (this.input.lockFailed && !this.touch) {
-      document.getElementById('lockhint').textContent = 'Drag with the mouse to look around';
-      setTimeout(() => this.ui.setLockHint(false), 4000);
-    }
+    this.ui.setLockHint(this.input.lockFailed && !this.touch && !padUser, this.input.lockFailed ? 'hud.dragHint' : 'hud.lockHint');
+    if (this.input.lockFailed && !this.touch) setTimeout(() => this.ui.setLockHint(false), 4000);
     this.renderer.resetHistory();
   }
 
@@ -352,7 +425,8 @@ export class Game {
     this.ui.show(null);
     this.state = 'playing';
     this.input.enabled = true;
-    if (!this.input.lockFailed && !this.touch) this.input.requestLock();
+    const padUser = this.pads.connected && performance.now() - this.pads.lastActive < 1500;
+    if (!this.input.lockFailed && !this.touch && !padUser) this.input.requestLock();
   }
 
   // ------------------------------------------------------------------ per frame
@@ -368,7 +442,7 @@ export class Game {
       console.error(err);
       if (!this.errorShown) {
         this.errorShown = true;
-        this.ui.toast('Something went wrong: ' + err.message, 6000);
+        this.ui.toast(t('toast.error', { msg: err.message }), 6000);
       }
     }
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
@@ -380,6 +454,7 @@ export class Game {
       this.fpsTime = 0;
       if (this.debug) this.ui.setDebug(this.debugText());
       this.autoQuality();
+      this.updateDynamicResolution(real);
     }
     this.input.endFrame();
   }
@@ -389,6 +464,11 @@ export class Game {
     const playing = this.state === 'playing';
     const frameInput = input.consumeFrame();
     let ctl = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, toggleFly: false, autoJump: this.settings.autoJump };
+    const pad = this.pads.poll();
+    if (pad.connected) {
+      this.ui.setPadStyle(pad.style);
+      this.updatePadMenus(pad);
+    }
 
     if (playing) {
       const k = (c) => input.down(c);
@@ -413,6 +493,7 @@ export class Game {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
       if (frameInput.wheel) this.selectSlot((this.selected + frameInput.wheel + 9) % 9);
+      if (pad.connected) this.applyPadControls(pad, ctl, dt);
     }
 
     // hold on terrain until the spawn chunk exists
@@ -436,10 +517,10 @@ export class Game {
 
     // time of day
     if (this.state !== 'paused') {
-      const fast = playing && input.down('KeyT') ? 90 : 1;
+      const fast = playing && (input.down('KeyT') || pad.down(PAD.UP)) ? 90 : 1;
       this.dayTime += (dt * fast) / (this.settings.dayLength * 60);
       if (this.dayTime >= 1) { this.dayTime -= 1; this.dayCount = (this.dayCount || 0) + 1; }
-      if (fast > 1 && this.ui.current === null) this.ui.toast('Time ' + clockText(this.dayTime), 400);
+      if (fast > 1 && this.ui.current === null) this.ui.toast(t('toast.time', { time: clockText(this.dayTime) }), 400);
       this.cloudOffset[0] += dt * 3.2;
       this.cloudOffset[1] += dt * 1.1;
     }
@@ -485,6 +566,67 @@ export class Game {
     if (this.debug && this.ui.current === 'settings') this.ui.refreshLive('timeOfDay', this.dayTime);
   }
 
+  // Controller in the game world: sticks, triggers, face buttons, bumpers, D-pad.
+  applyPadControls(pad, ctl, dt) {
+    const [lx, ly] = pad.left;
+    if (Math.abs(ly) > 0.001) ctl.forward = -ly;
+    if (Math.abs(lx) > 0.001) ctl.strafe = lx;
+    if (pad.pressed(PAD.LS)) this.padSprint = !this.padSprint;
+    if (ctl.forward < 0.3) this.padSprint = false;
+    ctl.sprint = ctl.sprint || this.padSprint;
+    // look: a gentle curve for aiming, speeding up while the stick is held at the edge
+    const [rx, ry] = pad.right;
+    const mag = Math.hypot(rx, ry);
+    this.padEdge = mag > 0.93 ? (this.padEdge || 0) + dt : 0;
+    if (mag > 0) {
+      const curve = Math.pow(mag, 1.8) / mag;
+      const boost = 1 + Math.min(1, Math.max(0, (this.padEdge - 0.25) / 0.4)) * 0.7;
+      const rate = 2.7 * boost * curve; // radians per second at full tilt
+      const px = (rx * rate * dt) / 0.0022, py = (ry * rate * 0.75 * dt) / 0.0022;
+      this.player.look(px, py, this.settings.padSensitivity || 1, this.settings.padInvertY);
+    }
+    ctl.jump = ctl.jump || pad.down(PAD.A);
+    if (pad.pressed(PAD.A)) {
+      const now = performance.now();
+      if (now - this.lastPadA < 300) ctl.toggleFly = true;
+      this.lastPadA = now;
+    }
+    ctl.sneak = ctl.sneak || pad.down(PAD.B);
+    if (pad.pressed(PAD.X)) ctl.toggleFly = true;
+    if (pad.pressed(PAD.Y)) { this.openInventory(); return; }
+    if (pad.pressed(PAD.LB) || pad.pressed(PAD.LEFT)) this.selectSlot((this.selected + 8) % 9);
+    if (pad.pressed(PAD.RB) || pad.pressed(PAD.RIGHT)) this.selectSlot((this.selected + 1) % 9);
+    if (pad.pressed(PAD.DOWN)) { this.hudHidden = !this.hudHidden; this.ui.setHud(!this.hudHidden); }
+    if (pad.pressed(PAD.VIEW)) { this.debug = !this.debug; if (!this.debug) this.ui.setDebug(null); }
+    if (pad.pressed(PAD.MENU)) this.pause();
+    this.ui.setLockHint(false);
+  }
+
+  // Controller in menus: D-pad / left stick move the focus, A chooses, B goes back.
+  updatePadMenus(pad) {
+    if (pad.pressed(PAD.A) || pad.pressed(PAD.MENU)) this.audio.unlock();
+    if (!this.menuOpen()) return;
+    const dir = pad.navDirection();
+    if (dir) {
+      if ((dir === 'left' || dir === 'right') && this.nav.adjust(dir === 'left' ? -1 : 1)) return;
+      this.nav.move(dir);
+    }
+    if (pad.pressed(PAD.A)) this.nav.activate();
+    if (pad.pressed(PAD.B)) this.handleBack();
+    if (pad.pressed(PAD.MENU)) {
+      if (this.state === 'paused' && this.ui.current === 'pause') this.play();
+      else if (this.state === 'title' && this.ui.current === 'title') this.play();
+    }
+    if (this.state === 'inventory') {
+      if (pad.pressed(PAD.Y)) this.closeInventory();
+      if (pad.pressed(PAD.LB)) this.selectSlot((this.selected + 8) % 9, true);
+      if (pad.pressed(PAD.RB)) this.selectSlot((this.selected + 1) % 9, true);
+    } else if (this.ui.current === 'settings') {
+      if (pad.pressed(PAD.LB)) this.ui.switchSettingsTab(-1);
+      if (pad.pressed(PAD.RB)) this.ui.switchSettingsTab(1);
+    }
+  }
+
   // Once per install: if the first stretch of play runs well below 30 fps, step the preset down.
   autoQuality() {
     if (this.state !== 'playing' || this.settings.autoTuned || !this.loadingDone) return;
@@ -493,15 +635,49 @@ export class Game {
     if (this.perfSamples.length < 16) return;
     const avg = this.perfSamples.reduce((a, b) => a + b, 0) / this.perfSamples.length;
     this.perfSamples = [];
-    const order = ['low', 'medium', 'high', 'ultra'];
+    const order = PRESET_ORDER;
     const i = order.indexOf(this.settings.preset);
     if (avg < 26 && i > 0) {
       this.changeSetting('preset', order[i - 1]);
       if (this.settings.renderDistance > 8) this.changeSetting('renderDistance', 8);
-      this.ui.toast(`Running at ${Math.round(avg)} fps, switched graphics to ${order[i - 1]}. Change it in Settings.`, 5000);
+      this.ui.toast(t('toast.autoQuality', { fps: Math.round(avg), preset: t('preset.' + order[i - 1]) }), 5000);
       if (i - 1 === 0) this.markTuned();
     } else {
       this.markTuned();
+    }
+  }
+
+  // Dynamic resolution: every half second, compare the frame rate with the target and move the
+  // render scale in small steps (down quickly, up slowly), never above the chosen resolution scale.
+  // Frames limited by the CPU (world streaming, meshing) are left alone: fewer pixels won't help.
+  updateDynamicResolution() {
+    const r = this.renderer;
+    if (!r) return;
+    if (!this.settings.dynamicRes || this.state !== 'playing' || !this.loadingDone) {
+      if (!this.settings.dynamicRes) r.dynScale = 1;
+      this.dynGood = 0;
+      return;
+    }
+    const target = this.settings.targetFps || 30;
+    const fps = this.fps;
+    const interval = 1000 / Math.max(fps, 1);
+    const cpuBound = this.frameMs > interval * 0.75;
+    const cur = r.dynScale || 1;
+    let next = cur;
+    this.dynCooldown = Math.max(0, (this.dynCooldown || 0) - 1);
+    if (this.dynCooldown > 0) return;
+    if (fps < target * 0.88 && !cpuBound && cur > 0.5) {
+      // bigger steps when far below the target
+      const step = fps < target * 0.6 ? 0.15 : 0.08;
+      next = Math.max(0.5, cur - step);
+      this.dynGood = 0;
+    } else if (fps > target * 1.15 || fps > 58) {
+      this.dynGood = (this.dynGood || 0) + 1;
+      if (this.dynGood >= 6 && cur < 1) { next = Math.min(1, cur + 0.05); this.dynGood = 0; }
+    } else this.dynGood = 0;
+    if (Math.abs(next - cur) > 1e-3) {
+      r.dynScale = next;
+      this.dynCooldown = 3;
     }
   }
 
@@ -549,7 +725,7 @@ export class Game {
     if (i === this.selected) return;
     this.selected = i;
     this.ui.renderHotbar(this.hotbar, this.selected);
-    this.ui.showBlockName(BLOCKS[this.hotbar[i]].name);
+    this.ui.showBlockName(blockName(BLOCKS[this.hotbar[i]]));
   }
 
   computeCamera(dt) {
@@ -598,9 +774,11 @@ export class Game {
 
   updateLoading() {
     if (this.loadingDone) return;
-    const p = this.state === 'title' || this.state === 'boot' ? this.titleAnchor : this.player.pos;
+    // chunks stream in around the camera (which circles the anchor on the title screen), so wait
+    // for the ones around the camera, within a radius the render distance can actually mesh
+    const p = this.state === 'title' || this.state === 'boot' ? (this.camera ? this.camera.pos : this.titleAnchor) : this.player.pos;
     const pcx = Math.floor(p[0] / CHUNK_SIZE), pcz = Math.floor(p[2] / CHUNK_SIZE);
-    const R = 3;
+    const R = Math.max(1, Math.min(3, this.world.renderDistance - 2));
     let total = 0, ready = 0;
     for (let dz = -R; dz <= R; dz++) {
       for (let dx = -R; dx <= R; dx++) {
@@ -615,7 +793,7 @@ export class Game {
       this.ui.setLoading(null);
       this.renderer.exposureReset = true;
     } else {
-      this.ui.setLoading(ready / total, `${ready} / ${total} chunks near you`);
+      this.ui.setLoading(ready / total, t('load.chunks', { ready, total }));
     }
   }
 
@@ -628,8 +806,11 @@ export class Game {
     const input = this.input;
     const tc = input.touch;
     // a click that started and ended between two frames still counts
-    const lmb = input.buttons.has(0) || input.clicked.has(0) || tc.breakHeld;
-    const rmb = input.buttons.has(2) || input.clicked.has(2);
+    const pad = this.pads;
+    const lmb = input.buttons.has(0) || input.clicked.has(0) || tc.breakHeld || tc.breakBtn || (pad.connected && pad.down(PAD.RT));
+    const rmb = input.buttons.has(2) || input.clicked.has(2) || (pad.connected && pad.down(PAD.LT));
+    if (pad.connected && pad.pressed(PAD.RT)) this.breakTimer = 0;
+    if (pad.connected && pad.pressed(PAD.LT)) this.placeTimer = 0;
     this.breakTimer -= dt;
     this.placeTimer -= dt;
     if (input.clicked.has(0)) this.breakTimer = 0;
@@ -645,14 +826,14 @@ export class Game {
         this.placeBlock(hit);
       }
     }
-    if (input.clicked.has(1) && hit) {
+    if ((input.clicked.has(1) || (pad.connected && pad.pressed(PAD.RS))) && hit) {
       const id = hit.block;
       const idx = this.hotbar.indexOf(id);
       if (idx >= 0) this.selectSlot(idx);
       else if (BLOCKS[id].inventory) {
         this.hotbar[this.selected] = id;
         this.ui.renderHotbar(this.hotbar, this.selected);
-        this.ui.showBlockName(BLOCKS[id].name);
+        this.ui.showBlockName(blockName(BLOCKS[id]));
       }
     }
   }
@@ -667,6 +848,8 @@ export class Game {
     this.particles.burst(x, y, z, block, sl / 15, bl / 15);
     this.audio.play('break', materialOf(BLOCKS[block]));
     this.swing = 1;
+    if (this.touch) this.touch.vibrate(14);
+    if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0.25, 0.4, 60);
   }
 
   placeBlock(hit) {
@@ -684,6 +867,8 @@ export class Game {
     if (this.world.setBlock(x, y, z, id)) {
       this.audio.play('place', materialOf(BLOCKS[id]));
       this.swing = 1;
+      if (this.touch) this.touch.vibrate(8);
+      if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0, 0.3, 35);
     }
   }
 
@@ -795,21 +980,22 @@ export class Game {
     const col = this.world.generator.column(x, z);
     const [sl, bl] = this.world.getLight(x, Math.floor(p.pos[1] + 1), z);
     const yawDeg = ((((-p.yaw * 180) / Math.PI) % 360) + 360) % 360;
-    const facing = ['north (-Z)', 'east (+X)', 'south (+Z)', 'west (-X)'][Math.round(yawDeg / 90) % 4];
+    const facing = tList('dbg.dirs')[Math.round(yawDeg / 90) % 4];
     const gl = r.gl;
     const dbg = gl.getExtension('WEBGL_debug_renderer_info');
     const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
-    const t = r.targets;
+    const tg = r.targets;
+    const motion = p.flying ? 'dbg.flying' : p.inWater ? 'dbg.swimming' : p.onGround ? 'dbg.onGround' : 'dbg.airborne';
     return [
-      `Lumencraft  ${this.fps.toFixed(0)} fps  (${this.frameMs.toFixed(1)} ms cpu)`,
+      `Lumencraft  ${this.fps.toFixed(0)} fps  (${this.frameMs.toFixed(1)} ms ${t('dbg.cpu')})`,
       `XYZ ${p.pos[0].toFixed(2)} ${p.pos[1].toFixed(2)} ${p.pos[2].toFixed(2)}`,
-      `Chunk ${Math.floor(x / 16)} ${Math.floor(z / 16)}   facing ${facing}`,
-      `Biome ${BIOME_NAMES[col.biome]}   light sky ${sl} block ${bl}`,
-      `Time ${clockText(this.dayTime)}   weather ${this.weather.describe()}${this.precip.type !== 'rain' ? ' (' + this.precip.type + ')' : ''}   ${p.flying ? 'flying' : p.inWater ? 'swimming' : p.onGround ? 'on ground' : 'airborne'}`,
-      `Chunks ${this.world.chunks.size} loaded, ${r.stats.chunks} drawn, ${r.stats.shadowChunks} in shadow pass`,
+      `Chunk ${Math.floor(x / 16)} ${Math.floor(z / 16)}   ${t('dbg.facing')} ${facing}`,
+      `${t('dbg.biome')} ${tList('biomes')[col.biome]}   ${t('dbg.light', { sky: sl, block: bl })}`,
+      `${t('dbg.time')} ${clockText(this.dayTime)}   ${t('dbg.weather')} ${this.weather.describe()}${this.precip.type !== 'rain' ? ' (' + this.precip.type + ')' : ''}   ${t(motion)}`,
+      t('dbg.chunks', { loaded: this.world.chunks.size, drawn: r.stats.chunks, shadow: r.stats.shadowChunks }),
       `Draws ${r.stats.draws}   tris ${(r.stats.tris / 1000).toFixed(0)}k`,
-      `Render ${t ? t.w + 'x' + t.h : ''}  preset ${this.settings.preset}  shadows ${this.settings.shadows ? this.settings.shadowRes : 'off'}`,
-      `Seed ${this.world.seed}`,
+      t('dbg.render', { size: tg ? tg.w + 'x' + tg.h + ((r.dynScale || 1) < 1 ? ` (${Math.round(r.dynScale * 100)}%)` : '') : '', preset: t('preset.' + this.settings.preset), shadows: this.settings.shadows ? this.settings.shadowRes : t('dbg.off') }),
+      `${t('dbg.seed')} ${this.world.seed}`,
       gpu ? `GPU ${String(gpu).slice(0, 60)}` : '',
     ].filter(Boolean).join('\n');
   }

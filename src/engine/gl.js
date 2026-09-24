@@ -1,5 +1,7 @@
 // Thin WebGL2 helpers: programs, textures, render targets, fullscreen passes.
 
+import { t } from '../ui/i18n.js';
+
 export function createContext(canvas) {
   const gl = canvas.getContext('webgl2', {
     antialias: false,
@@ -10,7 +12,7 @@ export function createContext(canvas) {
     powerPreference: 'high-performance',
     preserveDrawingBuffer: false,
   });
-  if (!gl) throw new Error('WebGL2 is not available in this browser.');
+  if (!gl) throw new Error(t('err.noWebgl2'));
   const ext = {
     colorFloat: gl.getExtension('EXT_color_buffer_float'),
     colorHalf: gl.getExtension('EXT_color_buffer_half_float'),
@@ -19,7 +21,7 @@ export function createContext(canvas) {
     timer: null,
   };
   if (!ext.colorFloat && !ext.colorHalf) {
-    throw new Error('This browser cannot render to floating point textures (EXT_color_buffer_float), which the HDR pipeline needs.');
+    throw new Error(t('err.noFloat'));
   }
   return { gl, ext };
 }

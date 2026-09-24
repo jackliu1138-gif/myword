@@ -15,7 +15,7 @@ export class Input {
     this.dragging = false;
     this.enabled = false; // only capture while playing
     this.onLockChange = null;
-    this.touch = { active: false, move: [0, 0], jump: false, sneak: false, breakHeld: false, tap: false, toggleFly: false, menu: false, inventory: false };
+    this.touch = { active: false, move: [0, 0], jump: false, sneak: false, breakHeld: false, breakBtn: false, tap: false, toggleFly: false, menu: false, inventory: false };
     this.lastSpace = 0;
     this.doubleSpace = false;
     this.lastW = 0;
@@ -147,11 +147,25 @@ export class Input {
   }
 }
 
-// On-screen controls for touch devices.
+// On-screen controls for touch devices: a floating stick on the left, drag-to-look anywhere else,
+// tap to place / hold to break on the view itself, plus buttons for players who prefer them.
+const ICONS = {
+  jump: '<svg viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  sneak: '<svg viewBox="0 0 24 24"><path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  break: '<svg viewBox="0 0 24 24"><path d="M5.5 19.5l9.5-9.5" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/><path d="M7.5 6.2c4.6-3.3 10.4-2.4 13.3 1.9.3.5-.3 1-.8.7-2.7-1.6-6.2-1.6-9 .1z" fill="currentColor"/><path d="M13 6.4l4.4 4.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+  place: '<svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z M4 7.5l8 4.5 8-4.5 M12 12v9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  inventory: '<svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+  fly: '<svg viewBox="0 0 24 24"><path d="M12 13c-2-4.5-5.6-7-9.5-7.5 1 4.2 3.8 7.4 7.8 8.4M12 13c2-4.5 5.6-7 9.5-7.5-1 4.2-3.8 7.4-7.8 8.4M12 13v7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  fullscreen: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+};
+
 export class TouchControls {
-  constructor(root, input) {
+  // opts: { settings: () => settings object, t: translate }
+  constructor(root, input, opts = {}) {
     this.input = input;
     this.root = root;
+    this.opts = opts;
     this.stickId = null;
     this.lookId = null;
     this.lookLast = null;
@@ -160,52 +174,148 @@ export class TouchControls {
     this.holdTimer = null;
     const el = document.createElement('div');
     el.className = 'touch-ui';
+    const btn = (cls, key, icon, label) => `<button type="button" class="touch-btn ${cls}" data-key="${key}" data-label="${label}">${icon}</button>`;
     el.innerHTML = `
       <div class="touch-stick"><div class="touch-knob"></div></div>
-      <button class="touch-btn touch-jump" aria-label="Jump">&#9650;</button>
-      <button class="touch-btn touch-sneak" aria-label="Sneak or fly down">&#9660;</button>
-      <button class="touch-btn touch-fly" aria-label="Toggle flying">FLY</button>
-      <button class="touch-btn touch-inv" aria-label="Inventory">&#9638;</button>
-      <button class="touch-btn touch-menu" aria-label="Pause">II</button>`;
+      ${btn('touch-jump', 'jump', ICONS.jump, 'touch.jump')}
+      ${btn('touch-sneak', 'sneak', ICONS.sneak, 'touch.sneak')}
+      ${btn('touch-break', 'breakBtn', ICONS.break, 'touch.break')}
+      ${btn('touch-place', 'placeBtn', ICONS.place, 'touch.place')}
+      ${btn('touch-fly', 'toggleFly', ICONS.fly, 'touch.fly')}
+      <div class="touch-top">
+        ${btn('touch-full', 'fullscreen', ICONS.fullscreen, 'touch.fullscreen')}
+        ${btn('touch-inv', 'inventory', ICONS.inventory, 'touch.inventory')}
+        ${btn('touch-menu', 'menu', ICONS.pause, 'touch.pause')}
+      </div>
+      <div class="touch-rotate" hidden></div>`;
     root.appendChild(el);
     this.el = el;
     this.stick = el.querySelector('.touch-stick');
     this.knob = el.querySelector('.touch-knob');
-    const hold = (sel, key) => {
-      const b = el.querySelector(sel);
-      b.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); input.touch[key] = true; }, { passive: false });
-      b.addEventListener('touchend', (e) => { e.preventDefault(); input.touch[key] = false; }, { passive: false });
-    };
-    hold('.touch-jump', 'jump');
-    hold('.touch-sneak', 'sneak');
-    el.querySelector('.touch-fly').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); input.touch.toggleFly = true; }, { passive: false });
-    el.querySelector('.touch-inv').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); input.touch.inventory = true; }, { passive: false });
-    el.querySelector('.touch-menu').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); input.touch.menu = true; }, { passive: false });
+    this.rotateHint = el.querySelector('.touch-rotate');
+    const fsOk = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+    if (!fsOk) el.querySelector('.touch-full').hidden = true;
+
+    // buttons: hold keys stay down while touched, the others fire once per press
+    const holdKeys = new Set(['jump', 'sneak', 'breakBtn']);
+    for (const b of el.querySelectorAll('.touch-btn')) {
+      const key = b.dataset.key;
+      const down = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!this.input.enabled && key !== 'fullscreen') return;
+        b.classList.add('down');
+        this.input.touch.active = true;
+        if (holdKeys.has(key)) input.touch[key] = true;
+        else if (key === 'placeBtn') input.touch.tap = true;
+        else if (key === 'fullscreen') this.toggleFullscreen();
+        else input.touch[key] = true;
+      };
+      const up = (e) => {
+        e.preventDefault();
+        b.classList.remove('down');
+        if (holdKeys.has(key)) input.touch[key] = false;
+      };
+      b.addEventListener('touchstart', down, { passive: false });
+      b.addEventListener('touchend', up, { passive: false });
+      b.addEventListener('touchcancel', up, { passive: false });
+      b.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
 
     const canvas = input.canvas;
     canvas.addEventListener('touchstart', (e) => this.onStart(e), { passive: false });
     canvas.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
     canvas.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
     canvas.addEventListener('touchcancel', (e) => this.onEnd(e), { passive: false });
-    this.stick.addEventListener('touchstart', (e) => this.onStart(e, true), { passive: false });
-    this.stick.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
-    this.stick.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
+    // iOS pinch-zoom and callouts
+    document.addEventListener('gesturestart', (e) => e.preventDefault());
+    window.addEventListener('resize', () => this.layout());
+    this.refreshLabels();
+    this.applySettings();
+  }
+
+  get settings() {
+    return this.opts.settings ? this.opts.settings() : {};
+  }
+
+  applySettings() {
+    const s = this.settings;
+    this.el.style.setProperty('--touch-scale', String(s.touchSize || 1));
+    this.el.style.setProperty('--touch-alpha', String(s.touchOpacity ?? 0.7));
+    this.layout();
+  }
+
+  refreshLabels() {
+    const t = this.opts.t || ((k) => k);
+    for (const b of this.el.querySelectorAll('.touch-btn')) b.setAttribute('aria-label', t(b.dataset.label));
+    this.rotateHint.textContent = t('touch.rotate');
+  }
+
+  layout() {
+    const portrait = window.innerHeight > window.innerWidth * 1.1;
+    this.el.classList.toggle('portrait', portrait);
+    this.rotateHint.hidden = !(portrait && Math.min(window.innerWidth, window.innerHeight) < 700);
   }
 
   show(v) {
     this.el.classList.toggle('visible', v);
+    if (!v) this.release();
   }
 
-  onStart(e, fromStick = false) {
+  setFlyVisible(v) {
+    this.el.querySelector('.touch-fly').hidden = !v;
+  }
+
+  // drop every held control (menus opened, focus lost)
+  release() {
+    const tc = this.input.touch;
+    tc.move = [0, 0];
+    tc.jump = tc.sneak = tc.breakBtn = tc.breakHeld = false;
+    this.stickId = null;
+    this.lookId = null;
+    this.knob.style.transform = '';
+    this.stick.classList.remove('floating');
+    this.stick.style.left = this.stick.style.top = '';
+    clearTimeout(this.holdTimer);
+    for (const b of this.el.querySelectorAll('.touch-btn.down')) b.classList.remove('down');
+  }
+
+  toggleFullscreen() {
+    const d = document;
+    const el = d.documentElement;
+    try {
+      if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+      else {
+        const p = (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' });
+        const lock = () => { try { const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); } catch (e) { /* ignore */ } };
+        if (p && p.then) p.then(lock).catch(() => {}); else lock();
+      }
+    } catch (e) { /* not available */ }
+  }
+
+  vibrate(ms) {
+    if (!this.settings.touchHaptics || !navigator.vibrate) return;
+    try { navigator.vibrate(ms); } catch (e) { /* ignore */ }
+  }
+
+  onStart(e) {
     if (!this.input.enabled) return;
     e.preventDefault();
     this.input.touch.active = true;
     for (const t of e.changedTouches) {
-      const left = t.clientX < window.innerWidth * 0.4;
-      if ((fromStick || left) && this.stickId === null) {
+      const left = t.clientX < window.innerWidth * 0.42 && t.clientY > window.innerHeight * 0.25;
+      if (left && this.stickId === null) {
         this.stickId = t.identifier;
+        // the stick appears under the thumb, kept fully on screen
         const r = this.stick.getBoundingClientRect();
-        this.stickCenter = [r.left + r.width / 2, r.top + r.height / 2];
+        const half = r.width / 2;
+        const cx = Math.max(half + 8, Math.min(window.innerWidth * 0.42, t.clientX));
+        const cy = Math.max(half + 8, Math.min(window.innerHeight - half - 8, t.clientY));
+        this.stick.classList.add('floating');
+        this.stick.style.left = (cx - half) + 'px';
+        this.stick.style.top = (cy - half) + 'px';
+        this.stickCenter = [cx, cy];
+        this.stickRadius = half * 0.78;
         this.updateStick(t);
       } else if (this.lookId === null) {
         this.lookId = t.identifier;
@@ -221,24 +331,26 @@ export class TouchControls {
 
   updateStick(t) {
     const dx = t.clientX - this.stickCenter[0], dy = t.clientY - this.stickCenter[1];
-    const max = 46;
+    const max = this.stickRadius || 46;
     const len = Math.hypot(dx, dy);
     const k = len > max ? max / len : 1;
     this.knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
     this.input.touch.move = [(dx * k) / max, (dy * k) / max];
+    this.stick.classList.toggle('sprint', -this.input.touch.move[1] > 0.92);
   }
 
   onMove(e) {
     if (!this.input.enabled) return;
     e.preventDefault();
+    const sens = 2.2 * (this.settings.touchSensitivity || 1);
     for (const t of e.changedTouches) {
       if (t.identifier === this.stickId) this.updateStick(t);
       else if (t.identifier === this.lookId) {
         const dx = t.clientX - this.lookLast[0], dy = t.clientY - this.lookLast[1];
         this.lookLast = [t.clientX, t.clientY];
         if (Math.hypot(t.clientX - this.lookStart[0], t.clientY - this.lookStart[1]) > 12) this.moved = true;
-        this.input.mouseDX += dx * 2.2;
-        this.input.mouseDY += dy * 2.2;
+        this.input.mouseDX += dx * sens;
+        this.input.mouseDY += dy * sens;
       }
     }
   }
@@ -248,6 +360,8 @@ export class TouchControls {
       if (t.identifier === this.stickId) {
         this.stickId = null;
         this.knob.style.transform = '';
+        this.stick.classList.remove('floating', 'sprint');
+        this.stick.style.left = this.stick.style.top = '';
         this.input.touch.move = [0, 0];
       } else if (t.identifier === this.lookId) {
         this.lookId = null;

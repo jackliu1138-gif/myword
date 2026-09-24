@@ -23,6 +23,25 @@ export const MAT = {
   SNOW: 9,
 };
 
+
+// Simplified Chinese block names (the interface language can be switched in Settings).
+const ZH_NAMES = {
+  stone: '石头', grass: '草方块', dirt: '泥土', cobblestone: '圆石', oak_planks: '橡木木板', oak_log: '橡木原木',
+  oak_leaves: '橡树树叶', sand: '沙子', gravel: '沙砾', water: '水', bedrock: '基岩', coal_ore: '煤矿石',
+  iron_ore: '铁矿石', gold_ore: '金矿石', diamond_ore: '钻石矿石', glass: '玻璃', bricks: '砖块', stone_bricks: '石砖',
+  snow: '雪块', snowy_grass: '雪地草方块', ice: '冰', cactus: '仙人掌', birch_log: '白桦原木', birch_leaves: '白桦树叶',
+  spruce_log: '云杉原木', spruce_leaves: '云杉树叶', tall_grass: '草丛', fern: '蕨', poppy: '虞美人', dandelion: '蒲公英',
+  cornflower: '矢车菊', dead_bush: '枯萎的灌木', torch: '火把', glowstone: '荧石', sandstone: '砂岩', clay: '黏土块',
+  mossy_cobblestone: '苔石', obsidian: '黑曜石', bookshelf: '书架', crafting_table: '工作台', lava: '熔岩',
+  smooth_stone: '平滑石头', gold_block: '金块', iron_block: '铁块', diamond_block: '钻石块', quartz_block: '石英块',
+  sea_lantern: '海晶灯', birch_planks: '白桦木板', spruce_planks: '云杉木板', terracotta: '陶瓦', pumpkin: '南瓜',
+  jack_o_lantern: '南瓜灯',
+  white_wool: '白色羊毛', orange_wool: '橙色羊毛', magenta_wool: '品红色羊毛', light_blue_wool: '淡蓝色羊毛',
+  yellow_wool: '黄色羊毛', lime_wool: '黄绿色羊毛', pink_wool: '粉红色羊毛', gray_wool: '灰色羊毛', cyan_wool: '青色羊毛',
+  purple_wool: '紫色羊毛', blue_wool: '蓝色羊毛', brown_wool: '棕色羊毛', green_wool: '绿色羊毛', red_wool: '红色羊毛',
+  black_wool: '黑色羊毛',
+};
+
 const defs = [];
 export const BLOCK = {};
 
@@ -32,6 +51,7 @@ function def(name, props) {
     id,
     key: name,
     name: props.name || name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    zh: props.zh || ZH_NAMES[name] || '',
     shape: SHAPE.CUBE,
     solid: true,
     opaque: true,

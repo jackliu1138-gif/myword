@@ -2,7 +2,7 @@
 //   dist/index.html     full document (GitHub Pages, or open straight from disk)
 //   dist/fragment.html  same page without <html>/<head>/<body>, for hosts that supply the skeleton
 import { build } from 'esbuild';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
 
 const minify = !process.argv.includes('--dev');
 
@@ -44,8 +44,12 @@ const full = html
 const title = (html.match(/<title>[\s\S]*?<\/title>/) || [''])[0];
 const fragment = [title, section('FONTS').trim(), styleTag, section('BODY').trim(), workerTag, mainTag].join('\n');
 
-await mkdir('dist', { recursive: true });
+await mkdir('dist/icons', { recursive: true });
 await writeFile('dist/index.html', full);
+// installable web app: manifest and icons next to the page
+for (const f of ['manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png']) {
+  await copyFile(f, 'dist/' + f);
+}
 await writeFile('dist/fragment.html', fragment);
 const kb = (s) => (Buffer.byteLength(s) / 1024).toFixed(0) + ' KB';
 console.log(`dist/index.html ${kb(full)}  (game ${kb(mainSrc)}, worker ${kb(workerSrc)})`);
