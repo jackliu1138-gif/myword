@@ -401,7 +401,8 @@ export class Game {
       }
       ctl.jump = k('Space') || tc.jump;
       ctl.sneak = k('ShiftLeft') || k('ShiftRight') || tc.sneak;
-      ctl.sprint = ctl.sprint || k('KeyR') || k('ControlLeft') || frameInput.doubleW || (this.player.sprinting && ctl.forward > 0);
+      // (no Ctrl for sprint: Ctrl+W would close the browser tab)
+      ctl.sprint = ctl.sprint || k('KeyR') || frameInput.doubleW || (this.player.sprinting && ctl.forward > 0);
       ctl.toggleFly = frameInput.doubleSpace || input.wasPressed('KeyF') || tc.toggleFly;
       tc.toggleFly = false;
       if (tc.menu) { tc.menu = false; this.pause(); }
@@ -519,10 +520,11 @@ export class Game {
     this.precip.amount = amount;
     this.precip.type = this.precipType || 'rain';
     if (amount <= 0) return;
-    const ox = Math.floor(cam.pos[0]) - 32, oz = Math.floor(cam.pos[2]) - 32;
+    // the map covers 64x64 columns and the rain box only 52x52, so it can lag a few blocks behind
+    const ox = Math.floor(cam.pos[0] / 4) * 4 - 32, oz = Math.floor(cam.pos[2] / 4) * 4 - 32;
     const key = ox + ',' + oz;
     const now = performance.now();
-    if (key === this.rainMapKey && now - this.rainMapTime < 1500) return;
+    if (key === this.rainMapKey && now - this.rainMapTime < 2000) return;
     this.rainMapKey = key;
     this.rainMapTime = now;
     const w = this.world, d = this.rainMapData;
