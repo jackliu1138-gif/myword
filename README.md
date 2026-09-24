@@ -21,6 +21,8 @@ npm run build    # writes dist/index.html (about 250 KB)
 
 `dist/index.html` runs straight from disk (double-click it) or from any static host.
 
+`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving and weather, without a browser.
+
 ### Controls
 
 | Input | Action |
@@ -91,6 +93,7 @@ src/render/shaders/        GLSL: terrain, sky, clouds, lighting, water, post-pro
 src/game/                  game loop, player physics, input, audio, particles, saving
 src/ui/                    menus, settings, hotbar, inventory, block icons
 tools/                     dev server and single-file build
+test/                      Node tests (npm test)
 ```
 
 ## Deploying to GitHub Pages
