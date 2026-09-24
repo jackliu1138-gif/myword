@@ -1,0 +1,15 @@
+{
+  "name": "lumencraft",
+  "version": "1.0.0",
+  "description": "A Minecraft-style voxel sandbox for the browser with physically based sky, soft shadows, volumetric clouds, god rays and reflective water. Plain WebGL 2, no runtime dependencies.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/serve.mjs 8080",
+    "build": "node tools/build.mjs",
+    "preview": "node tools/build.mjs && node tools/serve.mjs 8081 dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lumencraft</title>
+<meta name="description" content="A Minecraft-style voxel sandbox in the browser with physically based sky, soft shadows, volumetric clouds, god rays and reflective water.">
+<!--FONTS-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Pixelify+Sans:wght@500;700&display=swap">
+<!--/FONTS-->
+<!--STYLES--><link rel="stylesheet" href="styles.css"><!--/STYLES-->
+</head>
+<body>
+<!--BODY-->
+<div id="app">
+  <canvas id="view" tabindex="0" aria-label="Game view"></canvas>
+
+  <div id="hud" hidden>
+    <div class="crosshair" aria-hidden="true"></div>
+    <pre id="debug" hidden></pre>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <div id="blockname" aria-hidden="true"></div>
+    <div id="hotbar" aria-label="Hotbar"></div>
+    <div id="lockhint" hidden>Click to look around</div>
+  </div>
+
+  <section id="title" class="screen" hidden>
+    <div class="title-col">
+      <p class="eyebrow">Voxel sandbox &middot; WebGL 2</p>
+      <h1 class="logo">Lumencraft</h1>
+      <p class="tagline">An endless blocky world with a physically based sky, soft shadows, volumetric clouds and water that reflects it all.</p>
+      <div class="menu">
+        <button id="btn-play" class="btn primary" type="button">Play</button>
+        <button id="btn-new" class="btn" type="button">New world</button>
+        <button id="btn-settings" class="btn" type="button">Settings</button>
+        <button id="btn-help" class="btn" type="button">Controls</button>
+      </div>
+      <p class="meta" id="title-meta"></p>
+    </div>
+    <aside class="title-card" aria-label="Quick controls">
+      <h2>Quick start</h2>
+      <dl class="keys">
+        <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move</dd></div>
+        <div><dt><kbd>Space</kbd></dt><dd>Jump &middot; double-tap to fly</dd></div>
+        <div><dt><kbd>Left click</kbd></dt><dd>Break block</dd></div>
+        <div><dt><kbd>Right click</kbd></dt><dd>Place block</dd></div>
+        <div><dt><kbd>E</kbd></dt><dd>All blocks</dd></div>
+        <div><dt><kbd>T</kbd></dt><dd>Hold to speed up time</dd></div>
+      </dl>
+    </aside>
+  </section>
+
+  <section id="pause" class="screen dim" hidden>
+    <div class="sheet narrow">
+      <h2>Paused</h2>
+      <div class="menu">
+        <button id="btn-resume" class="btn primary" type="button">Resume</button>
+        <button id="btn-pause-settings" class="btn" type="button">Settings</button>
+        <button id="btn-pause-help" class="btn" type="button">Controls</button>
+        <button id="btn-title" class="btn" type="button">Save and go to title</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings" class="screen dim" hidden>
+    <div class="sheet wide">
+      <header class="sheet-head">
+        <h2>Settings</h2>
+        <div class="tabs" role="tablist" id="settings-tabs"></div>
+      </header>
+      <div id="settings-body" class="settings-body"></div>
+      <footer class="sheet-foot">
+        <p class="hint" id="settings-hint">Changes apply immediately.</p>
+        <button id="btn-settings-done" class="btn primary" type="button">Done</button>
+      </footer>
+    </div>
+  </section>
+
+  <section id="help" class="screen dim" hidden>
+    <div class="sheet">
+      <h2>Controls</h2>
+      <dl class="keys two-col">
+        <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Walk</dd></div>
+        <div><dt><kbd>Mouse</kbd></dt><dd>Look around</dd></div>
+        <div><dt><kbd>Space</kbd></dt><dd>Jump, swim up, fly up</dd></div>
+        <div><dt><kbd>Space</kbd> &times;2</dt><dd>Toggle flying (or <kbd>F</kbd>)</dd></div>
+        <div><dt><kbd>Shift</kbd></dt><dd>Sneak, fly down</dd></div>
+        <div><dt><kbd>W</kbd> &times;2 or <kbd>R</kbd></dt><dd>Sprint</dd></div>
+        <div><dt><kbd>Left click</kbd></dt><dd>Break (hold to keep breaking)</dd></div>
+        <div><dt><kbd>Right click</kbd></dt><dd>Place</dd></div>
+        <div><dt><kbd>Middle click</kbd></dt><dd>Pick the block you're looking at</dd></div>
+        <div><dt><kbd>1</kbd>&ndash;<kbd>9</kbd> / wheel</dt><dd>Choose hotbar slot</dd></div>
+        <div><dt><kbd>E</kbd></dt><dd>Open all blocks</dd></div>
+        <div><dt><kbd>T</kbd></dt><dd>Hold to fast-forward the day</dd></div>
+        <div><dt><kbd>F3</kbd> or <kbd>`</kbd></dt><dd>Debug info</dd></div>
+        <div><dt><kbd>H</kbd></dt><dd>Hide the interface</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>Pause</dd></div>
+        <div><dt>Touch</dt><dd>Left stick moves, drag to look, tap places, hold breaks</dd></div>
+      </dl>
+      <div class="sheet-foot">
+        <span></span>
+        <button id="btn-help-done" class="btn primary" type="button">Back</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="newworld" class="screen dim" hidden>
+    <div class="sheet narrow">
+      <h2>New world</h2>
+      <p class="hint">This replaces the world you have now, including everything you built.</p>
+      <label class="field" for="seed-input">
+        <span>Seed (leave empty for a random one)</span>
+        <input id="seed-input" type="text" inputmode="text" autocomplete="off" maxlength="40" placeholder="e.g. lighthouse">
+      </label>
+      <div class="menu row">
+        <button id="btn-newworld-cancel" class="btn" type="button">Cancel</button>
+        <button id="btn-newworld-create" class="btn primary" type="button">Create world</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="inventory" class="screen dim" hidden>
+    <div class="sheet wide">
+      <header class="sheet-head">
+        <h2>Blocks</h2>
+        <p class="hint">Click a block to put it in the selected hotbar slot. <kbd>E</kbd> closes.</p>
+      </header>
+      <div id="inv-grid" class="inv-grid"></div>
+      <div id="inv-hotbar" class="inv-hotbar"></div>
+    </div>
+  </section>
+
+  <div id="loading" hidden>
+    <p class="loading-title">Shaping terrain</p>
+    <div class="bar"><div class="fill"></div></div>
+    <p class="loading-sub" id="loading-sub">Generating chunks&hellip;</p>
+  </div>
+
+  <div id="error" hidden>
+    <div class="sheet narrow">
+      <h2>Can't start the renderer</h2>
+      <p id="error-text"></p>
+      <p class="hint">Lumencraft needs WebGL 2 with floating-point render targets. Recent Chrome, Edge, Firefox and Safari support it; check that hardware acceleration is turned on.</p>
+    </div>
+  </div>
+</div>
+<!--/BODY-->
+<!--SCRIPT--><script type="module" src="src/main.js"></script><!--/SCRIPT-->
+</body>
+</html>
