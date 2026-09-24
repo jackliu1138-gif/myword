@@ -36,9 +36,10 @@ async function boot(hotData) {
   const ui = new UI();
   const canvas = document.getElementById('view');
   const opts = {};
-  // test hooks: ?seed=123&preset=low&fresh=1&lang=zh
+  // test hooks: ?seed=123&preset=low&fresh=1&lang=zh&mode=creative
   if (q.seed !== undefined) opts.seed = parseInt(q.seed, 10) | 0;
   if (q.fresh) opts.freshWorld = true;
+  if (q.mode === 'creative' || q.mode === 'survival') opts.mode = q.mode;
   if (q.preset) opts.settingsOverride = { preset: q.preset };
   if (q.lang) opts.settingsOverride = { ...(opts.settingsOverride || {}), language: q.lang };
   const game = new Game(canvas, ui, opts);

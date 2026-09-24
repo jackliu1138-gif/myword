@@ -1,8 +1,9 @@
 // DOM user interface: screens, settings, hotbar, inventory, toasts, help, device check, debug overlay.
 
-import { BLOCKS } from '../world/blocks.js';
-import { t, blockName, applyI18n, getLanguage } from './i18n.js';
+import { BLOCKS, BLOCK } from '../world/blocks.js';
+import { t, blockName, itemName, applyI18n, getLanguage } from './i18n.js';
 import { GLYPHS } from '../game/gamepad.js';
+import { ITEMS, RECIPES, itemDef } from '../sim/items.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,6 +44,8 @@ const SCHEMA = [
   {
     tab: 'world',
     items: [
+      { key: 'gameMode', type: 'choice', label: 'set.gameMode', options: [['survival', 'mode.survival'], ['creative', 'mode.creative']], desc: 'set.gameMode.desc' },
+      { key: 'difficulty', type: 'choice', label: 'set.difficulty', options: [['peaceful', 'diff.peaceful'], ['easy', 'diff.easy'], ['normal', 'diff.normal'], ['hard', 'diff.hard']], desc: 'set.difficulty.desc' },
       { key: 'weather', type: 'choice', label: 'set.weather', full: true, options: [['auto', 'weather.auto'], ['clear', 'weather.clear'], ['rain', 'weather.rain'], ['storm', 'weather.storm']], desc: 'set.weather.desc' },
       { key: 'timeOfDay', type: 'range', label: 'set.timeOfDay', min: 0, max: 1, step: 0.005, fmt: (v) => clockText(v), live: true },
       { key: 'dayLength', type: 'range', label: 'set.dayLength', min: 2, max: 60, step: 1, fmt: (v) => t('unit.minutes', { n: v }) },
@@ -93,6 +96,7 @@ const HELP = [
       [kb('i18n:key.middleClick'), 'act.pick'],
       [kb('1–9', 'i18n:key.wheel'), 'act.hotbar'],
       [kb('E'), 'act.inventory'],
+      [kb('Q'), 'act.drop'],
       [kb('T'), 'act.fastTime'],
       [kb('F3', 'i18n:key.or', '`'), 'act.debug'],
       [kb('H'), 'act.hideHud'],
@@ -164,6 +168,8 @@ function deviceRows(rows) {
   }).join('');
 }
 
+const SLOT_HTML = (num) => `${num !== '' ? `<span class="num">${num}</span>` : ''}<img alt="" hidden><span class="count"></span><span class="wear" hidden><i></i></span>`;
+
 export function clockText(tm) {
   // dayTime 0 = 06:00 sunrise
   const mins = Math.round(((tm * 24 + 6) % 24) * 60);
@@ -173,7 +179,8 @@ export function clockText(tm) {
 
 export class UI {
   constructor() {
-    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device'];
+    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death'];
+    this.newWorld = { mode: 'survival', difficulty: 'normal' };
     this.current = null;
     this.stack = [];
     this.handlers = {};
@@ -209,17 +216,41 @@ export class UI {
     click('btn-help-done', 'back');
     click('btn-newworld-cancel', 'back');
     click('btn-device-done', 'back');
+    click('btn-respawn', 'respawn');
+    click('btn-death-title', 'toTitle');
     $('btn-newworld-create').addEventListener('click', () => {
       this.emit('click');
-      this.emit('createWorld', $('seed-input').value.trim());
+      this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld });
     });
     $('seed-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.emit('createWorld', $('seed-input').value.trim());
+      if (e.key === 'Enter') this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld });
       e.stopPropagation();
     });
+    // new world: game mode and difficulty
+    const seg = (id, key, after) => {
+      for (const b of $(id).querySelectorAll('button')) {
+        b.addEventListener('click', () => {
+          this.emit('click');
+          this.newWorld[key] = b.dataset.v;
+          this.syncNewWorld();
+          if (after) after();
+        });
+      }
+    };
+    seg('new-mode', 'mode');
+    seg('new-diff', 'difficulty');
     for (const b of document.querySelectorAll('.lang-toggle button')) {
       b.addEventListener('click', () => { this.emit('click'); this.emit('setLanguage', b.dataset.lang); });
     }
+  }
+
+  syncNewWorld() {
+    const nw = this.newWorld;
+    for (const b of $('new-mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === nw.mode));
+    for (const b of $('new-diff').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === nw.difficulty));
+    const desc = $('new-mode-desc');
+    desc.dataset.i18n = 'mode.' + nw.mode + '.desc';
+    desc.textContent = t(desc.dataset.i18n);
   }
 
   // Re-render everything that carries text after the language changes.
@@ -234,6 +265,9 @@ export class UI {
     if (this.icons) this.buildInventory(this.icons);
     if (this.settingsRef && this.current === 'settings') this.buildSettings(this.settingsRef, this.onSettingChange);
     if (this.hotbarState) this.renderHotbar(...this.hotbarState);
+    if (this.invState) this.renderInventory(...this.invState);
+    if (this.vitalsState) { const v = this.vitalsState; this.vitalsState = null; this.setVitals(v); }
+    if (this.deathCause) this.showDeath(this.deathCause);
     if (this.deviceInfo) this.showDevice(this.deviceInfo);
   }
 
@@ -343,16 +377,64 @@ export class UI {
     el.textContent = text;
   }
 
+  // ------------------------------------------------------------ vitals
+  // v = { health, max, air, maxAir, underwater } or null (creative: no hearts)
+  setVitals(v) {
+    const box = $('vitals');
+    if (!v) { box.hidden = true; this.vitalsState = null; return; }
+    const prev = this.vitalsState;
+    this.vitalsState = { ...v };
+    box.hidden = false;
+    const hearts = $('hearts');
+    const n = Math.ceil(v.max / 2);
+    if (hearts.children.length !== n) hearts.innerHTML = '<i class="heart"></i>'.repeat(n);
+    const hp = Math.max(0, Math.ceil(v.health));
+    if (!prev || Math.ceil(prev.health) !== hp || prev.max !== v.max || !hearts.getAttribute('aria-label')) {
+      for (let i = 0; i < n; i++) hearts.children[i].className = 'heart' + (hp >= (i + 1) * 2 ? ' full' : hp === i * 2 + 1 ? ' half' : '');
+      hearts.classList.toggle('low', hp <= 4 && hp > 0);
+      hearts.setAttribute('aria-label', t('hud.health', { n: hp, max: v.max }));
+      if (prev && hp < Math.ceil(prev.health)) {
+        hearts.classList.remove('hit');
+        void hearts.offsetWidth; // restart the flash animation
+        hearts.classList.add('hit');
+      }
+    }
+    const bubbles = $('bubbles');
+    const showAir = v.underwater || v.air < v.maxAir - 0.01;
+    bubbles.hidden = !showAir;
+    if (showAir) {
+      const m = Math.round(v.maxAir);
+      if (bubbles.children.length !== m) bubbles.innerHTML = '<i class="bubble"></i>'.repeat(m);
+      const a = Math.ceil(v.air - 0.001);
+      for (let i = 0; i < m; i++) bubbles.children[i].classList.toggle('gone', i >= a);
+      bubbles.setAttribute('aria-label', t('hud.air'));
+    }
+  }
+
+  // Red vignette after taking damage (0..1).
+  setHurt(amount) {
+    const el = $('hurt');
+    el.style.opacity = String(Math.max(0, Math.min(1, amount)));
+  }
+
+  showDeath(cause) {
+    this.deathCause = cause;
+    const key = 'death.' + cause;
+    const text = t(key);
+    $('death-cause').textContent = text === key ? t('death.other') : text;
+  }
+
   // ------------------------------------------------------------ hotbar
-  renderHotbar(slots, selected) {
-    this.hotbarState = [slots, selected];
+  // slots: [{ id, count, wear } | null] x 9; counts and wear bars only matter in survival
+  renderHotbar(slots, selected, showCounts = false) {
+    this.hotbarState = [slots, selected, showCounts];
     const bar = $('hotbar');
     if (bar.children.length !== slots.length) {
       bar.innerHTML = '';
       slots.forEach((_, i) => {
         const s = document.createElement('div');
         s.className = 'slot';
-        s.innerHTML = `<span class="num">${i + 1}</span><img alt="">`;
+        s.innerHTML = SLOT_HTML(i + 1);
         // touch and drag-to-look players can pick a slot straight from the HUD
         s.addEventListener('pointerdown', (e) => {
           if (e.pointerType === 'mouse' && document.pointerLockElement) return;
@@ -363,36 +445,124 @@ export class UI {
         bar.appendChild(s);
       });
     }
-    slots.forEach((id, i) => {
-      const s = bar.children[i];
-      s.classList.toggle('sel', i === selected);
-      const img = s.querySelector('img');
-      const src = this.icons.get(id) || '';
-      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
-      img.alt = BLOCKS[id] ? blockName(BLOCKS[id]) : '';
+    slots.forEach((slot, i) => {
+      const el = bar.children[i];
+      el.classList.toggle('sel', i === selected);
+      this.fillSlot(el, slot, showCounts);
     });
-    this.renderInvHotbar(slots, selected);
+    this.renderInvHotbar(slots, selected, showCounts);
+  }
+
+  fillSlot(el, slot, showCounts) {
+    const id = slot ? slot.id : 0;
+    const d = id ? itemDef(id) : null;
+    const img = el.querySelector('img');
+    const src = (d && this.icons && this.icons.get(id)) || '';
+    if (src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); img.hidden = false; }
+    else { img.removeAttribute('src'); img.hidden = true; }
+    const name = d ? itemName(d) : '';
+    img.alt = name;
+    el.title = name;
+    const c = el.querySelector('.count');
+    c.textContent = showCounts && slot && slot.count > 1 ? String(slot.count) : '';
+    const w = el.querySelector('.wear');
+    const dur = d && d.durability;
+    if (dur && slot && slot.wear > 0) {
+      const f = Math.max(0, 1 - slot.wear / dur);
+      w.hidden = false;
+      w.firstChild.style.width = (f * 100).toFixed(1) + '%';
+      w.firstChild.style.background = `hsl(${Math.round(f * 110)} 75% 50%)`;
+    } else w.hidden = true;
+    return name;
   }
 
   // ------------------------------------------------------------ inventory
+  // The creative palette: every block that belongs in an inventory, then every item.
   buildInventory(icons) {
     this.icons = icons;
     const grid = $('inv-grid');
     grid.innerHTML = '';
-    for (const d of BLOCKS) {
-      if (!d.inventory || !icons.has(d.id)) continue;
+    const add = (d) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'inv-slot';
-      b.title = blockName(d);
-      b.setAttribute('aria-label', blockName(d));
+      b.title = itemName(d);
+      b.setAttribute('aria-label', itemName(d));
       b.innerHTML = `<img alt="" src="${icons.get(d.id)}">`;
       b.addEventListener('click', () => this.emit('pickBlock', d.id));
       grid.appendChild(b);
+    };
+    for (const d of BLOCKS) if (d.inventory && icons.has(d.id)) add(d);
+    for (const d of ITEMS) if (icons.has(d.id)) add(d);
+  }
+
+  // Survival: the bag (slots 9-35) and the recipe book; creative: the palette.
+  renderInventory(inv, selected, creative, canCraft) {
+    this.invState = [inv, selected, creative, canCraft];
+    const title = $('inv-title'), hint = $('inv-hint');
+    title.dataset.i18n = creative ? 'inv.title' : 'inv.survivalTitle';
+    hint.dataset.i18n = creative ? 'inv.hint' : 'inv.survivalHint';
+    title.textContent = t(title.dataset.i18n);
+    hint.textContent = t(hint.dataset.i18n);
+    $('inv-grid').hidden = !creative;
+    $('inv-survival').hidden = creative;
+    if (creative) return;
+    // keep the focused slot or recipe focused across re-renders (controllers, remotes)
+    const active = document.activeElement;
+    const focusKey = active && active.dataset ? active.dataset.key : null;
+    const bag = $('inv-bag');
+    const size = inv.slots.length - 9;
+    if (bag.children.length !== size) {
+      bag.innerHTML = '';
+      for (let k = 0; k < size; k++) {
+        const i = k + 9;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'slot bag-slot';
+        b.dataset.key = 'bag:' + i;
+        b.innerHTML = SLOT_HTML('');
+        b.addEventListener('click', () => { this.emit('click'); this.emit('invSlot', i); });
+        bag.appendChild(b);
+      }
+    }
+    for (let k = 0; k < size; k++) {
+      const el = bag.children[k];
+      const name = this.fillSlot(el, inv.slots[k + 9], true);
+      const sl = inv.slots[k + 9];
+      el.setAttribute('aria-label', name ? (sl.count > 1 ? `${name} ×${sl.count}` : name) : t('inv.bag'));
+    }
+    // recipes: what can be made now first, then the rest (dimmed, not focusable)
+    const list = $('inv-recipes');
+    const ready = [], later = [];
+    RECIPES.forEach((r, i) => (canCraft(r) ? ready : later).push(i));
+    const recipeHtml = (i, ok) => {
+      const [out, n, ings] = RECIPES[i];
+      const d = itemDef(out);
+      const ingHtml = ings.map(([id, c]) => {
+        const isPlanks = id === 'planks';
+        const icon = this.icons.get(isPlanks ? BLOCK.OAK_PLANKS : id) || '';
+        const nm = isPlanks ? t('inv.planks') : itemName(itemDef(id));
+        return `<span class="ing" title="${escapeHtml(nm)}"><img alt="" src="${icon}"><b>${c}</b></span>`;
+      }).join('');
+      const label = `${itemName(d)}${n > 1 ? ' ×' + n : ''}`;
+      return `<button type="button" class="recipe${ok ? '' : ' no'}" data-key="recipe:${i}" data-i="${i}" ${ok ? '' : 'disabled'} aria-label="${escapeHtml(label)}">
+        <span class="out"><img alt="" src="${this.icons.get(out) || ''}">${n > 1 ? `<b>${n}</b>` : ''}</span>
+        <span class="rname">${escapeHtml(itemName(d))}</span>
+        <span class="ings">${ingHtml}</span></button>`;
+    };
+    list.innerHTML = (ready.length ? ready.map((i) => recipeHtml(i, true)).join('') : `<p class="hint">${escapeHtml(t('inv.noRecipes'))}</p>`) +
+      (later.length ? `<p class="inv-sub">${escapeHtml(t('inv.more'))}</p>` + later.map((i) => recipeHtml(i, false)).join('') : '');
+    for (const b of list.querySelectorAll('button.recipe')) {
+      b.addEventListener('click', () => { this.emit('click'); this.emit('craft', Number(b.dataset.i)); });
+    }
+    if (focusKey && this.current === 'inventory') {
+      let el = document.querySelector(`#inventory [data-key="${focusKey}"]:not([disabled])`);
+      if (!el && focusKey.startsWith('recipe:')) el = list.querySelector('button.recipe:not([disabled])') || $('inv-hotbar').children[selected];
+      if (el && el !== document.activeElement) el.focus({ preventScroll: true });
     }
   }
 
-  renderInvHotbar(slots, selected) {
+  renderInvHotbar(slots, selected, showCounts) {
     const bar = $('inv-hotbar');
     if (!bar) return;
     if (bar.children.length !== slots.length) {
@@ -401,18 +571,17 @@ export class UI {
         const s = document.createElement('button');
         s.type = 'button';
         s.className = 'slot';
-        s.innerHTML = `<span class="num">${i + 1}</span><img alt="">`;
+        s.dataset.key = 'hot:' + i;
+        s.innerHTML = SLOT_HTML(i + 1);
         s.addEventListener('click', () => this.emit('selectSlot', i));
         bar.appendChild(s);
       });
     }
-    slots.forEach((id, i) => {
+    slots.forEach((slot, i) => {
       const s = bar.children[i];
       s.classList.toggle('sel', i === selected);
-      s.setAttribute('aria-label', `${i + 1} ${BLOCKS[id] ? blockName(BLOCKS[id]) : ''}`);
-      const img = s.querySelector('img');
-      const src = this.icons.get(id) || '';
-      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+      const name = this.fillSlot(s, slot, showCounts);
+      s.setAttribute('aria-label', `${i + 1} ${name}`);
     });
   }
 

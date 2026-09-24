@@ -3,25 +3,26 @@
 import { World } from '../world/world.js';
 import { Renderer, QUALITY_PRESETS } from '../render/renderer.js';
 import { generateTextures, buildTextureArrays } from '../world/textures.js';
-import { Player, raycast } from './player.js';
+import { Player } from './player.js';
 import { Input, TouchControls } from './input.js';
 import { Audio, materialOf } from './audio.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import * as store from './save.js';
-import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_LIQUID, TINT, MAT, CHUNK_SIZE } from '../world/blocks.js';
+import { BLOCK, BLOCKS, FACE_TEX, IS_SOLID, IS_LIQUID, CHUNK_SIZE } from '../world/blocks.js';
 import { clockText, PRESET_ORDER } from '../ui/ui.js';
-import { t, tList, blockName, setLanguage, detectLanguage } from '../ui/i18n.js';
-import { buildIcons } from '../ui/icons.js';
+import { t, tList, setLanguage, detectLanguage } from '../ui/i18n.js';
+import { buildIcons, buildItemIcons } from '../ui/icons.js';
 import { BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
+import { installPlay } from './play.js';
 import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
 import { Gamepads, PAD } from './gamepad.js';
 import { FocusNav } from '../ui/focusnav.js';
 
-const DEFAULT_HOTBAR = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE_BRICKS, BLOCK.OAK_PLANKS, BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, BLOCK.WATER, BLOCK.GLOWSTONE];
-const REACH = 6;
-const SAVE_VERSION = 1;
+// 2: survival (game mode, difficulty, inventory with counts, health). Version 1 saves load as creative worlds.
+const SAVE_VERSION = 2;
+const SAVE_VERSIONS = [1, 2];
 
 export function defaultSettings() {
   const preset = detectPreset();
@@ -68,10 +69,6 @@ const LEAF_TINT = {
   [BLOCK.OAK_LEAVES]: [0.42, 0.66, 0.26], [BLOCK.BIRCH_LEAVES]: [0.55, 0.68, 0.33], [BLOCK.SPRUCE_LEAVES]: [0.36, 0.52, 0.36],
 };
 
-const TINT_RGB = {
-  [TINT.GRASS]: [0.5, 0.76, 0.33], [TINT.FOLIAGE]: [0.42, 0.7, 0.27], [TINT.BIRCH]: [0.52, 0.68, 0.36], [TINT.SPRUCE]: [0.4, 0.58, 0.4],
-};
-
 export class Game {
   constructor(canvas, ui, opts = {}) {
     this.canvas = canvas;
@@ -112,6 +109,13 @@ export class Game {
     // settings added since the save was written follow the saved preset
     const preset = QUALITY_PRESETS[this.settings.preset];
     if (saved && preset) for (const k of Object.keys(preset)) if (!(k in saved)) this.settings[k] = preset[k];
+    // settings v3: leaf cards and 3D grass became opt-in (lighter and cleaner by default)
+    if (saved && (saved.settingsVersion || 0) < 3) {
+      this.settings.fancyLeaves = false;
+      this.settings.grass3d = preset ? preset.grass3d : false;
+      this.settings.grassShadows = false;
+    }
+    this.settings.settingsVersion = 3;
     if (this.opts.settingsOverride) Object.assign(this.settings, this.opts.settingsOverride);
     // interface icons always come from the pixel-art pack; the world can use either pack
     this.pixelTextures = generateTextures('pixel');
@@ -119,6 +123,8 @@ export class Game {
     const arrays = buildTextureArrays(this.textures);
     this.renderer = new Renderer(this.canvas, arrays, this.settings);
     this.icons = buildIcons(this.pixelTextures);
+    this.setupPlay();
+    buildItemIcons(this.itemSprites, this.icons);
     this.ui.buildInventory(this.icons);
     this.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
@@ -146,8 +152,10 @@ export class Game {
     this.bindUi();
 
     const data = this.opts.freshWorld ? null : await store.loadWorld();
-    const seed = this.opts.seed !== undefined ? this.opts.seed : data && data.version === SAVE_VERSION ? data.seed : seedFromString('');
-    this.loadWorld(seed, data && data.version === SAVE_VERSION && data.seed === seed ? data : null);
+    const usable = data && SAVE_VERSIONS.includes(data.version);
+    const seed = this.opts.seed !== undefined ? this.opts.seed : usable ? data.seed : seedFromString('');
+    if (this.opts.mode) this.newWorldMode = this.opts.mode;
+    this.loadWorld(seed, usable && data.seed === seed ? data : null);
     this.enterTitle();
     const loop = (t) => {
       this.frame(t);
@@ -183,15 +191,17 @@ export class Game {
     }
     this.dayTime = data && typeof data.dayTime === 'number' ? data.dayTime : this.settings.timeOfDay;
     this.dayCount = data && Number.isInteger(data.dayCount) ? data.dayCount : 0;
-    this.hotbar = data && Array.isArray(data.hotbar) && data.hotbar.length === 9 ? data.hotbar.slice() : DEFAULT_HOTBAR.slice();
-    this.selected = data && Number.isInteger(data.selected) ? data.selected : 0;
+    this.selected = data && Number.isInteger(data.selected) && data.selected >= 0 && data.selected < 9 ? data.selected : 0;
     this.titleAnchor = this.player.pos.slice();
     this.loadingDone = false;
-    this.ui.renderHotbar(this.hotbar, this.selected);
+    this.setupWorldPlay(data);
     this.ui.setTitleMeta({ seed, saved: !!data });
     this.ui.setPlayLabel(data ? 'title.continue' : 'title.play');
     this.player.onStep = (b) => this.audio.play('step', b < 0 ? 'water' : materialOf(BLOCKS[b]), 0.8);
-    this.player.onLand = (speed, b) => { if (speed > 6) this.audio.play('step', materialOf(BLOCKS[b]), 1.4); };
+    this.player.onLand = (speed, b) => {
+      if (speed > 6) this.audio.play('step', materialOf(BLOCKS[b]), 1.4);
+      this.onLandDamage(speed);
+    };
     this.player.onSplash = () => this.audio.play('splash');
     this.renderer.resetHistory();
     this.world.dirtyEdits = false;
@@ -199,14 +209,18 @@ export class Game {
 
   async save() {
     if (!this.world || !this.player || this.state === 'boot') return;
+    const me = this.me();
     const data = {
       version: SAVE_VERSION,
       seed: this.world.seed,
-      player: { pos: this.player.pos, yaw: this.player.yaw, pitch: this.player.pitch, flying: this.player.flying },
+      player: {
+        pos: this.player.pos, yaw: this.player.yaw, pitch: this.player.pitch, flying: this.player.flying,
+        health: me ? me.health : undefined, air: me ? me.air : undefined,
+      },
       dayTime: this.dayTime,
       dayCount: this.dayCount || 0,
-      hotbar: this.hotbar,
       selected: this.selected,
+      ...this.serializePlay(),
       edits: this.world.serializeEdits(),
       savedAt: Date.now(),
     };
@@ -236,30 +250,31 @@ export class Game {
     });
     ui.on('openNewWorld', () => {
       document.getElementById('seed-input').value = '';
+      ui.syncNewWorld();
       ui.push('newworld');
       setTimeout(() => document.getElementById('seed-input').focus(), 40);
     });
     ui.on('back', () => ui.pop());
     ui.on('toTitle', async () => { await this.save(); this.enterTitle(); });
-    ui.on('createWorld', async (seedText) => {
+    ui.on('createWorld', async (seedText, opts = {}) => {
+      this.newWorldMode = opts.mode || 'survival';
+      this.newWorldDifficulty = opts.difficulty || 'normal';
       await store.deleteWorld();
       this.loadWorld(seedFromString(seedText), null);
       this.enterTitle();
       this.ui.toast(t('toast.newWorld'));
     });
-    ui.on('pickBlock', (id) => {
-      this.hotbar[this.selected] = id;
-      this.ui.renderHotbar(this.hotbar, this.selected);
-      this.ui.showBlockName(blockName(BLOCKS[id]));
-      this.audio.play('pop');
-    });
+    ui.on('pickBlock', (id) => this.pickItem(id));
     ui.on('selectSlot', (i) => {
       if (this.state === 'playing') this.selectSlot(i);
       else {
         this.selected = i;
-        this.ui.renderHotbar(this.hotbar, this.selected);
+        this.refreshInventoryUI();
       }
     });
+    ui.on('invSlot', (i) => this.clickInventorySlot(i));
+    ui.on('craft', (i) => this.craft(i));
+    ui.on('respawn', () => this.respawn());
     ui.on('setLanguage', (lang) => this.changeSetting('language', lang));
     ui.on('screen', (name) => this.nav.setRoot(name ? document.getElementById(name) : null));
     // arrow keys / OK on a TV remote (or a keyboard) move through menus
@@ -295,6 +310,8 @@ export class Game {
     if (s.fancyLeaves !== leavesBefore && this.world) this.world.setMeshOptions({ fancyLeaves: s.fancyLeaves });
     if (key === 'texturePack') this.applyTexturePack(value);
     if (key === 'timeOfDay') this.dayTime = value;
+    if (key === 'gameMode' && this.sim && value !== this.mode) this.setMode(value);
+    if (key === 'difficulty' && this.sim) this.setDifficulty(value);
     if (key === 'renderDistance') {
       this.world.renderDistance = value;
       this.world.lastCx = null; // re-scan the neighbourhood with the new radius
@@ -345,6 +362,7 @@ export class Game {
   // The shared "back" action: Esc, controller B, a TV remote's Back key. Returns false when there
   // was nothing to go back from (the title screen), so the platform can handle it.
   handleBack() {
+    if (this.state === 'dead' && this.ui.current === 'death') return true;
     if (this.state === 'inventory') { this.closeInventory(); return true; }
     if (this.state === 'playing') { this.pause(); return true; }
     if (['settings', 'help', 'newworld', 'device'].includes(this.ui.current)) { this.ui.pop(); return true; }
@@ -353,7 +371,7 @@ export class Game {
   }
 
   menuOpen() {
-    return this.state === 'inventory' || (this.state !== 'playing' && this.ui.current !== null);
+    return this.state === 'inventory' || this.state === 'dead' || (this.state !== 'playing' && this.ui.current !== null);
   }
 
   // Arrow keys and OK / Enter in menus (TV remotes send these).
@@ -436,8 +454,10 @@ export class Game {
     this.input.buttons.clear();
     this.suppressPause = true;
     this.input.exitLock();
-    this.ui.renderHotbar(this.hotbar, this.selected);
+    this.refreshInventoryUI();
     this.ui.show('inventory');
+    this.breaking = null;
+    this.bowDraw = 0;
   }
 
   closeInventory() {
@@ -512,7 +532,8 @@ export class Game {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
       if (frameInput.wheel) this.selectSlot((this.selected + frameInput.wheel + 9) % 9);
-      if (pad.connected) this.applyPadControls(pad, ctl, dt);
+      if (pad.connected && this.state === 'playing') this.applyPadControls(pad, ctl, dt);
+      if (!this.isCreative()) { ctl.toggleFly = false; if (this.player.flying) this.player.flying = false; }
     }
 
     // hold on terrain until the spawn chunk exists
@@ -533,6 +554,9 @@ export class Game {
         rem -= step;
       }
     }
+
+    // creatures, items, arrows, health
+    this.updatePlay(dt);
 
     // time of day
     if (this.state !== 'paused') {
@@ -765,13 +789,6 @@ export class Game {
     this.renderer.updateRainMap(ox, oz, d);
   }
 
-  selectSlot(i) {
-    if (i === this.selected) return;
-    this.selected = i;
-    this.ui.renderHotbar(this.hotbar, this.selected);
-    this.ui.showBlockName(blockName(BLOCKS[this.hotbar[i]]));
-  }
-
   computeCamera(dt) {
     const p = this.player;
     if (this.state === 'title' || this.state === 'boot') {
@@ -797,6 +814,10 @@ export class Game {
     }
     const right = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
     const pos = [eye[0] + right[0] * bobX, eye[1] + bobY, eye[2] + right[2] * bobX];
+    if (this.shake > 0) {
+      const k = this.shake * this.shake * 0.09, tm = performance.now() / 1000;
+      pos[0] += Math.sin(tm * 53) * k; pos[1] += Math.sin(tm * 61 + 1) * k; pos[2] += Math.sin(tm * 47 + 2) * k;
+    }
     let fovTarget = this.settings.fov;
     if (p.sprinting) fovTarget *= p.flying ? 1.15 : 1.1;
     this.fovCurrent += (fovTarget - this.fovCurrent) * (1 - Math.exp(-dt * 10));
@@ -841,111 +862,6 @@ export class Game {
     }
   }
 
-  interact(dt) {
-    const p = this.player;
-    const eye = p.eye;
-    const dir = p.forward();
-    const hit = raycast(this.world, eye, dir, REACH);
-    if (hit) this.selection = { min: [hit.box[0], hit.box[1], hit.box[2]], max: [hit.box[3], hit.box[4], hit.box[5]] };
-    const input = this.input;
-    const tc = input.touch;
-    // a click that started and ended between two frames still counts
-    const pad = this.pads;
-    const lmb = input.buttons.has(0) || input.clicked.has(0) || tc.breakHeld || tc.breakBtn || (pad.connected && pad.down(PAD.RT));
-    const rmb = input.buttons.has(2) || input.clicked.has(2) || (pad.connected && pad.down(PAD.LT));
-    if (pad.connected && pad.pressed(PAD.RT)) this.breakTimer = 0;
-    if (pad.connected && pad.pressed(PAD.LT)) this.placeTimer = 0;
-    this.breakTimer -= dt;
-    this.placeTimer -= dt;
-    if (input.clicked.has(0)) this.breakTimer = 0;
-    if (input.clicked.has(2)) this.placeTimer = 0;
-    if (lmb && this.breakTimer <= 0 && hit) {
-      this.breakTimer = 0.24;
-      this.breakBlock(hit);
-    }
-    if ((rmb && this.placeTimer <= 0) || tc.tap) {
-      tc.tap = false;
-      if (hit) {
-        this.placeTimer = 0.24;
-        this.placeBlock(hit);
-      }
-    }
-    if ((input.clicked.has(1) || (pad.connected && pad.pressed(PAD.RS))) && hit) {
-      const id = hit.block;
-      const idx = this.hotbar.indexOf(id);
-      if (idx >= 0) this.selectSlot(idx);
-      else if (BLOCKS[id].inventory) {
-        this.hotbar[this.selected] = id;
-        this.ui.renderHotbar(this.hotbar, this.selected);
-        this.ui.showBlockName(blockName(BLOCKS[id]));
-      }
-    }
-  }
-
-  breakBlock(hit) {
-    const { x, y, z, block } = hit;
-    if (block === BLOCK.BEDROCK && y <= 0) return;
-    if (!this.world.setBlock(x, y, z, 0)) return;
-    const above = this.world.getBlock(x, y + 1, z);
-    if (SHAPE_OF[above] === SHAPE.CROSS || SHAPE_OF[above] === SHAPE.TORCH) this.world.setBlock(x, y + 1, z, 0);
-    const [sl, bl] = this.world.getLight(x + hit.normal[0], y + hit.normal[1], z + hit.normal[2]);
-    this.particles.burst(x, y, z, block, sl / 15, bl / 15);
-    this.audio.play('break', materialOf(BLOCKS[block]));
-    this.swing = 1;
-    if (this.touch) this.touch.vibrate(14);
-    if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0.25, 0.4, 60);
-  }
-
-  placeBlock(hit) {
-    const id = this.hotbar[this.selected];
-    if (!id) return;
-    let x = hit.x, y = hit.y, z = hit.z;
-    if (!BLOCKS[hit.block].replaceable) {
-      x += hit.normal[0]; y += hit.normal[1]; z += hit.normal[2];
-    }
-    const cur = this.world.getBlock(x, y, z);
-    if (!BLOCKS[cur].replaceable || cur === id) return;
-    if (IS_SOLID[id] && this.player.intersectsBlock(x, y, z)) return;
-    const shape = SHAPE_OF[id];
-    if ((shape === SHAPE.CROSS || shape === SHAPE.TORCH || id === BLOCK.CACTUS) && !IS_SOLID[this.world.getBlock(x, y - 1, z)]) return;
-    if (this.world.setBlock(x, y, z, id)) {
-      this.audio.play('place', materialOf(BLOCKS[id]));
-      this.swing = 1;
-      if (this.touch) this.touch.vibrate(8);
-      if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0, 0.3, 35);
-    }
-  }
-
-  // ------------------------------------------------------------------ rendering
-  handState() {
-    const id = this.hotbar[this.selected];
-    const d = BLOCKS[id];
-    if (!d || !d.tex || this.state !== 'playing' || this.hudHidden) return null;
-    const p = this.player;
-    const flat = d.shape === SHAPE.CROSS || d.shape === SHAPE.TORCH;
-    const bob = this.settings.viewBobbing ? p.bobAmount : 0;
-    const bx = Math.cos(p.bobPhase) * 0.035 * bob;
-    const by = -Math.abs(Math.sin(p.bobPhase)) * 0.04 * bob;
-    const sw = Math.sin(this.swing * Math.PI);
-    const tx = 0.56 + bx - sw * 0.12, ty = -0.52 + by - sw * 0.18, tz = -0.95 + sw * 0.1;
-    if (flat) mat4.fromTRS(this.handModel, tx, ty + 0.05, tz, -0.1 - sw * 0.6, -0.35, 0.1, 0.5, 0.5, 0.04);
-    else mat4.fromTRS(this.handModel, tx, ty, tz, 0.3 - sw * 0.9, 0.78, 0.0, 0.36);
-    const e = p.eye;
-    const [sl, bl] = this.world.getLight(Math.floor(e[0]), Math.floor(e[1]), Math.floor(e[2]));
-    const tex = FACE_TEX;
-    const side = tex[id * 4 + 2];
-    return {
-      visible: true,
-      model: this.handModel,
-      layers: flat ? [side, side, side, 1] : [tex[id * 4], tex[id * 4 + 1], side, d.layer === 1 ? 1 : 0],
-      sky: sl / 15,
-      block: Math.max(bl, d.emission) / 15,
-      tint: d.tint && d.tint !== TINT.WATER ? 1 : 0,
-      tintColor: TINT_RGB[d.tint] || [1, 1, 1],
-      mat: d.mat === MAT.WATER ? MAT.GLOSSY : d.mat,
-    };
-  }
-
   renderFrame(dt) {
     const cam = this.camera;
     const sunY = Math.sin(this.dayTime * Math.PI * 2);
@@ -983,6 +899,7 @@ export class Game {
       selection: this.hudHidden ? null : this.selection,
       particles: this.particles,
       hand: this.handState(),
+      entities: this.buildEntities(),
       playerFeet: this.state === 'playing' ? this.player.pos : null,
     };
     this.renderer.render(state, dt);
@@ -1039,9 +956,12 @@ export class Game {
       `${t('dbg.time')} ${clockText(this.dayTime)}   ${t('dbg.weather')} ${this.weather.describe()}${this.precip.type !== 'rain' ? ' (' + this.precip.type + ')' : ''}   ${t(motion)}`,
       t('dbg.chunks', { loaded: this.world.chunks.size, drawn: r.stats.chunks, shadow: r.stats.shadowChunks }),
       `Draws ${r.stats.draws}   tris ${(r.stats.tris / 1000).toFixed(0)}k`,
+      this.sim ? t('dbg.entities', { n: this.sim.entities.size, mode: t('mode.' + this.mode), diff: t('diff.' + this.difficulty) }) : '',
       t('dbg.render', { size: tg ? tg.w + 'x' + tg.h + ((r.dynScale || 1) < 1 ? ` (${Math.round(r.dynScale * 100)}%)` : '') : '', preset: t('preset.' + this.settings.preset), shadows: this.settings.shadows ? this.settings.shadowRes : t('dbg.off') }),
       `${t('dbg.seed')} ${this.world.seed}`,
       gpu ? `GPU ${String(gpu).slice(0, 60)}` : '',
     ].filter(Boolean).join('\n');
   }
 }
+
+installPlay(Game);

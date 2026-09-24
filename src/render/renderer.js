@@ -7,6 +7,8 @@ import { gbufferVS, gbufferFS, shadowVS, shadowFS } from './shaders/terrain.js';
 import { skyLutFS } from './shaders/sky.js';
 import { cloudsFS, cloudsResolveFS } from './shaders/clouds.js';
 import { grassVS, grassFS, grassShadowVS, grassShadowFS } from './shaders/grass.js';
+import { entityVS, entityFS, entityShadowVS, entityShadowFS } from './shaders/entity.js';
+import { ENTITY_FLOATS } from './models.js';
 import { lightingFS } from './shaders/lighting.js';
 import { waterVS, waterFS } from './shaders/water.js';
 import {
@@ -26,10 +28,10 @@ const SUN_TILT = 0.42; // orbit tilt (radians) so noon shadows are not axis alig
 // cloudBlend: share of each new cloud frame in the cloud history (lower = smoother, more lag)
 export const QUALITY_PRESETS = {
   lite: { renderScale: 0.6, shadows: true, shadowRes: 1024, shadowDistance: 48, pcf: 1, clouds: true, cloudSteps: 12, cloudRes: 0.3, cloudLightSteps: 3, cloudBlend: 0.08, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1, grass3d: false, grassRadius: 12, grassDensity: 8, grassShadows: false, fancyLeaves: false, pom: false, pomSteps: 8 },
-  low: { renderScale: 0.75, shadows: true, shadowRes: 1024, shadowDistance: 72, pcf: 1, clouds: true, cloudSteps: 18, cloudRes: 0.35, cloudLightSteps: 4, cloudBlend: 0.1, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1, grass3d: false, grassRadius: 14, grassDensity: 10, grassShadows: false, fancyLeaves: true, pom: false, pomSteps: 8 },
-  medium: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 96, pcf: 8, clouds: true, cloudSteps: 26, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.12, volumetric: true, volSteps: 12, ssao: false, ssr: true, bloom: true, taa: true, maxDpr: 1, grass3d: true, grassRadius: 20, grassDensity: 16, grassShadows: false, fancyLeaves: true, pom: false, pomSteps: 12 },
-  high: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 128, pcf: 12, clouds: true, cloudSteps: 36, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.14, volumetric: true, volSteps: 20, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 1.25, grass3d: true, grassRadius: 28, grassDensity: 28, grassShadows: true, fancyLeaves: true, pom: true, pomSteps: 16 },
-  ultra: { renderScale: 1.0, shadows: true, shadowRes: 4096, shadowDistance: 160, pcf: 16, clouds: true, cloudSteps: 48, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.15, volumetric: true, volSteps: 28, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 2, grass3d: true, grassRadius: 36, grassDensity: 40, grassShadows: true, fancyLeaves: true, pom: true, pomSteps: 24 },
+  low: { renderScale: 0.75, shadows: true, shadowRes: 1024, shadowDistance: 72, pcf: 1, clouds: true, cloudSteps: 18, cloudRes: 0.35, cloudLightSteps: 4, cloudBlend: 0.1, volumetric: false, volSteps: 0, ssao: false, ssr: false, bloom: true, taa: false, maxDpr: 1, grass3d: false, grassRadius: 14, grassDensity: 10, grassShadows: false, fancyLeaves: false, pom: false, pomSteps: 8 },
+  medium: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 96, pcf: 8, clouds: true, cloudSteps: 26, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.12, volumetric: true, volSteps: 12, ssao: false, ssr: true, bloom: true, taa: true, maxDpr: 1, grass3d: false, grassRadius: 20, grassDensity: 16, grassShadows: false, fancyLeaves: false, pom: false, pomSteps: 12 },
+  high: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 128, pcf: 12, clouds: true, cloudSteps: 36, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.14, volumetric: true, volSteps: 20, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 1.25, grass3d: false, grassRadius: 24, grassDensity: 20, grassShadows: false, fancyLeaves: false, pom: true, pomSteps: 16 },
+  ultra: { renderScale: 1.0, shadows: true, shadowRes: 4096, shadowDistance: 160, pcf: 16, clouds: true, cloudSteps: 48, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.15, volumetric: true, volSteps: 28, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 2, grass3d: true, grassRadius: 28, grassDensity: 24, grassShadows: false, fancyLeaves: false, pom: true, pomSteps: 24 },
 };
 
 function createQuadIndices(gl, quads) {
@@ -118,6 +120,8 @@ export class Renderer {
       precip: P(precipVS, precipFS, 'precip'),
       cloudNoise: P(FS, cloudNoiseFS, 'cloudNoise'),
       grass: P(grassVS, grassFS, 'grass'),
+      entity: P(entityVS, entityFS, 'entity'),
+      entityShadow: P(entityShadowVS, entityShadowFS, 'entityShadow'),
       grassShadow: P(grassShadowVS, grassShadowFS, 'grassShadow'),
       weather: P(FS, weatherFS, 'weather'),
       waterNormal: P(FS, waterNormalFS, 'waterNormal'),
@@ -143,6 +147,62 @@ export class Renderer {
     gl.samplerParameteri(this.linearSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  // Creature skins (64x64 layers) and item sprites (16x16 layers), both pixel art.
+  setEntityTextures(skins, sprites) {
+    const gl = this.gl;
+    const make = (size, layers) => {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+      const levels = Math.log2(size) + 1;
+      gl.texStorage3D(gl.TEXTURE_2D_ARRAY, levels, gl.RGBA8, size, size, Math.max(1, layers.length));
+      const all = new Uint8Array(size * size * 4 * layers.length);
+      layers.forEach((l, i) => all.set(l, i * size * size * 4));
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, size, size, layers.length, gl.RGBA, gl.UNSIGNED_BYTE, all);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return tex;
+    };
+    this.texSkins = make(skins.size, skins.layers);
+    this.texItems = make(sprites.size, sprites.layers);
+    // dynamic triangles: pos3 normal3 uv2 info4 tint4
+    this.entityVao = gl.createVertexArray();
+    this.entityBuf = gl.createBuffer();
+    gl.bindVertexArray(this.entityVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.entityBuf);
+    const stride = ENTITY_FLOATS * 4;
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, 32);
+    gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 4, gl.FLOAT, false, stride, 48);
+    gl.bindVertexArray(null);
+  }
+
+  uploadEntities(mesh) {
+    const gl = this.gl;
+    this.entityCount = 0;
+    if (!mesh || !mesh.count || !this.entityBuf) return;
+    const floats = mesh.count * ENTITY_FLOATS;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.entityBuf);
+    // fresh storage every frame: updating a buffer the previous frame still reads can stall the pipeline
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.data.subarray(0, floats), gl.STREAM_DRAW);
+    this.entityCount = mesh.count;
+  }
+
+  drawEntities(prog) {
+    const gl = this.gl;
+    if (!this.entityCount) return;
+    prog.tex('uSkins', this.texSkins, gl.TEXTURE_2D_ARRAY).tex('uItems', this.texItems, gl.TEXTURE_2D_ARRAY);
+    gl.bindVertexArray(this.entityVao);
+    gl.drawArrays(gl.TRIANGLES, 0, this.entityCount);
+    this.stats.draws++;
   }
 
   // Swap the block texture pack (pixel 16x16 or HD 64x64) at run time.
@@ -757,6 +817,8 @@ export class Renderer {
       this.fullscreen();
     }
 
+    this.uploadEntities(state.entities);
+
     // ---- shadow maps
     if (s.shadows) {
       this.shadowTarget.bind();
@@ -772,6 +834,7 @@ export class Renderer {
       this.prog.shadowCutout.use().tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY);
       this.drawChunks(this.prog.shadowCutout, shadow, 1);
       if (s.grass3d && s.grassShadows) this.drawGrass(this.prog.grassShadow.use(), shadow, state, true);
+      this.drawEntities(this.prog.entityShadow.use());
       // water surfaces (for caustics / underwater light)
       this.waterShadowTarget.bind();
       gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -805,11 +868,14 @@ export class Renderer {
     gc.tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY).tex('uNormalMap', this.texNormal, gl.TEXTURE_2D_ARRAY).tex('uMaterialMap', this.texMaterial, gl.TEXTURE_2D_ARRAY)
       .f4('uTexMode', ...texMode);
     this.drawChunks(gc, main, 1);
-    if (s.grass3d) {
-      gl.disable(gl.CULL_FACE);
-      this.drawGrass(this.prog.grass.use(), main, state, false);
-      gl.enable(gl.CULL_FACE);
+    gl.disable(gl.CULL_FACE);
+    if (s.grass3d) this.drawGrass(this.prog.grass.use(), main, state, false);
+    if (this.entityCount) {
+      const ep = this.prog.entity.use();
+      ep.tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY).f4('uTexMode', ...texMode);
+      this.drawEntities(ep);
     }
+    gl.enable(gl.CULL_FACE);
     // held block (drawn into the G-buffer so it is lit like everything else)
     if (state.hand && state.hand.visible) this.drawHand(state);
     gl.disable(gl.CULL_FACE);
@@ -1046,6 +1112,7 @@ export class Renderer {
     gl.enable(gl.CULL_FACE);
     const e = 0.002;
     this.prog.outline.use()
+      .f1('uProgress', sel.progress || 0)
       .f3('uMin', sel.min[0] - cam.pos[0] - e, sel.min[1] - cam.pos[1] - e, sel.min[2] - cam.pos[2] - e)
       .f3('uSize', sel.max[0] - sel.min[0] + 2 * e, sel.max[1] - sel.min[1] + 2 * e, sel.max[2] - sel.min[2] + 2 * e);
     gl.bindVertexArray(this.cubeVao);
@@ -1077,7 +1144,7 @@ export class Renderer {
       }
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.particleBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.subarray(0, o));
+    gl.bufferData(gl.ARRAY_BUFFER, d.subarray(0, o), gl.STREAM_DRAW);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     this.prog.particles.use().tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY).tex('uSkyLut', this.skyLut.texture);
     gl.bindVertexArray(this.particleVao);
@@ -1090,6 +1157,8 @@ export class Renderer {
     const p = this.prog.hand.use();
     p.tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY).tex('uNormalMap', this.texNormal, gl.TEXTURE_2D_ARRAY).tex('uMaterialMap', this.texMaterial, gl.TEXTURE_2D_ARRAY);
     p.f4('uTexMode', this.texRes, this.texRes <= 16 ? 1 : 0, 0, 0);
+    if (this.texItems) p.tex('uItems', this.texItems, gl.TEXTURE_2D_ARRAY);
+    p.f1('uSprite', hd.sprite && this.texItems ? 1 : 0);
     p.m4('uModel', hd.model).f4('uLayers', hd.layers[0], hd.layers[1], hd.layers[2], hd.layers[3])
       .f4('uLight', hd.sky, hd.block, hd.tint, hd.mat).f3('uTint', hd.tintColor[0], hd.tintColor[1], hd.tintColor[2])
       .f1('uAspect', this.targets.w / this.targets.h);

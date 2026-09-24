@@ -55,3 +55,23 @@ export function buildIcons(textures, size = 64) {
   }
   return icons;
 }
+
+// Flat icons for tools, weapons, food and materials from their 16x16 sprites, added to `icons`
+// (item ids start at 256, so they never collide with block ids).
+export function buildItemIcons(sprites, icons, size = 64) {
+  const src = document.createElement('canvas');
+  src.width = src.height = sprites.size;
+  const sctx = src.getContext('2d');
+  for (const [id, layer] of sprites.index) {
+    sctx.clearRect(0, 0, sprites.size, sprites.size);
+    sctx.putImageData(new ImageData(new Uint8ClampedArray(sprites.layers[layer]), sprites.size, sprites.size), 0, 0);
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const m = Math.round(size * 0.06);
+    ctx.drawImage(src, m, m, size - 2 * m, size - 2 * m);
+    icons.set(id, c.toDataURL());
+  }
+  return icons;
+}

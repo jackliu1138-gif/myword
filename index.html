@@ -25,12 +25,17 @@
 <!--BODY-->
 <div id="app">
   <canvas id="view" tabindex="0" data-i18n-attr="aria-label:hud.gameView"></canvas>
+  <div id="hurt" aria-hidden="true"></div>
 
   <div id="hud" hidden>
     <div class="crosshair" aria-hidden="true"></div>
     <pre id="debug" hidden></pre>
     <div id="toast" role="status" aria-live="polite"></div>
     <div id="blockname" aria-hidden="true"></div>
+    <div id="vitals" hidden>
+      <div id="hearts" class="hearts" role="img"></div>
+      <div id="bubbles" class="bubbles" role="img" hidden></div>
+    </div>
     <div id="hotbar" data-i18n-attr="aria-label:hud.hotbar"></div>
     <div id="lockhint" hidden data-i18n="hud.lockHint"></div>
   </div>
@@ -100,6 +105,23 @@
     <div class="sheet narrow">
       <h2 data-i18n="new.title"></h2>
       <p class="hint" data-i18n="new.hint"></p>
+      <div class="field">
+        <span data-i18n="new.mode"></span>
+        <div class="seg" id="new-mode" role="group" data-i18n-attr="aria-label:new.mode" style="--cols:2">
+          <button type="button" data-v="survival" aria-pressed="true" data-i18n="mode.survival"></button>
+          <button type="button" data-v="creative" aria-pressed="false" data-i18n="mode.creative"></button>
+        </div>
+        <p class="desc" id="new-mode-desc" data-i18n="mode.survival.desc"></p>
+      </div>
+      <div class="field" id="new-diff-field">
+        <span data-i18n="new.difficulty"></span>
+        <div class="seg" id="new-diff" role="group" data-i18n-attr="aria-label:new.difficulty" style="--cols:4">
+          <button type="button" data-v="peaceful" aria-pressed="false" data-i18n="diff.peaceful"></button>
+          <button type="button" data-v="easy" aria-pressed="false" data-i18n="diff.easy"></button>
+          <button type="button" data-v="normal" aria-pressed="true" data-i18n="diff.normal"></button>
+          <button type="button" data-v="hard" aria-pressed="false" data-i18n="diff.hard"></button>
+        </div>
+      </div>
       <label class="field" for="seed-input">
         <span data-i18n="new.seed"></span>
         <input id="seed-input" type="text" inputmode="text" autocomplete="off" maxlength="40" data-i18n-attr="placeholder:new.placeholder">
@@ -112,13 +134,35 @@
   </section>
 
   <section id="inventory" class="screen dim" hidden>
-    <div class="sheet wide">
+    <div class="sheet wide inv-sheet">
       <header class="sheet-head">
-        <h2 data-i18n="inv.title"></h2>
-        <p class="hint" data-i18n="inv.hint"></p>
+        <h2 id="inv-title" data-i18n="inv.title"></h2>
+        <p class="hint" id="inv-hint" data-i18n="inv.hint"></p>
       </header>
       <div id="inv-grid" class="inv-grid"></div>
+      <div id="inv-survival" class="inv-survival" hidden>
+        <div class="inv-col">
+          <h3 class="inv-h" data-i18n="inv.bag"></h3>
+          <div id="inv-bag" class="bag-grid"></div>
+        </div>
+        <div class="inv-col">
+          <h3 class="inv-h" data-i18n="inv.crafting"></h3>
+          <div id="inv-recipes" class="recipe-list"></div>
+        </div>
+      </div>
       <div id="inv-hotbar" class="inv-hotbar"></div>
+    </div>
+  </section>
+
+  <section id="death" class="screen death" hidden>
+    <div class="sheet narrow">
+      <h2 data-i18n="death.title"></h2>
+      <p class="death-cause" id="death-cause"></p>
+      <p class="hint" data-i18n="death.note"></p>
+      <div class="menu">
+        <button id="btn-respawn" class="btn primary" type="button" data-i18n="death.respawn"></button>
+        <button id="btn-death-title" class="btn" type="button" data-i18n="pause.toTitle"></button>
+      </div>
     </div>
   </section>
 

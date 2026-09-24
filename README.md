@@ -68,6 +68,20 @@ Menus follow the D-pad or stick (A chooses, B goes back, LB / RB switch settings
 
 Your world (seed, position, time of day, hotbar and every block you change) is saved in the browser's IndexedDB. Use **New world** on the title screen to start over, optionally with a seed.
 
+## Survival and creatures
+
+New worlds start in **survival** (choose creative or a difficulty when you create one, or switch any time under Settings → World).
+
+- **Health and air**: ten hearts; falling, drowning, lava, fire, cacti and monsters hurt you. Health comes back slowly, faster by eating (right-click / LT / tap while holding food).
+- **Monsters come out in the dark**: zombies (burn in sunlight), creepers (hiss, then explode), skeletons (keep their distance and shoot), spiders (climb walls, leap). They find their way to you with A* path finding. Peaceful difficulty has none.
+- **Animals** graze on grass in daylight: cows, pigs, sheep (in several wool colours) and chickens. They drop food and materials.
+- **Mining and tools**: hold to break; cracks show progress. Stone and ores need a pickaxe to drop anything; the right tool (pickaxe, axe, shovel) is faster. Tools and weapons wear out.
+- **Combat**: swords hit harder, jumping hits are critical, hits knock creatures back. The bow charges while held and needs arrows.
+- **Crafting**: open the inventory (E / Y / bag button). Every recipe you can make with what you carry is listed; tap one to craft it (planks, sticks, torches, tools, swords, bow and arrows, bread, cooked meat, glass, bricks...).
+- **Dying** drops everything you carried where you fell; you respawn at the world spawn.
+
+The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or WebGL, so the multiplayer server can run the same code.
+
 ## Graphics
 
 Everything below can be toggled in **Settings → Graphics**, or chosen through the Lite / Low / Medium / High / Ultra presets. Lite is meant for phones, TVs and projectors. The first launch picks a preset from the device and GPU. During the first minutes of play it steps the preset down, one level at a time, while the game runs well under 30 fps. **Dynamic resolution** then lowers the render resolution while the frame rate is under the target (30, 45 or 60 fps) and raises it again when there is headroom.

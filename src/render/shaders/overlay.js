@@ -15,16 +15,39 @@ void main() {
 `;
 
 export const outlineFS = `${HEADER}
+uniform float uProgress; // survival mining, 0..1
 in vec2 vUV;
 out vec4 oColor;
+float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// Voronoi cell borders on a 16-texel grid: pixel-art cracks
+float cracks(vec2 px, float cells, float width) {
+  vec2 g = px * cells, c = floor(g), f = fract(g);
+  float d1 = 8.0, d2 = 8.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 o = vec2(i, j);
+    vec2 r = o + vec2(h21(c + o), h21(c + o + 17.0)) - f;
+    float dd = dot(r, r);
+    if (dd < d1) { d2 = d1; d1 = dd; } else if (dd < d2) d2 = dd;
+  }
+  return sqrt(d2) - sqrt(d1) < width ? 1.0 : 0.0;
+}
 void main() {
   vec2 d = min(vUV, 1.0 - vUV);
   vec2 fw = max(fwidth(vUV), vec2(1e-5));
   vec2 e = d / fw;
   float edge = min(e.x, e.y);
-  float a = 1.0 - smoothstep(0.8, 1.9, edge);
+  float a = (1.0 - smoothstep(0.8, 1.9, edge)) * 0.7;
+  if (uProgress > 0.0) {
+    // ten stages, spreading out from the middle of each face
+    float stage = floor(uProgress * 10.0) / 10.0;
+    vec2 px = (floor(vUV * 16.0) + 0.5) / 16.0;
+    float r = length(px - 0.5) * 1.42;
+    float big = cracks(px, 2.6, 0.22) * step(r, stage * 1.35 + 0.08);
+    float fine = cracks(px + 0.37, 5.0, 0.26) * step(r, (stage - 0.45) * 1.9);
+    a = max(a, max(big, fine) * (0.45 + 0.25 * stage));
+  }
   if (a <= 0.01) discard;
-  oColor = vec4(0.02, 0.02, 0.03, a * 0.7);
+  oColor = vec4(0.02, 0.02, 0.03, a);
 }
 `;
 
@@ -105,6 +128,8 @@ ${PIXEL_ART}
 uniform sampler2DArray uAlbedo;
 uniform sampler2DArray uNormalMap;
 uniform sampler2DArray uMaterialMap;
+uniform sampler2DArray uItems;
+uniform float uSprite;  // 1: a flat item sprite (tools, food) instead of a block
 uniform vec4 uLayers;   // top, bottom, side, cutout flag
 uniform vec4 uLight;    // sky, block, tint on/off, material
 uniform vec4 uTexMode;  // texels per face, pixel-art sampling
@@ -116,6 +141,15 @@ layout(location = 0) out vec4 oAlbedo;
 layout(location = 1) out vec4 oNormal;
 layout(location = 2) out vec4 oLight;
 void main() {
+  if (uSprite > 0.5) {
+    vec4 c = texture(uItems, vec3(vUV, uLayers.x));
+    if (c.a < 0.5) discard;
+    vec3 Ns = normalize(vNormal);
+    oAlbedo = vec4(c.rgb, 0.62);
+    oNormal = vec4(octEncode(Ns), octEncode(Ns));
+    oLight = vec4(uLight.x, uLight.y, 1.0, 0.0);
+    return;
+  }
   float layer = vFace == 2 ? uLayers.x : vFace == 3 ? uLayers.y : uLayers.z;
   vec2 gx = dFdx(vUV), gy = dFdy(vUV);
   vec2 puv = uTexMode.y > 0.5 ? pixelArtUV(vUV, uTexMode.x) : vUV;

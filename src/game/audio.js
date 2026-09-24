@@ -58,6 +58,7 @@ export class Audio {
     const c = this.ctx;
     const src = c.createBufferSource();
     src.buffer = this.noiseBuf;
+    src.loop = true; // long bursts (explosions) outlast the 2 s buffer
     src.playbackRate.value = 0.8 + Math.random() * 0.4;
     const f = c.createBiquadFilter();
     f.type = filterType;
@@ -123,6 +124,89 @@ export class Audio {
       rumble.f.frequency.setValueAtTime(420, t);
       rumble.f.frequency.exponentialRampToValueAtTime(90, t + 3.5);
       for (let i = 1; i < 4; i++) this.noise(t + 0.4 * i + Math.random() * 0.3, 1.6, 'lowpass', 180, 0.8, 0.45 * v / i);
+    }
+  }
+
+  // Creature and combat sounds. pan -1..1 (left/right of the listener), volume already
+  // scaled by distance by the caller.
+  sfx(name, volume = 1, pan = 0) {
+    if (!this.ctx || this.ctx.state !== 'running' || volume < 0.02) return;
+    const c = this.ctx;
+    const t = c.currentTime + 0.005;
+    const out = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+    if (out.pan) out.pan.value = Math.max(-1, Math.min(1, pan));
+    out.connect(this.master);
+    const tone = (tt, f, dur, g, type = 'sine', slide = null, dest = out) => {
+      const o = c.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f, tt);
+      if (slide) o.frequency.exponentialRampToValueAtTime(slide, tt + dur);
+      const gn = c.createGain();
+      gn.gain.setValueAtTime(0, tt);
+      gn.gain.linearRampToValueAtTime(g * volume, tt + 0.01);
+      gn.gain.exponentialRampToValueAtTime(0.0008, tt + dur);
+      o.connect(gn).connect(dest);
+      o.start(tt); o.stop(tt + dur + 0.02);
+      return o;
+    };
+    const noise = (tt, dur, type, f, q, g) => this.noise(tt, dur, type, f, q, g * volume, out);
+    // a voiced sound through a resonant filter (moo, baa, groan)
+    const voice = (tt, f0, f1, dur, formant, g, vib = 0) => {
+      const o = c.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f0, tt);
+      o.frequency.linearRampToValueAtTime(f1, tt + dur);
+      if (vib) {
+        const lfo = c.createOscillator();
+        lfo.frequency.value = vib;
+        const lg = c.createGain();
+        lg.gain.value = f0 * 0.06;
+        lfo.connect(lg).connect(o.frequency);
+        lfo.start(tt); lfo.stop(tt + dur + 0.05);
+      }
+      const f = c.createBiquadFilter();
+      f.type = 'bandpass'; f.frequency.value = formant; f.Q.value = 3;
+      const gn = c.createGain();
+      gn.gain.setValueAtTime(0, tt);
+      gn.gain.linearRampToValueAtTime(g * volume, tt + 0.06);
+      gn.gain.setValueAtTime(g * volume, tt + dur * 0.7);
+      gn.gain.exponentialRampToValueAtTime(0.0008, tt + dur);
+      o.connect(f).connect(gn).connect(out);
+      o.start(tt); o.stop(tt + dur + 0.05);
+    };
+    const r = () => 0.9 + Math.random() * 0.2;
+    switch (name) {
+      case 'hit': noise(t, 0.12, 'bandpass', 900 * r(), 0.8, 0.5); tone(t, 150 * r(), 0.1, 0.4, 'sine', 70); break;
+      case 'crit': noise(t, 0.14, 'bandpass', 1800 * r(), 1.2, 0.5); tone(t, 180, 0.1, 0.35, 'sine', 80); tone(t + 0.02, 2600, 0.12, 0.05, 'sine', 3400); break;
+      case 'playerHurt': tone(t, 210 * r(), 0.18, 0.3, 'triangle', 120); noise(t, 0.1, 'lowpass', 700, 0.7, 0.35); break;
+      case 'playerDeath': tone(t, 180, 0.6, 0.3, 'triangle', 60); noise(t, 0.4, 'lowpass', 500, 0.6, 0.3); break;
+      case 'zombie': voice(t, 95 * r(), 70, 0.9, 420, 0.55, 5); break;
+      case 'skeleton': for (let i = 0; i < 5; i++) noise(t + i * 0.05 + Math.random() * 0.02, 0.03, 'bandpass', 3200 * r(), 4, 0.3); break;
+      case 'spider': noise(t, 0.35, 'highpass', 3000, 0.7, 0.25); for (let i = 0; i < 3; i++) noise(t + 0.1 * i, 0.02, 'bandpass', 5000, 3, 0.2); break;
+      case 'creeperFuse': {
+        const n = this.noise(t, 1.5, 'bandpass', 2200, 0.9, 0.45 * volume, out);
+        n.f.frequency.linearRampToValueAtTime(4200, t + 1.5);
+        break;
+      }
+      case 'explosion': {
+        const b = this.noise(t, 2.2, 'lowpass', 900, 0.7, 1.0 * volume, out);
+        b.f.frequency.exponentialRampToValueAtTime(60, t + 2.0);
+        tone(t, 70, 0.9, 0.8, 'sine', 30);
+        noise(t, 0.25, 'bandpass', 2400, 0.5, 0.6);
+        break;
+      }
+      case 'cow': voice(t, 150 * r(), 105, 1.1, 380, 0.5, 3); break;
+      case 'pig': for (let i = 0; i < 2; i++) voice(t + i * 0.18, 320 * r(), 240, 0.14, 900, 0.4); break;
+      case 'sheep': voice(t, 420 * r(), 380, 0.7, 1100, 0.35, 16); break;
+      case 'chicken': for (let i = 0; i < 3; i++) tone(t + i * 0.09, 1300 * r(), 0.06, 0.12, 'square', 900); break;
+      case 'death': noise(t, 0.5, 'lowpass', 1400, 0.5, 0.35); break;
+      case 'bow': tone(t, 340, 0.2, 0.25, 'triangle', 140); noise(t, 0.12, 'highpass', 2000, 0.5, 0.15); break;
+      case 'arrowHit': noise(t, 0.06, 'bandpass', 1200, 2, 0.3); tone(t, 260, 0.08, 0.2, 'sine', 120); break;
+      case 'eat': for (let i = 0; i < 3; i++) noise(t + i * 0.16, 0.09, 'bandpass', 1500 * r(), 1.3, 0.35); break;
+      case 'pickup': tone(t, 700 * r(), 0.06, 0.12, 'sine', 1300); break;
+      case 'swing': noise(t, 0.12, 'bandpass', 1600, 0.6, 0.12); break;
+      case 'toolBreak': noise(t, 0.2, 'bandpass', 3200, 3, 0.4); tone(t, 900, 0.2, 0.15, 'square', 400); break;
+      default: break;
     }
   }
 
