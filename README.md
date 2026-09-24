@@ -49,7 +49,7 @@ Your world (seed, position, time of day, hotbar and every block you change) is s
 
 ## Graphics
 
-Everything below can be toggled in **Settings → Graphics**, or chosen through the Low / Medium / High / Ultra presets. The first launch picks a preset from the GPU, and steps down once if the game runs well under 30 fps.
+Everything below can be toggled in **Settings → Graphics**, or chosen through the Low / Medium / High / Ultra presets. The first launch picks a preset from the GPU. During the first minutes of play it steps the preset down, one level at a time, while the game runs well under 30 fps.
 
 - **Deferred PBR lighting.** A G-buffer stores albedo, normal-mapped and geometric normals, roughness, metalness, emission and the Minecraft-style sky/block light levels. Every block texture comes with a generated height, normal, roughness and emission map, and specular uses GGX.
 - **Atmosphere.** Single-scattering Rayleigh, Mie and ozone, with an approximation for multiple scattering. It is rendered into a sky-view lookup table, so sunrise and sunset colours, the sun's aureole and moonlit nights all come from the same model. The same model runs on the CPU to produce the sunlight colour and sky ambient.
@@ -76,7 +76,7 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 - Ten biomes: plains, forest, birch forest, taiga, snowy taiga, desert, beach, ocean, river and mountains.
 - Spaghetti and cheese caves with lava lakes, plus coal, iron, gold and diamond ores.
 - Oak, big oak, birch and spruce trees, cacti, grass, ferns and flowers.
-- Around 65 blocks, including glass, bricks, metal blocks, wool in 15 colours, torches and light-emitting blocks.
+- 65 placeable blocks, including glass, bricks, metal blocks, wool in 15 colours, torches and light-emitting blocks.
 - Terrain generation, light propagation and meshing run in a pool of Web Workers. Meshing uses face culling, per-vertex ambient occlusion and smooth lighting. If workers are unavailable, it falls back to the main thread.
 - Physics covers gravity and axis-separated AABB collision, sprinting, sneaking with edge protection, swimming, flying and optional auto-jump.
 - Water fills gaps next to it, and procedural WebAudio provides material-specific break, place and step sounds plus wind, birds, crickets and cave drips.

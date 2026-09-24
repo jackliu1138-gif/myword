@@ -8,7 +8,7 @@
     "dev": "node tools/serve.mjs 8080",
     "build": "node tools/build.mjs",
     "preview": "node tools/build.mjs && node tools/serve.mjs 8081 dist",
-    "test": "node --test \"test/**/*.test.mjs\""
+    "test": "node --test"
   },
   "devDependencies": {
     "esbuild": "^0.25.12"
