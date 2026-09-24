@@ -127,6 +127,7 @@ export class World {
     this.lastCx = null;
     this.lastCz = null;
     this.onChunkUnload = null;
+    this.onEdit = null; // (x, y, z, id) for edits made here (multiplayer sends them on)
     this.stats = { generated: 0, meshed: 0 };
     this._last = null;
     this.pendingFluids = [];
@@ -175,7 +176,7 @@ export class World {
     return !!(c && c.blocks && c.gpu);
   }
 
-  setBlock(x, y, z, id, { record = true } = {}) {
+  setBlock(x, y, z, id, { record = true, remote = false } = {}) {
     if (y < 0 || y >= H) return false;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     const c = this.getChunk(cx, cz);
@@ -205,8 +206,24 @@ export class World {
         if ((dx === -1 && lx === 0) || (dx === 1 && lx === CS - 1) || (dz === -1 && lz === 0) || (dz === 1 && lz === CS - 1)) n.urgent = true;
       }
     }
-    if (id === 0) this.scheduleFluid(x, y, z);
+    if (!remote) {
+      if (id === 0) this.scheduleFluid(x, y, z);
+      if (this.onEdit) this.onEdit(x, y, z, id);
+    }
     return true;
+  }
+
+  // An edit made by another player: recorded for chunks that are not loaded yet, applied now to
+  // those that are.
+  applyRemoteEdit(x, y, z, id) {
+    if (y < 0 || y >= H) return;
+    const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
+    const key = chunkKey(cx, cz);
+    let e = this.edits.get(key);
+    if (!e) { e = new Map(); this.edits.set(key, e); }
+    e.set((y << 8) | ((z - cz * CS) << 4) | (x - cx * CS), id);
+    const c = this.chunks.get(key);
+    if (c && c.blocks) this.setBlock(x, y, z, id, { record: false, remote: true });
   }
 
   // When a block next to water is removed, water flows into the gap (one step, bounded).

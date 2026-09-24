@@ -32,6 +32,10 @@ export class Simulation {
     this.day = true;
     this.daylight = 1;
     this.pickup = null; // (playerId, itemId, count, wear) => number taken
+    // multiplayer: players marked remote are simulated on their own machines (only their
+    // positions are known here); creatures marked ghost belong to another player's simulation
+    this.onGhostHit = null; // (ghost, damage, fromPos) => void
+    this.onRemoteLoot = null; // (playerId, [[item, count]], pos) => void
   }
 
   get diff() { return DIFFICULTY[this.difficulty] || DIFFICULTY.normal; }
@@ -71,6 +75,12 @@ export class Simulation {
     const p = this.players.get(id);
     if (!p || p.dead || p.mode === 'creative' || amount <= 0) return false;
     if (p.hurtTime > 0.4 && source !== 'drown' && source !== 'fire' && source !== 'void') return false;
+    if (p.remote) {
+      // their own game applies it
+      p.hurtTime = 0.5;
+      this.emit({ type: 'remoteHurt', id, amount, source, from });
+      return true;
+    }
     p.health = Math.max(0, p.health - amount);
     p.hurtTime = 0.5;
     p.lastDamage = 0;
@@ -98,6 +108,7 @@ export class Simulation {
     const w = this.world;
     for (const p of this.players.values()) {
       if (p.hurtTime > 0) p.hurtTime -= TICK;
+      if (p.remote) continue;
       p.lastDamage += TICK;
       if (p.dead || p.mode === 'creative') { p.air = MAX_AIR; p.fire = 0; continue; }
       // air under water
@@ -212,6 +223,7 @@ export class Simulation {
     }
     for (const p of this.players.values()) {
       if (p.dead || p.id === arrow.owner) continue;
+      if (p.remote && typeof arrow.owner === 'string') continue; // no friendly fire between players
       const box = [p.pos[0] - p.hw, p.pos[1], p.pos[2] - p.hw, p.pos[0] + p.hw, p.pos[1] + p.h, p.pos[2] + p.hw];
       if (rayHitsBox(a, dir, box, len) !== null) {
         const byMob = typeof arrow.owner === 'number';
@@ -243,21 +255,40 @@ export class Simulation {
     if (!p || !entity || entity.removed) return false;
     const from = p.pos;
     if (!entity.hurt(damage * (crit ? 1.5 : 1), from, 1)) return false;
+    entity.lastAttacker = playerId;
     this.emit({ type: 'hurt', entity, pos: entity.body.pos.slice(), crit });
     // hostile creatures turn on whoever hurt them
     if (entity.hostile) entity.target = p;
     return true;
   }
 
+  // Another player's hit on one of our creatures.
+  remoteHit(playerId, mobId, damage, from) {
+    const e = this.entities.get(mobId);
+    if (!e || e.kind !== 'mob' || e.ghost || e.removed) return false;
+    const pos = Array.isArray(from) ? from : null;
+    if (!e.hurt(Math.max(0, Math.min(40, Number(damage) || 0)), pos, 1)) return false;
+    e.lastAttacker = playerId;
+    this.emit({ type: 'hurt', entity: e, pos: e.body.pos.slice() });
+    const p = this.players.get(playerId);
+    if (e.hostile && p) e.target = p;
+    return true;
+  }
+
   onMobDeath(mob) {
     const p = mob.body.pos;
     this.emit({ type: 'death', entity: mob, pos: p.slice() });
+    const loot = [];
     for (const [item, lo, hi] of mob.def.drops || []) {
       let n = lo + Math.floor(Math.random() * (hi - lo + 1));
       if (hi < 1) n = Math.random() < hi ? 1 : 0; // rare drops
       const id = item === 'wool' ? mob.variant || BLOCK.WHITE_WOOL : item;
-      if (n > 0) this.dropItem(id, n, p[0], p[1] + 0.5, p[2]);
+      if (n > 0) loot.push([id, n]);
     }
+    // the loot goes to whoever made the kill, on their machine
+    const killer = this.players.get(mob.lastAttacker);
+    if (killer && killer.remote && this.onRemoteLoot) { if (loot.length) this.onRemoteLoot(killer.id, loot, [p[0], p[1], p[2]]); return; }
+    for (const [id, n] of loot) this.dropItem(id, n, p[0], p[1] + 0.5, p[2]);
   }
 
   // Blast: breaks blocks in a rough sphere, hurts and throws back everything nearby.
@@ -290,7 +321,7 @@ export class Simulation {
       return d < reach ? 1 - d / reach : 0;
     };
     for (const e of this.entities.values()) {
-      if (e === source || e.removed) continue;
+      if (e === source || e.removed || e.ghost) continue;
       const b = e.body;
       const k = impactAt(b.pos[0], b.pos[1] + b.h * 0.5, b.pos[2]);
       if (k <= 0) continue;
@@ -344,7 +375,7 @@ export class Simulation {
   trySpawn() {
     const w = this.world;
     for (const p of this.players.values()) {
-      if (p.dead) continue;
+      if (p.dead || p.remote) continue; // remote players spawn their own
       // monsters in the dark
       const cap = this.diff.hostileCap;
       if (this.spawnMobs && cap > 0 && this.countNear((e) => e.hostile, p.pos, 72) < cap) {
@@ -423,9 +454,9 @@ export class Simulation {
       if (e.removed) { this.entities.delete(e.id); continue; }
       const p = e.body.pos;
       if (!w.isChunkReady(p[0], p[2])) continue; // frozen until its chunk loads
-      if (e.kind === 'mob' && this.ticks % 40 === e.id % 40 && this.despawn(e)) { this.entities.delete(e.id); continue; }
+      if (e.kind === 'mob' && !e.ghost && this.ticks % 40 === e.id % 40 && this.despawn(e)) { this.entities.delete(e.id); continue; }
       e.update(this);
-      if (e.kind === 'mob') mobs.push(e);
+      if (e.kind === 'mob' && !e.ghost) mobs.push(e);
       else if (e.kind === 'item') this.tickItem(e);
       else if (e.kind === 'arrow' && e.stuck && e.pickup) this.tickArrowPickup(e);
       if (e.removed) this.entities.delete(e.id);

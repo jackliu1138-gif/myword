@@ -24,9 +24,21 @@ export class EntityMesh {
     this.data = d;
   }
 
-  build(sim, cam, alpha, world, t, maxDist = 96) {
+  // extras: other players in multiplayer ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... })
+  build(sim, cam, alpha, world, t, maxDist = 96, extras = null) {
     let o = 0;
     const p = [0, 0, 0];
+    if (extras) {
+      for (const e of extras) {
+        const q = e.pos;
+        const dx = q[0] - cam[0], dy = q[1] - cam[1], dz = q[2] - cam[2];
+        if (dx * dx + dy * dy + dz * dz > maxDist * maxDist) continue;
+        this.ensure(o + modelVertexCount('player') * ENTITY_FLOATS);
+        const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + 1.2), Math.floor(q[2]));
+        const tint = e.hurtTime > 0.2 ? [1, 0.18, 0.12, 0.55] : [0, 0, 0, 0];
+        o = emitModel(this.data, o, e, 'player', q, e.yaw, cam, [sl / 15, bl / 15], this.skins, t, tint, e.skin);
+      }
+    }
     for (const e of sim.entities.values()) {
       const b = e.body;
       p[0] = lerp(e.prevPos[0], b.pos[0], alpha);

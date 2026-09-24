@@ -16,6 +16,7 @@ import { buildIcons, buildItemIcons } from '../ui/icons.js';
 import { BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
 import { installPlay } from './play.js';
+import { installMultiplayer, loadMultiplayerPrefs } from '../net/multiplayer.js';
 import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
 import { Gamepads, PAD } from './gamepad.js';
 import { FocusNav } from '../ui/focusnav.js';
@@ -53,6 +54,8 @@ export function defaultSettings() {
     touchOpacity: 0.7,
     touchSensitivity: 1,
     touchHaptics: true,
+    voiceVolume: 1,
+    voiceMode: 'proximity',
   };
 }
 
@@ -150,6 +153,7 @@ export class Game {
     this.padSprint = false;
     this.lastPadA = 0;
     this.bindUi();
+    this.detectHostServer().then((info) => this.ui.setHostServer(info));
 
     const data = this.opts.freshWorld ? null : await store.loadWorld();
     const usable = data && SAVE_VERSIONS.includes(data.version);
@@ -167,6 +171,12 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ world lifecycle
+  async loadSinglePlayer() {
+    const data = await store.loadWorld();
+    const usable = data && SAVE_VERSIONS.includes(data.version);
+    this.loadWorld(usable ? data.seed : seedFromString(''), usable ? data : null);
+  }
+
   loadWorld(seed, data) {
     if (this.world) {
       for (const c of this.world.chunks.values()) this.renderer.freeChunk(c);
@@ -209,6 +219,7 @@ export class Game {
 
   async save() {
     if (!this.world || !this.player || this.state === 'boot') return;
+    if (this.mp) { this.mp.net.send({ t: 'save', s: this.mpSaveState() }); return; } // kept on the server
     const me = this.me();
     const data = {
       version: SAVE_VERSION,
@@ -255,7 +266,31 @@ export class Game {
       setTimeout(() => document.getElementById('seed-input').focus(), 40);
     });
     ui.on('back', () => ui.pop());
-    ui.on('toTitle', async () => { await this.save(); this.enterTitle(); });
+    ui.on('toTitle', async () => {
+      if (this.mp) { await this.leaveServer(); return; }
+      await this.save();
+      this.enterTitle();
+    });
+    ui.on('openMultiplayer', () => {
+      ui.showMultiplayerForm(loadMultiplayerPrefs(), this.hostServer);
+      ui.push('multiplayer');
+    });
+    ui.on('joinServer', async (form) => {
+      ui.setMpBusy(true);
+      try {
+        await this.joinServer(form);
+      } catch (e) {
+        const key = 'mp.err.' + e.message;
+        const msg = t(key);
+        ui.setMpError(msg === key ? t('mp.err.unreachable') : msg);
+      } finally {
+        ui.setMpBusy(false);
+      }
+    });
+    ui.on('toggleMic', () => this.toggleMic());
+    ui.on('voiceMode', (m) => this.setVoiceMode(m));
+    ui.on('chatSubmit', (text) => this.closeChat(text));
+    ui.on('chatCancel', () => this.closeChat(''));
     ui.on('createWorld', async (seedText, opts = {}) => {
       this.newWorldMode = opts.mode || 'survival';
       this.newWorldDifficulty = opts.difficulty || 'normal';
@@ -323,6 +358,8 @@ export class Game {
     }
     if (key.startsWith('touch') && this.touch) this.touch.applySettings();
     if (key === 'volume') this.audio.setVolume(value);
+    if (key === 'voiceVolume' && this.voice) this.voice.volume = value;
+    if (key === 'voiceMode' && this.voice) this.voice.mode = value;
     if (key === 'ambience') this.audio.ambientOn = value;
     const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa', 'grass3d', 'grassShadows', 'pom'];
     if (!live && graphics.includes(key)) this.renderer.applySettings(s);
@@ -344,6 +381,10 @@ export class Game {
       }
       return;
     }
+    if (this.mp && this.state === 'playing') {
+      if (code === 'Enter' || code === 'NumpadEnter' || code === 'Slash') { this.openChat(); e.preventDefault(); return; }
+      if (code === 'KeyV') { this.toggleMic(); return; }
+    }
     if (code === 'KeyE') {
       if (this.state === 'playing') { this.openInventory(); e.preventDefault(); }
       else if (this.state === 'inventory') { this.closeInventory(); e.preventDefault(); }
@@ -362,10 +403,11 @@ export class Game {
   // The shared "back" action: Esc, controller B, a TV remote's Back key. Returns false when there
   // was nothing to go back from (the title screen), so the platform can handle it.
   handleBack() {
+    if (this.state === 'chat') { this.closeChat(''); return true; }
     if (this.state === 'dead' && this.ui.current === 'death') return true;
     if (this.state === 'inventory') { this.closeInventory(); return true; }
     if (this.state === 'playing') { this.pause(); return true; }
-    if (['settings', 'help', 'newworld', 'device'].includes(this.ui.current)) { this.ui.pop(); return true; }
+    if (['settings', 'help', 'newworld', 'device', 'multiplayer'].includes(this.ui.current)) { this.ui.pop(); return true; }
     if (this.state === 'paused') { this.play(); return true; }
     return false;
   }
@@ -528,6 +570,8 @@ export class Game {
       tc.toggleFly = false;
       if (tc.menu) { tc.menu = false; this.pause(); }
       if (tc.inventory) { tc.inventory = false; this.openInventory(); }
+      if (tc.chat) { tc.chat = false; this.openChat(); }
+      if (tc.mic) { tc.mic = false; this.toggleMic(); }
       for (let i = 0; i < 9; i++) {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
@@ -555,13 +599,14 @@ export class Game {
       }
     }
 
-    // creatures, items, arrows, health
+    // creatures, items, arrows, health; then what the other players need to know
     this.updatePlay(dt);
+    this.updateNet(dt);
 
-    // time of day
-    if (this.state !== 'paused') {
-      const fast = playing && (input.down('KeyT') || pad.down(PAD.UP)) ? 90 : 1;
-      this.dayTime += (dt * fast) / (this.settings.dayLength * 60);
+    // time of day (on a server, the server's clock)
+    if (this.state !== 'paused' || this.mp) {
+      const fast = playing && !this.mp && (input.down('KeyT') || pad.down(PAD.UP)) ? 90 : 1;
+      this.dayTime += (dt * fast) / ((this.mp ? this.mp.dayLength : this.settings.dayLength) * 60);
       if (this.dayTime >= 1) { this.dayTime -= 1; this.dayCount = (this.dayCount || 0) + 1; }
       if (fast > 1 && this.ui.current === null) this.ui.toast(t('toast.time', { time: clockText(this.dayTime) }), 400);
       this.cloudOffset[0] += dt * 3.2;
@@ -608,6 +653,7 @@ export class Game {
       this.save();
     }
     if (this.debug && this.ui.current === 'settings') this.ui.refreshLive('timeOfDay', this.dayTime);
+    this.updateNameTags();
   }
 
   // Leaves now and then let go of the canopy above and around the camera (more in wind and rain).
@@ -662,6 +708,7 @@ export class Game {
     ctl.sneak = ctl.sneak || pad.down(PAD.B);
     if (pad.pressed(PAD.X)) ctl.toggleFly = true;
     if (pad.pressed(PAD.Y)) { this.openInventory(); return; }
+    if (this.mp && pad.pressed(PAD.UP)) this.toggleMic();
     if (pad.pressed(PAD.LB) || pad.pressed(PAD.LEFT)) this.selectSlot((this.selected + 8) % 9);
     if (pad.pressed(PAD.RB) || pad.pressed(PAD.RIGHT)) this.selectSlot((this.selected + 1) % 9);
     if (pad.pressed(PAD.DOWN)) { this.hudHidden = !this.hudHidden; this.ui.setHud(!this.hudHidden); }
@@ -965,3 +1012,4 @@ export class Game {
 }
 
 installPlay(Game);
+installMultiplayer(Game);

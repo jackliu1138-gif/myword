@@ -38,6 +38,14 @@
     </div>
     <div id="hotbar" data-i18n-attr="aria-label:hud.hotbar"></div>
     <div id="lockhint" hidden data-i18n="hud.lockHint"></div>
+    <div id="nametags" aria-hidden="true"></div>
+    <div id="voice-hud" class="voice-hud" hidden></div>
+    <div id="chat" class="chat" hidden>
+      <div id="chat-log" class="chat-log" role="log" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form" hidden autocomplete="off">
+        <input id="chat-input" type="text" maxlength="200" enterkeyhint="send" data-i18n-attr="placeholder:mp.chatPlaceholder;aria-label:mp.chat">
+      </form>
+    </div>
   </div>
 
   <section id="title" class="screen" hidden>
@@ -52,6 +60,7 @@
       <div class="menu">
         <button id="btn-play" class="btn primary" type="button" data-i18n="title.play"></button>
         <button id="btn-new" class="btn" type="button" data-i18n="title.new"></button>
+        <button id="btn-multi" class="btn" type="button" data-i18n="title.multi"></button>
         <button id="btn-settings" class="btn" type="button" data-i18n="title.settings"></button>
         <button id="btn-help" class="btn" type="button" data-i18n="title.help"></button>
         <button id="btn-device" class="btn subtle" type="button" data-i18n="title.device"></button>
@@ -72,6 +81,18 @@
         <button id="btn-pause-settings" class="btn" type="button" data-i18n="title.settings"></button>
         <button id="btn-pause-help" class="btn" type="button" data-i18n="title.help"></button>
         <button id="btn-title" class="btn" type="button" data-i18n="pause.toTitle"></button>
+      </div>
+      <div id="mp-panel" class="mp-panel" hidden>
+        <div class="mp-head"><span id="mp-server" class="mp-server"></span><span id="mp-ping" class="mp-ping"></span></div>
+        <ul id="mp-players" class="mp-players"></ul>
+        <div class="mp-voice">
+          <button id="btn-mic" class="btn" type="button"></button>
+          <div class="seg" id="voice-mode" role="group" data-i18n-attr="aria-label:set.voiceMode" style="--cols:2">
+            <button type="button" data-v="proximity" data-i18n="voice.proximity"></button>
+            <button type="button" data-v="global" data-i18n="voice.global"></button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="voice.hint"></p>
       </div>
     </div>
   </section>
@@ -129,6 +150,30 @@
       <div class="menu row">
         <button id="btn-newworld-cancel" class="btn" type="button" data-i18n="new.cancel"></button>
         <button id="btn-newworld-create" class="btn primary" type="button" data-i18n="new.create"></button>
+      </div>
+    </div>
+  </section>
+
+  <section id="multiplayer" class="screen dim" hidden>
+    <div class="sheet narrow">
+      <h2 data-i18n="mp.title"></h2>
+      <p class="hint" id="mp-hint" data-i18n="mp.hint"></p>
+      <label class="field" for="mp-address">
+        <span data-i18n="mp.address"></span>
+        <input id="mp-address" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" data-i18n-attr="placeholder:mp.addressPlaceholder">
+      </label>
+      <label class="field" for="mp-name">
+        <span data-i18n="mp.name"></span>
+        <input id="mp-name" type="text" autocomplete="nickname" maxlength="16">
+      </label>
+      <label class="field" for="mp-password">
+        <span data-i18n="mp.password"></span>
+        <input id="mp-password" type="password" autocomplete="off" maxlength="64">
+      </label>
+      <p class="mp-error" id="mp-error" role="alert" hidden></p>
+      <div class="menu row">
+        <button id="btn-mp-cancel" class="btn" type="button" data-i18n="new.cancel"></button>
+        <button id="btn-mp-join" class="btn primary" type="button" data-i18n="mp.join"></button>
       </div>
     </div>
   </section>

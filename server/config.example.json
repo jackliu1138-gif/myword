@@ -1,0 +1,12 @@
+{
+  "port": 8080,
+  "name": "我们的世界",
+  "password": "",
+  "maxPlayers": 10,
+  "seed": "",
+  "mode": "survival",
+  "difficulty": "normal",
+  "dayLength": 20,
+  "turn": ["turn:game.example.com:3478"],
+  "turnSecret": ""
+}

@@ -468,6 +468,83 @@ kbd {
 .ing img { width: 22px; height: 22px; image-rendering: pixelated; }
 .inv-sub { margin: 10px 0 0; font-size: 12px; color: var(--ink-faint); }
 
+/* ---------------------------------------------------------------- multiplayer */
+#nametags { position: absolute; inset: 0; overflow: hidden; }
+.nametag {
+  position: absolute; left: 0; top: 0; transform-origin: 50% 100%;
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  font: 600 13px/1.2 var(--font-ui); white-space: nowrap;
+  will-change: transform;
+}
+.nametag .nt-voice { display: none; width: 8px; height: 8px; border-radius: 50%; background: #7ee07e; box-shadow: 0 0 8px #7ee07e; }
+.nametag.speaking .nt-voice { display: block; }
+.chat {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  width: min(440px, calc(100vw - 24px));
+  display: grid; gap: 6px;
+}
+.chat-log { display: grid; gap: 3px; max-height: 34vh; overflow: hidden; align-content: end; }
+.chat-line {
+  margin: 0; justify-self: start; max-width: 100%;
+  padding: 3px 8px; border-radius: 5px;
+  background: rgba(0, 0, 0, 0.42); color: var(--ink);
+  font: 500 13px/1.4 var(--font-ui); overflow-wrap: anywhere;
+  transition: opacity 0.8s;
+}
+.chat-line b { color: var(--sun); margin-right: 6px; font-weight: 700; }
+.chat-line.notice { color: #d8e8ff; font-style: italic; }
+.chat-line.old { opacity: 0; }
+.chat.open .chat-log { overflow-y: auto; pointer-events: auto; }
+.chat.open .chat-line.old { opacity: 1; }
+.chat-form { pointer-events: auto; }
+.chat-form input {
+  width: 100%; box-sizing: border-box;
+  font: 500 15px var(--font-ui); color: var(--ink);
+  background: rgba(0, 0, 0, 0.62); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 9px 11px; outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+.chat-form input:focus { border-color: var(--sky); }
+.voice-hud {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  display: grid; gap: 4px; justify-items: start;
+  font: 600 12px/1.3 var(--font-ui);
+}
+.voice-hud span { padding: 4px 9px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); }
+.voice-hud .vh-mic::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--ink-faint); vertical-align: 1px; }
+.voice-hud .vh-mic.live::before { background: #7ee07e; box-shadow: 0 0 8px #7ee07e; }
+.voice-hud .vh-mic.muted::before { background: var(--danger); }
+.voice-hud .vh-who { color: #c9f5c9; }
+#debug:not([hidden]) ~ .voice-hud { top: auto; bottom: calc(180px + env(safe-area-inset-bottom, 0px)); }
+.mp-panel { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); align-content: start; }
+/* on a server the pause sheet shows the menu and the player list side by side when there is room */
+@media (min-width: 720px) {
+  #pause .sheet.has-mp { width: min(780px, 100%); grid-template-columns: 1fr 1fr; column-gap: 28px; align-items: start; }
+  #pause .sheet.has-mp h2 { grid-column: 1 / -1; }
+  #pause .sheet.has-mp .mp-panel { padding-top: 0; border-top: 0; padding-left: 24px; border-left: 1px solid var(--line); }
+}
+.mp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.mp-server { font-weight: 700; }
+.mp-ping { font: 500 12px var(--font-mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mp-players { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 30vh; overflow-y: auto; }
+.mp-players li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; background: rgba(255, 255, 255, 0.05); font-size: 14px; }
+.mp-players li.me em { color: var(--ink-faint); font-style: normal; font-size: 12px; }
+.mic-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); flex: none; }
+.mic-dot.on { background: #7ee07e; }
+.mic-dot.speaking { background: #7ee07e; box-shadow: 0 0 10px #7ee07e; }
+.mic-dot.muted { background: var(--danger); }
+.mp-voice { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.mp-voice .btn { text-align: center; }
+.mp-error { margin: 0; color: var(--danger); font-size: 13px; line-height: 1.5; }
+.touch-mic.on { border-color: #7ee07e; color: #7ee07e; }
+.touch-mic.muted { border-color: var(--danger); color: var(--danger); }
+
 /* ---------------------------------------------------------------- death */
 .screen.death {
   background: radial-gradient(ellipse at center, rgba(80, 0, 0, 0.3), rgba(50, 0, 0, 0.75));
@@ -544,6 +621,7 @@ kbd {
 }
 /* the HUD hotbar takes taps on touch screens */
 @media (pointer: coarse) {
+  .chat { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); width: min(360px, 60vw); }
   #hotbar .slot { pointer-events: auto; }
   #hotbar { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
   #vitals { bottom: calc(10px + min(46px, 9.4vw) + 20px + env(safe-area-inset-bottom, 0px)); }

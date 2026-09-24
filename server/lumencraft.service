@@ -1,0 +1,22 @@
+# systemd unit: copy to /etc/systemd/system/lumencraft.service, adjust the paths and user, then
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lumencraft
+[Unit]
+Description=Lumencraft multiplayer server
+After=network.target
+
+[Service]
+Type=simple
+User=lumencraft
+WorkingDirectory=/opt/lumencraft
+ExecStart=/usr/bin/node server/server.mjs
+Restart=on-failure
+RestartSec=3
+# settings can also live in server/config.json
+Environment=PORT=8080
+Environment=SERVER_NAME=我们的世界
+# Environment=PASSWORD=change-me
+# Environment=TURN_URLS=turn:game.example.com:3478
+# Environment=TURN_SECRET=the-same-secret-as-in-turnserver.conf
+
+[Install]
+WantedBy=multi-user.target

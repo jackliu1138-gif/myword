@@ -42,3 +42,30 @@ test('controller families are recognised for button names', () => {
   assert.equal(padStyle('Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)'), 'nintendo');
   for (const g of Object.values(GLYPHS)) assert.deepEqual(Object.keys(g), ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT']);
 });
+
+test('name tags project onto the screen where the player stands', async () => {
+  const { projectToScreen } = await import('../src/net/multiplayer.js');
+  const cam = { pos: [0, 0, 0], forward: [0, 0, -1], fov: Math.PI / 2 };
+  assert.deepEqual(projectToScreen(cam, [0, 0, -5], 800, 400), [400, 200]);
+  const right = projectToScreen(cam, [2, 0, -5], 800, 400);
+  assert.ok(right[0] > 400 && Math.abs(right[1] - 200) < 1e-6);
+  const up = projectToScreen(cam, [0, 2, -5], 800, 400);
+  assert.ok(up[1] < 200);
+  assert.equal(projectToScreen(cam, [0, 0, 5], 800, 400), null); // behind
+  // looking along +X: +Z is to the right
+  const cam2 = { pos: [0, 0, 0], forward: [1, 0, 0], fov: Math.PI / 2 };
+  assert.ok(projectToScreen(cam2, [5, 0, 2], 800, 400)[0] > 400);
+});
+
+test('server addresses become WebSocket URLs', async () => {
+  const { serverUrl } = await import('../src/net/net.js');
+  const http = { protocol: 'http:', host: '1.2.3.4:8080' };
+  const https = { protocol: 'https:', host: 'game.example.com' };
+  assert.equal(serverUrl('', http), 'ws://1.2.3.4:8080/ws');
+  assert.equal(serverUrl('', https), 'wss://game.example.com/ws');
+  assert.equal(serverUrl('game.example.com', http), 'wss://game.example.com/ws');
+  assert.equal(serverUrl('1.2.3.4:8080', http), 'ws://1.2.3.4:8080/ws');
+  assert.equal(serverUrl('1.2.3.4:8080', https), 'wss://1.2.3.4:8080/ws');
+  assert.equal(serverUrl('http://10.0.0.5:8080', https), 'ws://10.0.0.5:8080/ws');
+  assert.equal(serverUrl('wss://x.example.com/ws', http), 'wss://x.example.com/ws');
+});

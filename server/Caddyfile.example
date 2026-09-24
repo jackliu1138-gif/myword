@@ -1,0 +1,6 @@
+# Caddy gets and renews the https certificate by itself and passes WebSockets through.
+# Point the domain's DNS at the server, open ports 80 and 443, then: sudo systemctl reload caddy
+game.example.com {
+	encode gzip
+	reverse_proxy localhost:8080
+}

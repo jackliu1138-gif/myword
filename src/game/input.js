@@ -157,6 +157,8 @@ const ICONS = {
   inventory: '<svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
   fly: '<svg viewBox="0 0 24 24"><path d="M12 13c-2-4.5-5.6-7-9.5-7.5 1 4.2 3.8 7.4 7.8 8.4M12 13c2-4.5 5.6-7 9.5-7.5-1 4.2-3.8 7.4-7.8 8.4M12 13v7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  chat: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>',
+  mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
   fullscreen: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
 };
 
@@ -183,6 +185,8 @@ export class TouchControls {
       ${btn('touch-place', 'placeBtn', ICONS.place, 'touch.place')}
       ${btn('touch-fly', 'toggleFly', ICONS.fly, 'touch.fly')}
       <div class="touch-top">
+        ${btn('touch-mic', 'mic', ICONS.mic, 'touch.mic')}
+        ${btn('touch-chat', 'chat', ICONS.chat, 'touch.chat')}
         ${btn('touch-full', 'fullscreen', ICONS.fullscreen, 'touch.fullscreen')}
         ${btn('touch-inv', 'inventory', ICONS.inventory, 'touch.inventory')}
         ${btn('touch-menu', 'menu', ICONS.pause, 'touch.pause')}
@@ -193,6 +197,7 @@ export class TouchControls {
     this.stick = el.querySelector('.touch-stick');
     this.knob = el.querySelector('.touch-knob');
     this.rotateHint = el.querySelector('.touch-rotate');
+    this.setMultiplayer(false);
     const fsOk = document.fullscreenEnabled || document.webkitFullscreenEnabled;
     if (!fsOk) el.querySelector('.touch-full').hidden = true;
 
@@ -260,6 +265,15 @@ export class TouchControls {
   show(v) {
     this.el.classList.toggle('visible', v);
     if (!v) this.release();
+  }
+
+  // chat and microphone buttons only on a server; mic: null (off), 'on', 'muted'
+  setMultiplayer(v, mic = null) {
+    this.el.querySelector('.touch-chat').hidden = !v;
+    const m = this.el.querySelector('.touch-mic');
+    m.hidden = !v;
+    m.classList.toggle('on', mic === 'on');
+    m.classList.toggle('muted', mic === 'muted');
   }
 
   setFlyVisible(v) {

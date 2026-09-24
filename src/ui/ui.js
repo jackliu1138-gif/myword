@@ -75,6 +75,8 @@ const SCHEMA = [
     items: [
       { key: 'volume', type: 'range', label: 'set.volume', min: 0, max: 1, step: 0.05, fmt: pct },
       { key: 'ambience', type: 'toggle', label: 'set.ambience', desc: 'set.ambience.desc' },
+      { key: 'voiceVolume', type: 'range', label: 'set.voiceVolume', min: 0, max: 2, step: 0.05, fmt: pct },
+      { key: 'voiceMode', type: 'choice', label: 'set.voiceMode', options: [['proximity', 'voice.proximity'], ['global', 'voice.global']], desc: 'voice.hint' },
     ],
   },
 ];
@@ -97,6 +99,8 @@ const HELP = [
       [kb('1–9', 'i18n:key.wheel'), 'act.hotbar'],
       [kb('E'), 'act.inventory'],
       [kb('Q'), 'act.drop'],
+      [kb('Enter'), 'act.chat'],
+      [kb('V'), 'act.mic'],
       [kb('T'), 'act.fastTime'],
       [kb('F3', 'i18n:key.or', '`'), 'act.debug'],
       [kb('H'), 'act.hideHud'],
@@ -179,7 +183,9 @@ export function clockText(tm) {
 
 export class UI {
   constructor() {
-    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death'];
+    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer'];
+    this.mp = null;
+    this.chatLines = [];
     this.newWorld = { mode: 'survival', difficulty: 'normal' };
     this.current = null;
     this.stack = [];
@@ -217,6 +223,30 @@ export class UI {
     click('btn-newworld-cancel', 'back');
     click('btn-device-done', 'back');
     click('btn-respawn', 'respawn');
+    click('btn-multi', 'openMultiplayer');
+    click('btn-mp-cancel', 'back');
+    click('btn-mic', 'toggleMic');
+    const join = () => {
+      if ($('btn-mp-join').disabled) return;
+      this.emit('click');
+      this.emit('joinServer', { address: $('mp-address').value.trim(), name: $('mp-name').value.trim(), password: $('mp-password').value });
+    };
+    $('btn-mp-join').addEventListener('click', join);
+    for (const id of ['mp-address', 'mp-name', 'mp-password']) {
+      $(id).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') join();
+        if (e.key === 'Escape') this.emit('back');
+        e.stopPropagation();
+      });
+    }
+    for (const b of $('voice-mode').querySelectorAll('button')) b.addEventListener('click', () => { this.emit('click'); this.emit('voiceMode', b.dataset.v); });
+    $('chat-form').addEventListener('submit', (e) => { e.preventDefault(); this.emit('chatSubmit', $('chat-input').value); });
+    $('chat-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this.emit('chatCancel'); }
+      e.stopPropagation();
+    });
+    // tapping or clicking back into the game closes the chat
+    $('chat-input').addEventListener('blur', () => setTimeout(() => { if ($('chat').classList.contains('open')) this.emit('chatCancel'); }, 150));
     click('btn-death-title', 'toTitle');
     $('btn-newworld-create').addEventListener('click', () => {
       this.emit('click');
@@ -253,6 +283,120 @@ export class UI {
     desc.textContent = t(desc.dataset.i18n);
   }
 
+  // ------------------------------------------------------------ multiplayer
+  setHostServer(info) {
+    this.hostServer = info;
+  }
+
+  showMultiplayerForm(prefs, host) {
+    $('mp-address').value = prefs.address || '';
+    $('mp-name').value = prefs.name || '';
+    $('mp-password').value = '';
+    const hint = $('mp-hint');
+    hint.dataset.i18n = host ? 'mp.hintHere' : 'mp.hint';
+    hint.textContent = t(hint.dataset.i18n, { server: host ? host.name : '' });
+    $('mp-address').placeholder = host ? t('mp.here', { server: host.name }) : t('mp.addressPlaceholder');
+    this.setMpError(null);
+    setTimeout(() => { const el = $('mp-name').value ? $('btn-mp-join') : $('mp-name'); el.focus({ preventScroll: true }); }, 40);
+  }
+
+  setMpBusy(busy) {
+    const b = $('btn-mp-join');
+    b.disabled = busy;
+    b.textContent = t(busy ? 'mp.connecting' : 'mp.join');
+  }
+
+  setMpError(msg) {
+    const el = $('mp-error');
+    el.hidden = !msg;
+    el.textContent = msg || '';
+  }
+
+  // info = { server } while on a server, null otherwise
+  setMultiplayer(info) {
+    this.mp = info;
+    $('chat').hidden = !info;
+    $('mp-panel').hidden = !info;
+    $('pause').querySelector('.sheet').classList.toggle('has-mp', !!info);
+    $('voice-hud').hidden = true;
+    $('btn-title').textContent = t(info ? 'mp.leave' : 'pause.toTitle');
+    if (!info) {
+      this.chatLines = [];
+      $('chat-log').innerHTML = '';
+      $('nametags').innerHTML = '';
+    }
+  }
+
+  // name null: a notice from the game
+  addChat(name, text) {
+    const log = $('chat-log');
+    const line = document.createElement('p');
+    line.className = 'chat-line' + (name ? '' : ' notice');
+    if (name) {
+      const who = document.createElement('b');
+      who.textContent = name;
+      line.appendChild(who);
+    }
+    line.appendChild(document.createTextNode(text));
+    log.appendChild(line);
+    while (log.children.length > 40) log.firstChild.remove();
+    // lines fade after a while unless the chat is open
+    setTimeout(() => line.classList.add('old'), 12000);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  openChat() {
+    $('chat').classList.add('open');
+    $('chat-form').hidden = false;
+    const input = $('chat-input');
+    input.value = '';
+    setTimeout(() => input.focus({ preventScroll: true }), 0);
+    $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  }
+
+  closeChat() {
+    $('chat').classList.remove('open');
+    $('chat-form').hidden = true;
+    $('chat-input').blur();
+  }
+
+  createNameTag(name) {
+    const tag = document.createElement('div');
+    tag.className = 'nametag';
+    tag.hidden = true;
+    const n = document.createElement('span');
+    n.textContent = name;
+    tag.appendChild(n);
+    tag.insertAdjacentHTML('beforeend', '<i class="nt-voice" aria-hidden="true"></i>');
+    $('nametags').appendChild(tag);
+    return tag;
+  }
+
+  // state = { server, ping, players: [{ name, me, voice: { on, muted }, speaking }], mic, muted, mode }
+  renderMpPanel(state) {
+    this.mpPanelState = state;
+    $('mp-server').textContent = state.server;
+    $('mp-ping').textContent = t('mp.players', { n: state.players.length }) + (state.ping ? ' · ' + state.ping + ' ms' : '');
+    $('mp-players').innerHTML = state.players.map((p) => {
+      const v = p.voice && p.voice.on ? (p.voice.muted ? 'muted' : p.speaking ? 'speaking' : 'on') : 'off';
+      return `<li class="${p.me ? 'me' : ''}"><span>${escapeHtml(p.name)}${p.me ? ` <em>(${escapeHtml(t('mp.you'))})</em>` : ''}</span><i class="mic-dot ${v}" title="${escapeHtml(t('voice.state.' + v))}"></i></li>`;
+    }).join('');
+    $('btn-mic').textContent = t(!state.mic ? 'voice.micOff' : state.muted ? 'voice.unmute' : 'voice.mute');
+    for (const b of $('voice-mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === state.mode));
+  }
+
+  // state = { mic, muted, level, speaking: [names] }
+  setVoiceHud(state) {
+    const el = $('voice-hud');
+    const show = state.mic || state.speaking.length > 0;
+    el.hidden = !show;
+    if (!show) return;
+    const me = state.mic ? `<span class="vh-mic ${state.muted ? 'muted' : state.level > 0.03 ? 'live' : ''}">${escapeHtml(t(state.muted ? 'voice.muted' : 'voice.micOn'))}</span>` : '';
+    const who = state.speaking.length ? `<span class="vh-who">${escapeHtml(t('voice.speaking', { names: state.speaking.join('、') }))}</span>` : '';
+    const html = me + who;
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
   // Re-render everything that carries text after the language changes.
   refreshLanguage() {
     applyI18n(document);
@@ -268,6 +412,8 @@ export class UI {
     if (this.invState) this.renderInventory(...this.invState);
     if (this.vitalsState) { const v = this.vitalsState; this.vitalsState = null; this.setVitals(v); }
     if (this.deathCause) this.showDeath(this.deathCause);
+    if (this.mp) $('btn-title').textContent = t('mp.leave');
+    if (this.mpPanelState) this.renderMpPanel(this.mpPanelState);
     if (this.deviceInfo) this.showDevice(this.deviceInfo);
   }
 

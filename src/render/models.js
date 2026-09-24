@@ -115,12 +115,49 @@ const SKINS = {
     if (part === 'head' && face !== 'back' && face !== 'top' && face !== 'bottom' && v === 1 && (u === 0 || u === w - 1)) return [20, 20, 20];
     return jitter(rgb(0xf4f4f0), 0.06, u, v + part.length, 12);
   },
+  // other players in multiplayer: a few outfits so friends can tell each other apart
+  player(part, face, u, v, w, h, variant = 0) {
+    const o = PLAYER_LOOKS[variant % PLAYER_LOOKS.length];
+    const skin = rgb(o.skin), hair = rgb(o.hair), shirt = rgb(o.shirt), pants = rgb(o.pants);
+    const fi = FACES.indexOf(face);
+    if (part === 'head') {
+      if (face === 'top') return jitter(hair, 0.12, u, v, 31);
+      if (face === 'bottom') return skin;
+      if (face === 'front') {
+        if (v < 2 || (v === 2 && (u === 0 || u === 7))) return jitter(hair, 0.12, u, v, 32);
+        if (v === 4 && (u === 1 || u === 2 || u === 5 || u === 6)) return u === 2 || u === 5 ? rgb(o.eyes) : [236, 236, 236];
+        if (v === 6 && u >= 3 && u <= 4) return [skin[0] * 0.7, skin[1] * 0.55, skin[2] * 0.5];
+        return jitter(skin, 0.05, u, v, 33);
+      }
+      if (face === 'back' ? v < 6 : v < 3) return jitter(hair, 0.12, u, v + fi * 9, 34);
+      return jitter(skin, 0.05, u, v + fi * 9, 35);
+    }
+    if (part === 'body') {
+      if (v >= 11) return jitter(pants, 0.08, u, v, 36);
+      if (face === 'front' && v === 0 && u >= 3 && u <= 4) return skin; // collar
+      return jitter(shirt, 0.1, u, v + fi * 13, 37);
+    }
+    if (part.endsWith('Arm')) return v < 4 ? jitter(shirt, 0.1, u, v + fi * 5, 38) : jitter(skin, 0.05, u, v, 39);
+    return v >= 10 ? rgb(0x2e2a28) : jitter(pants, 0.08, u, v + fi * 5, 40);
+  },
   arrow(part, face, u, v) {
     if (part === 'tip') return rgb(0x9a9aa0);
     if (part === 'fletch') return rgb(0xeeeeea);
     return jitter(rgb(0x8a6436), 0.1, u, v, 3);
   },
 };
+
+const PLAYER_LOOKS = [
+  { skin: 0xe6b894, hair: 0x3b2618, shirt: 0x2f7fd0, pants: 0x2b3450, eyes: 0x3a5a9a },
+  { skin: 0xc68a60, hair: 0x1c1410, shirt: 0xd0463a, pants: 0x3a3030, eyes: 0x3a2a1a },
+  { skin: 0xf0c9a8, hair: 0xd8b060, shirt: 0x3aaa66, pants: 0x4a3a28, eyes: 0x3a6a3a },
+  { skin: 0x8e5a3c, hair: 0x141010, shirt: 0xe0a434, pants: 0x303848, eyes: 0x2a1a10 },
+  { skin: 0xe8b590, hair: 0x7a3a1c, shirt: 0x8a58d0, pants: 0x2a2a38, eyes: 0x4a3a7a },
+  { skin: 0xd8a47e, hair: 0x2a2a2a, shirt: 0xe8e4dc, pants: 0x3a4a6a, eyes: 0x2a2a2a },
+  { skin: 0xf2caa6, hair: 0xa0522d, shirt: 0x2a2a30, pants: 0x5a4a3a, eyes: 0x4a6a8a },
+  { skin: 0xb8784e, hair: 0x2a1a10, shirt: 0xe07aa8, pants: 0x2a3a5a, eyes: 0x3a2a1a },
+];
+export const PLAYER_VARIANTS = PLAYER_LOOKS.length;
 
 // ---------- model definitions: part = [name, pivot [x,y,z], box [x0,y0,z0,w,h,d], parent] ----------
 const HUMANOID = (armW = 4) => [
@@ -134,6 +171,7 @@ const HUMANOID = (armW = 4) => [
 
 export const MODELS = {
   zombie: { parts: HUMANOID(4) },
+  player: { parts: HUMANOID(4) },
   skeleton: { parts: HUMANOID(2) },
   creeper: {
     parts: [
@@ -246,6 +284,23 @@ export function buildSkins(woolColors = {}) {
     layerOf[type] = layers.length;
     layers.push(px);
   }
+  // player outfits
+  for (let variant = 0; variant < PLAYER_LOOKS.length; variant++) {
+    const model = MODELS.player;
+    const px = new Uint8Array(SKIN * SKIN * 4);
+    for (const [name] of model.parts) {
+      for (const f of FACES) {
+        const [cx, cy, fw, fh] = model.rects[name][f];
+        for (let v = 0; v < fh; v++) for (let u = 0; u < fw; u++) {
+          const c = SKINS.player(name, f, u, v, fw, fh, variant);
+          const o = ((cy + v) * SKIN + cx + u) * 4;
+          px[o] = Math.max(0, Math.min(255, c[0])); px[o + 1] = Math.max(0, Math.min(255, c[1])); px[o + 2] = Math.max(0, Math.min(255, c[2])); px[o + 3] = 255;
+        }
+      }
+    }
+    layerOf['player:' + variant] = layers.length;
+    layers.push(px);
+  }
   // coloured sheep: the same skin with the wool repainted
   for (const [key, color] of Object.entries(woolColors)) {
     const model = MODELS.sheep;
@@ -306,7 +361,14 @@ function pose(e, type, t) {
   const sw = Math.sin(walk * 2.2) * 0.9 * amt;
   const headYaw = Math.atan2(Math.sin((e.headYaw ?? e.yaw) - e.yaw), Math.cos((e.headYaw ?? e.yaw) - e.yaw));
   const headPitch = -(e.headPitch || 0);
-  if (type === 'zombie' || type === 'skeleton') {
+  if (type === 'player') {
+    r.head = [headPitch, headYaw, 0];
+    r.rightLeg = [sw, 0, 0];
+    r.leftLeg = [-sw, 0, 0];
+    const swing = e.swing > 0 ? Math.sin(Math.min(1, e.swing) * Math.PI) : 0;
+    r.rightArm = [-sw * 0.8 - swing * 1.4, 0, 0.05 + swing * 0.2];
+    r.leftArm = [sw * 0.8, 0, -0.05];
+  } else if (type === 'zombie' || type === 'skeleton') {
     r.head = [headPitch, headYaw, 0];
     r.rightLeg = [sw, 0, 0];
     r.leftLeg = [-sw, 0, 0];

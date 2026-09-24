@@ -154,7 +154,7 @@ export function installPlay(Game) {
     if (!this.sim) return;
     const playing = this.state === 'playing';
     this.syncPlayerToSim();
-    if (this.state !== 'paused' && this.state !== 'title') this.sim.update(dt, { dayTime: this.dayTime });
+    if (this.mp || (this.state !== 'paused' && this.state !== 'title')) this.sim.update(dt, { dayTime: this.dayTime });
     this.handleSimEvents();
     const me = this.me();
     if (me && me.dead && !this.deathShown && this.mode !== 'creative') this.onDeath();
@@ -187,6 +187,7 @@ export function installPlay(Game) {
       return [vol * vol, pan];
     };
     for (const e of this.sim.drainEvents()) {
+      if (this.mp) this.forwardSimEvent(e);
       switch (e.type) {
         case 'sound': {
           const [v, pan] = spatial(e.pos);
@@ -515,7 +516,7 @@ export function installPlay(Game) {
   // ---------------------------------------------------------------- rendering
   P.buildEntities = function buildEntities() {
     if (!this.sim || !this.entityMesh) return null;
-    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000);
+    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, this.mp ? this.remotePlayerModels() : null);
   };
 
   P.handState = function handState() {
