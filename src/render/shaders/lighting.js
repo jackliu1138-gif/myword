@@ -20,6 +20,7 @@ export const MATS = `
 export const SKY_FUNCS = `
 uniform sampler2D uSkyLut;
 uniform float uStarAngle;
+uniform float uMoonPhase; // 0 new moon .. 0.5 full .. 1 new
 
 vec3 skyLut(vec3 dir) {
   return texture(uSkyLut, skyLutUV(dir)).rgb;
@@ -40,10 +41,11 @@ vec3 starField(vec3 dir) {
   if (h.x < 0.955) return vec3(0.0);
   vec3 ctr = cell + 0.5 + (hash33(cell + 17.0) - 0.5) * 0.5;
   float dist = length(p - ctr);
-  float size = mix(0.14, 0.34, pow(h.y, 3.0));
-  float star = smoothstep(size, 0.0, dist);
-  float bright = 0.25 + 2.5 * pow(h.z, 10.0);
-  float tw = 0.75 + 0.25 * sin(uCamPos.w * (1.5 + h.y * 4.0) + h.z * 50.0);
+  // at least a pixel or two wide so temporal AA doesn't average them away
+  float size = mix(0.22, 0.46, pow(h.y, 3.0));
+  float star = smoothstep(size, size * 0.2, dist);
+  float bright = 0.35 + 3.0 * pow(h.z, 8.0);
+  float tw = 0.85 + 0.15 * sin(uCamPos.w * (1.5 + h.y * 4.0) + h.z * 50.0);
   vec3 col = mix(vec3(0.62, 0.74, 1.0), vec3(1.0, 0.86, 0.66), h.y);
   return col * star * bright * tw;
 }
@@ -61,8 +63,14 @@ vec3 moonDisk(vec3 dir) {
   float maria = vnoise2(uv * 2.2 + 3.0) * 0.55 + vnoise2(uv * 5.0) * 0.3 + vnoise2(uv * 11.0) * 0.15;
   float crater = smoothstep(0.35, 0.8, maria);
   float limb = sqrt(max(1.0 - r * r, 0.0));
+  // phase: light the sphere from a virtual sun that swings around behind it over the cycle
+  float th = uMoonPhase * TAU;
+  vec3 n = vec3(uv, limb);
+  float lit = smoothstep(-0.04, 0.08, dot(n, vec3(sin(th), 0.0, -cos(th))));
   vec3 col = vec3(0.92, 0.94, 1.0) * mix(1.0, 0.58, crater) * (0.55 + 0.45 * limb);
-  float halo = exp(-max(r - 1.0, 0.0) * 6.0) * 0.08 * (1.0 - disk);
+  col = col * lit + vec3(0.012, 0.014, 0.02) * (1.0 - lit); // faint earthshine on the dark side
+  float illum = 0.5 - 0.5 * cos(th);
+  float halo = exp(-max(r - 1.0, 0.0) * 6.0) * 0.08 * (1.0 - disk) * illum;
   return col * (disk * 0.9 + halo) * uMoonDir.w;
 }
 
@@ -84,7 +92,7 @@ vec3 renderSky(vec3 dir, bool disks) {
   if (disks) {
     float night = uMoonDir.w;
     float horizon = smoothstep(-0.02, 0.1, dir.y);
-    col += starField(dir) * night * horizon * 0.012;
+    col += starField(dir) * night * horizon * 0.045;
     col += moonDisk(dir) * horizon * 0.35;
     col += sunDisk(dir) * smoothstep(-0.01, 0.01, dir.y);
   }

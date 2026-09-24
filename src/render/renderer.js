@@ -454,20 +454,26 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
-  computeLighting(dayTime) {
+  // Fraction of moonlight for a phase (0 new, 0.5 full); never fully dark so nights stay playable.
+  moonLight(phase) {
+    return 0.2 + 0.8 * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2));
+  }
+
+  computeLighting(dayTime, moonPhase = 0.5) {
     // dayTime: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
     const a = dayTime * Math.PI * 2;
     const sun = [Math.cos(a), Math.sin(a) * Math.cos(SUN_TILT), Math.sin(a) * Math.sin(SUN_TILT)];
     const moon = [-sun[0], -sun[1], -sun[2]];
     // sky irradiance costs a few ms on the CPU: refresh it in ~0.25 degree steps of sun motion
-    const key = sun.map((v) => Math.round(v * 240)).join(',');
+    const moonK = this.moonLight(moonPhase);
+    const key = sun.map((v) => Math.round(v * 240)).join(',') + ',' + moonK.toFixed(2);
     if (this.skyCache.key !== key) {
       const alt = 200;
       const p = [0, PLANET_RADIUS + alt, 0];
       const tSun = transmittance(p[0], p[1], p[2], sun[0], sun[1], sun[2], 16);
       const tMoon = transmittance(p[0], p[1], p[2], moon[0], moon[1], moon[2], 16);
       const irrSun = sun[1] > -0.3 ? skyIrradiance(sun, alt, SUN_E) : { up: [0, 0, 0], side: [0, 0, 0] };
-      const irrMoon = moon[1] > -0.2 ? skyIrradiance(moon, alt, MOON_E) : { up: [0, 0, 0], side: [0, 0, 0] };
+      const irrMoon = moon[1] > -0.2 ? skyIrradiance(moon, alt, MOON_E * moonK) : { up: [0, 0, 0], side: [0, 0, 0] };
       const moonTint = [0.72, 0.84, 1.15];
       const up = [0, 1, 2].map((c) => irrSun.up[c] + irrMoon.up[c] * moonTint[c]);
       const side = [0, 1, 2].map((c) => irrSun.side[c] + irrMoon.side[c] * moonTint[c]);
@@ -480,7 +486,7 @@ export class Renderer {
     const fadeMoon = Math.min(1, Math.max(0, (moon[1] + 0.035) / 0.12));
     const lightColor = sunUp
       ? sc.tSun.map((t) => t * SUN_E * fadeSun)
-      : sc.tMoon.map((t, c) => t * MOON_E * fadeMoon * [0.72, 0.84, 1.15][c]);
+      : sc.tMoon.map((t, c) => t * MOON_E * moonK * fadeMoon * [0.72, 0.84, 1.15][c]);
     // Boost + slightly desaturate the sky irradiance (multiple scattering the model lacks)
     const boost = (c) => {
       const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
@@ -518,7 +524,8 @@ export class Renderer {
     mat4.invert(m.invProj, m.proj);
     this.frustum.setFromMatrix(m.viewProjNJ);
 
-    const L = this.computeLighting(state.dayTime);
+    const L = this.computeLighting(state.dayTime, state.moonPhase ?? 0.5);
+    this.moonPhase = state.moonPhase ?? 0.5;
     // overcast: the cloud deck blocks most direct light and turns the ambient grey and even
     const rainAmt = (state.weather && state.weather.rain) || 0;
     if (rainAmt > 0) {
@@ -646,13 +653,13 @@ export class Renderer {
     // ---- sky view LUT (only when the sun moved noticeably or the camera changed altitude a lot)
     const L = this.light;
     const rainNow = (state.weather && state.weather.rain) || 0;
-    const lutKey = Math.round(L.sun[0] * 2000) + ',' + Math.round(L.sun[1] * 2000) + ',' + Math.round(state.camera.pos[1] / 16) + ',' + Math.round(rainNow * 50);
+    const lutKey = Math.round(L.sun[0] * 2000) + ',' + Math.round(L.sun[1] * 2000) + ',' + Math.round(state.camera.pos[1] / 16) + ',' + Math.round(rainNow * 50) + ',' + this.moonPhase;
     if (lutKey !== this.lutKey) {
       this.lutKey = lutKey;
       this.skyLut.bind();
       gl.disable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
-      this.prog.skyLut.use().f1('uSunIntensity', SUN_E).f1('uMoonIntensity', MOON_E);
+      this.prog.skyLut.use().f1('uSunIntensity', SUN_E).f1('uMoonIntensity', MOON_E * this.moonLight(this.moonPhase));
       this.fullscreen();
     }
 
@@ -745,6 +752,7 @@ export class Renderer {
       .f1('uUseClouds', s.clouds ? 1 : 0)
       .f1('uVolumetricOn', s.volumetric ? 1 : 0)
       .f1('uStarAngle', L.sunAngle)
+      .f1('uMoonPhase', this.moonPhase)
       .tex('uPrevColor', t.taa[1 - t.taaIndex].texture, gl.TEXTURE_2D, this.linearSampler)
       .f1('uReflectSSR', s.ssr && s.taa && this.historyValid ? 1 : 0);
     this.fullscreen();
@@ -776,7 +784,8 @@ export class Renderer {
       .tex('uWaterTex', this.waterTex)
       .f1('uSSR', s.ssr ? 1 : 0)
       .f1('uVolumetricOn', s.volumetric ? 1 : 0)
-      .f1('uStarAngle', L.sunAngle);
+      .f1('uStarAngle', L.sunAngle)
+      .f1('uMoonPhase', this.moonPhase);
     const back = main.slice().reverse();
     this.drawChunks(wp, back, 2);
     // particles

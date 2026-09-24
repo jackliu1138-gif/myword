@@ -166,6 +166,7 @@ export class Game {
       this.spawnPending = true;
     }
     this.dayTime = data && typeof data.dayTime === 'number' ? data.dayTime : this.settings.timeOfDay;
+    this.dayCount = data && Number.isInteger(data.dayCount) ? data.dayCount : 0;
     this.hotbar = data && Array.isArray(data.hotbar) && data.hotbar.length === 9 ? data.hotbar.slice() : DEFAULT_HOTBAR.slice();
     this.selected = data && Number.isInteger(data.selected) ? data.selected : 0;
     this.titleAnchor = this.player.pos.slice();
@@ -187,6 +188,7 @@ export class Game {
       seed: this.world.seed,
       player: { pos: this.player.pos, yaw: this.player.yaw, pitch: this.player.pitch, flying: this.player.flying },
       dayTime: this.dayTime,
+      dayCount: this.dayCount || 0,
       hotbar: this.hotbar,
       selected: this.selected,
       edits: this.world.serializeEdits(),
@@ -435,7 +437,8 @@ export class Game {
     // time of day
     if (this.state !== 'paused') {
       const fast = playing && input.down('KeyT') ? 90 : 1;
-      this.dayTime = (this.dayTime + (dt * fast) / (this.settings.dayLength * 60)) % 1;
+      this.dayTime += (dt * fast) / (this.settings.dayLength * 60);
+      if (this.dayTime >= 1) { this.dayTime -= 1; this.dayCount = (this.dayCount || 0) + 1; }
       if (fast > 1 && this.ui.current === null) this.ui.toast('Time ' + clockText(this.dayTime), 400);
       this.cloudOffset[0] += dt * 3.2;
       this.cloudOffset[1] += dt * 1.1;
@@ -729,6 +732,8 @@ export class Game {
       chunks: this.world.chunks.values(),
       renderDistance: this.world.renderDistance,
       dayTime: this.dayTime,
+      // eight phases, one per day, starting from a full moon on the first night
+      moonPhase: (((this.dayCount || 0) + 4) % 8) / 8,
       fog,
       underwater: this.state === 'playing' && this.player.headInWater,
       waterDepth: this.player.headInWater ? this.waterDepthAbove() : 0,
