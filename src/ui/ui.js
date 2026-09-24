@@ -25,6 +25,7 @@ const SCHEMA = [
   {
     tab: 'World',
     items: [
+      { key: 'weather', type: 'choice', label: 'Weather', full: true, options: [['auto', 'Changing'], ['clear', 'Clear'], ['rain', 'Rain'], ['storm', 'Storm']], desc: 'Changing brings rain now and then, with the odd thunderstorm. Deserts stay dry; cold biomes get snow.' },
       { key: 'timeOfDay', type: 'range', label: 'Time of day', min: 0, max: 1, step: 0.005, fmt: (v) => clockText(v), live: true },
       { key: 'dayLength', type: 'range', label: 'Day length', min: 2, max: 60, step: 1, fmt: (v) => v + ' min' },
       { key: 'cloudCoverage', type: 'range', label: 'Cloud cover', min: 0, max: 1, step: 0.05, fmt: (v) => Math.round(v * 100) + '%' },
@@ -289,6 +290,14 @@ export class UI {
         this.onSettingChange(it.key, input.checked);
         if (PRESET_KEYS.includes(it.key)) this.markPreset('custom');
       });
+    } else if (it.type === 'choice') {
+      row.innerHTML = `<div class="setting-top"><span class="label">${it.label}</span></div>
+        <div class="seg" role="group" aria-label="${it.label}">${it.options.map(([v, l]) => `<button type="button" id="${id}-${v}" data-v="${v}" aria-pressed="${settings[it.key] === v}">${l}</button>`).join('')}</div>
+        ${it.desc ? `<p class="desc">${it.desc}</p>` : ''}`;
+      row.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+        this.onSettingChange(it.key, b.dataset.v);
+        row.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      }));
     } else if (it.type === 'preset') {
       const opts = ['low', 'medium', 'high', 'ultra'];
       row.innerHTML = `<div class="setting-top"><span class="label">${it.label}</span><span class="value" id="preset-value">${settings.preset}</span></div>
@@ -305,7 +314,7 @@ export class UI {
   markPreset(name) {
     const v = document.getElementById('preset-value');
     if (v) v.textContent = name;
-    document.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === name)));
+    document.querySelectorAll('[id^="preset-"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === name)));
   }
 
   refreshLive(key, value) {

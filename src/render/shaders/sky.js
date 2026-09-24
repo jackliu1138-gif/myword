@@ -22,6 +22,9 @@ void main() {
   float horizon = 1.0 - smoothstep(0.0, 0.3, abs(dir.y));
   float lit = max(smoothstep(0.04, 0.35, uSunDir.y), smoothstep(0.04, 0.35, uMoonDir.y) * (1.0 - smoothstep(-0.2, 0.0, uSunDir.y)) * 1.4);
   col = mix(col, vec3(luma(col)) * vec3(0.92, 0.98, 1.08), min(0.2 * horizon * lit, 0.4));
+  // overcast: rain clouds turn the sky a dim, even grey
+  float rain = uWeather.x;
+  col = mix(col, vec3(luma(col)) * vec3(0.92, 0.96, 1.02), saturate(rain * 1.1)) * (1.0 - 0.55 * rain);
   // single scattering underestimates sky radiance; scale into balance with the terrain lighting
   oColor = vec4(col * 1.7, 1.0);
 }

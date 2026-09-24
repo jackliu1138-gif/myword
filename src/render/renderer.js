@@ -13,6 +13,7 @@ import {
 } from './shaders/post.js';
 import { cloudNoiseFS, weatherFS, waterNormalFS } from './shaders/noisegen.js';
 import { outlineVS, outlineFS, particleVS, particleFS, handVS, handFS } from './shaders/overlay.js';
+import { precipVS, precipFS } from './shaders/precip.js';
 import { transmittance, skyIrradiance, PLANET_RADIUS } from './atmosphere.js';
 import { VERTEX_BYTES } from '../world/mesher.js';
 
@@ -52,7 +53,7 @@ export class Renderer {
     this.time = 0;
     this.stats = { draws: 0, tris: 0, chunks: 0, shadowChunks: 0 };
     this.emptyVao = gl.createVertexArray();
-    this.ubo = new UniformBuffer(gl, 192, 0);
+    this.ubo = new UniformBuffer(gl, 196, 0);
     this.indexBuffer = createQuadIndices(gl, MAX_QUADS);
     this.frustum = new Frustum();
     this.shadowFrustum = new Frustum();
@@ -110,6 +111,7 @@ export class Renderer {
       outline: P(outlineVS, outlineFS, 'outline'),
       particles: P(particleVS, particleFS, 'particles'),
       hand: P(handVS, handFS, 'hand'),
+      precip: P(precipVS, precipFS, 'precip'),
       cloudNoise: P(FS, cloudNoiseFS, 'cloudNoise'),
       weather: P(FS, weatherFS, 'weather'),
       waterNormal: P(FS, waterNormalFS, 'waterNormal'),
@@ -265,7 +267,56 @@ export class Renderer {
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 36, 12);
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 36, 20);
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 36, 32);
+    // precipitation: one strip quad instanced over random seeds
+    this.precipVao = gl.createVertexArray();
+    gl.bindVertexArray(this.precipVao);
+    const corners = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, 0, 1, 0, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    this.precipMax = 6000;
+    const seeds = new Float32Array(this.precipMax * 4);
+    for (let i = 0; i < seeds.length; i++) seeds[i] = Math.random();
+    const sb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, sb);
+    gl.bufferData(gl.ARRAY_BUFFER, seeds, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribDivisor(1, 1);
     gl.bindVertexArray(null);
+    this.rainMap = createTexture2D(gl, 64, 64, 'r8', { filter: gl.NEAREST });
+    this.rainOrigin = [0, 0];
+  }
+
+  // Top-down height map (64x64 columns) of whatever blocks rain, centred near the camera.
+  updateRainMap(originX, originZ, data) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.rainMap);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 64, 64, gl.RED, gl.UNSIGNED_BYTE, data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    this.rainOrigin = [originX, originZ];
+  }
+
+  drawPrecipitation(state) {
+    const gl = this.gl;
+    const pr = state.precip;
+    const snow = pr.type === 'snow';
+    const count = Math.floor(this.precipMax * Math.min(1, pr.amount) * (snow ? 0.55 : 1));
+    if (count < 10) return;
+    const wind = state.weather ? 1.5 + state.weather.storm * 3 : 1.5;
+    this.prog.precip.use()
+      .tex('uOcclusion', this.rainMap, gl.TEXTURE_2D, this.nearestSampler)
+      .f2('uOccOrigin', this.rainOrigin[0], this.rainOrigin[1])
+      .f4('uBox', snow ? 22 : 26, 34, snow ? 1.6 : 14, snow ? 0 : 0.9)
+      .f4('uStyle', snow ? 0.05 : 0.022, snow ? 1 : 0, wind, wind * 0.4)
+      .f1('uIntensity', 0.35 + 0.65 * Math.min(1, pr.amount));
+    gl.depthMask(false);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindVertexArray(this.precipVao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    gl.depthMask(true);
   }
 
   applySettings(settings) {
@@ -468,6 +519,17 @@ export class Renderer {
     this.frustum.setFromMatrix(m.viewProjNJ);
 
     const L = this.computeLighting(state.dayTime);
+    // overcast: the cloud deck blocks most direct light and turns the ambient grey and even
+    const rainAmt = (state.weather && state.weather.rain) || 0;
+    if (rainAmt > 0) {
+      const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+      const grey = (c, amt, scale) => { const l = lum(c); for (let i = 0; i < 3; i++) c[i] = (c[i] + (l * [0.95, 0.98, 1.03][i] - c[i]) * amt) * scale; };
+      for (let i = 0; i < 3; i++) L.lightColor[i] *= 1 - 0.82 * rainAmt;
+      grey(L.skyUp, rainAmt * 0.8, 1 - 0.3 * rainAmt);
+      grey(L.skySide, rainAmt * 0.8, 1 - 0.3 * rainAmt);
+      for (let i = 0; i < 3; i++) L.skySide[i] += (L.skyUp[i] * 0.85 - L.skySide[i]) * rainAmt;
+      grey(L.ground, rainAmt * 0.6, 1 - 0.3 * rainAmt);
+    }
     this.light = L;
     // shadow matrix: orthographic around the (snapped) camera, looking along -light
     const R = s.shadowDistance;
@@ -513,13 +575,17 @@ export class Renderer {
     v4(160, w, h, 1 / w, 1 / h);
     // w: 0 above water, otherwise 1 + depth of the eye below the surface
     v4(164, near, far, this.frame, state.underwater ? 1 + (state.waterDepth || 0) : 0);
-    v4(168, state.rain || 0, state.wind ?? 1, state.cloudCoverage ?? 0.5, state.eyeSky ?? 1);
+    const rain = (state.weather && state.weather.rain) || 0;
+    const coverage = (state.cloudCoverage ?? 0.5) + (0.96 - (state.cloudCoverage ?? 0.5)) * Math.min(1, rain * 1.3);
+    v4(168, rain, (state.wind ?? 1) * (1 + rain * 1.2), coverage, state.eyeSky ?? 1);
     const pc = this.prevCam || cam.pos;
     v4(172, px - pc[0], py - pc[1], pz - pc[2], 0);
     v4(176, R, D, 1 / this.shadowRes, 0.86);
     v4(180, 185, 340, state.cloudOffset[0], state.cloudOffset[1]);
     v4(184, L.moon[0], L.moon[1], L.moon[2], L.night);
     v4(188, s.shadows ? 1 : 0, s.pcf, s.volSteps || 1, s.cloudSteps || 1);
+    const wx = state.weather || {};
+    v4(192, wx.rain || 0, wx.wetness || 0, wx.flash || 0, wx.snow ? 1 : 0);
     this.ubo.upload();
   }
 
@@ -579,7 +645,8 @@ export class Renderer {
 
     // ---- sky view LUT (only when the sun moved noticeably or the camera changed altitude a lot)
     const L = this.light;
-    const lutKey = Math.round(L.sun[0] * 2000) + ',' + Math.round(L.sun[1] * 2000) + ',' + Math.round(state.camera.pos[1] / 16);
+    const rainNow = (state.weather && state.weather.rain) || 0;
+    const lutKey = Math.round(L.sun[0] * 2000) + ',' + Math.round(L.sun[1] * 2000) + ',' + Math.round(state.camera.pos[1] / 16) + ',' + Math.round(rainNow * 50);
     if (lutKey !== this.lutKey) {
       this.lutKey = lutKey;
       this.skyLut.bind();
@@ -654,7 +721,7 @@ export class Renderer {
     // ---- clouds (half res, independent of scene depth)
     if (s.clouds) {
       t.clouds.bind();
-      this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeather', this.weatherTex).tex('uSkyLut', this.skyLut.texture);
+      this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeatherMap', this.weatherTex).tex('uSkyLut', this.skyLut.texture);
       this.fullscreen();
     }
 
@@ -672,12 +739,14 @@ export class Renderer {
       .tex('uClouds', t.clouds.texture, gl.TEXTURE_2D, this.linearSampler)
       .tex('uAO', t.ssao.texture, gl.TEXTURE_2D, this.linearSampler)
       .tex('uNoise3D', this.noise3D, gl.TEXTURE_3D)
-      .tex('uWeather', this.weatherTex)
+      .tex('uWeatherMap', this.weatherTex)
       .tex('uWaterTex', this.waterTex)
       .f1('uUseSSAO', s.ssao ? 1 : 0)
       .f1('uUseClouds', s.clouds ? 1 : 0)
       .f1('uVolumetricOn', s.volumetric ? 1 : 0)
-      .f1('uStarAngle', L.sunAngle);
+      .f1('uStarAngle', L.sunAngle)
+      .tex('uPrevColor', t.taa[1 - t.taaIndex].texture, gl.TEXTURE_2D, this.linearSampler)
+      .f1('uReflectSSR', s.ssr && s.taa && this.historyValid ? 1 : 0);
     this.fullscreen();
 
     // ---- copies for refraction / reflections
@@ -712,6 +781,7 @@ export class Renderer {
     this.drawChunks(wp, back, 2);
     // particles
     if (state.particles && state.particles.count) this.drawParticles(state);
+    if (state.precip && state.precip.amount > 0.01 && !state.underwater) this.drawPrecipitation(state);
     gl.disable(gl.BLEND);
     gl.depthMask(false);
     gl.disable(gl.DEPTH_TEST);
@@ -724,7 +794,7 @@ export class Renderer {
         .tex('uShadowCmp', this.shadowTarget.depth, gl.TEXTURE_2D, this.shadowCmpSampler)
         .tex('uWaterShadow', this.waterShadowTarget.depth, gl.TEXTURE_2D, this.nearestSampler)
         .tex('uNoise3D', this.noise3D, gl.TEXTURE_3D)
-        .tex('uWeather', this.weatherTex)
+        .tex('uWeatherMap', this.weatherTex)
         .tex('uWaterTex', this.waterTex)
         .f1('uUseClouds', s.clouds ? 1 : 0);
       this.fullscreen();

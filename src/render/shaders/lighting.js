@@ -116,6 +116,32 @@ vec3 applyFog(vec3 col, vec3 rel, vec3 dir, float dist) {
 }
 `;
 
+// Expanding rings from raindrops, as a normal perturbation (xz) for puddles and water.
+export const RAIN_FUNCS = `
+vec2 rainRipples(vec2 p, float t, float amount) {
+  vec2 n = vec2(0.0);
+  for (int layer = 0; layer < 2; layer++) {
+    vec2 q = p * (layer == 0 ? 1.4 : 2.1) + float(layer) * 17.3;
+    vec2 cell = floor(q);
+    vec2 f = fract(q);
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        vec2 o = vec2(float(x), float(y));
+        vec3 h = hash33(vec3(cell + o, float(layer) * 7.0 + 1.0));
+        float period = 0.8 + h.z * 0.7;
+        float age = fract(t / period + h.x * 7.0);
+        vec2 d = f - (o + 0.15 + h.xy * 0.7);
+        float r = length(d);
+        float ring = age * 0.55;
+        float s = sin((r - ring) * 38.0) * smoothstep(0.1, 0.0, abs(r - ring)) * (1.0 - age) * (1.0 - age);
+        n += d / max(r, 1e-3) * s;
+      }
+    }
+  }
+  return n * amount * 0.3;
+}
+`;
+
 export const WATER_COMMON = `
 uniform sampler2D uWaterTex;
 const vec3 WATER_ABSORB = vec3(0.34, 0.085, 0.055);
@@ -154,6 +180,7 @@ ${CLOUD_FUNCS}
 ${SKY_FUNCS}
 ${FOG_FUNCS}
 ${WATER_COMMON}
+${RAIN_FUNCS}
 uniform sampler2D uGAlbedo;
 uniform sampler2D uGNormal;
 uniform sampler2D uGLight;
@@ -165,8 +192,42 @@ uniform sampler2D uClouds;
 uniform sampler2D uAO;
 uniform float uUseSSAO;
 uniform float uUseClouds;
+uniform sampler2D uPrevColor;   // last frame's resolved HDR image, for glossy reflections
+uniform float uReflectSSR;
 in vec2 vUV;
 out vec4 oColor;
+
+// Screen-space reflection against this frame's depth, shading hits with last frame's image.
+vec4 traceLastFrame(vec3 origin, vec3 R, float jitter) {
+  float stepLen = 0.25 + jitter * 0.25;
+  vec3 p = origin, prev = origin;
+  for (int i = 0; i < 28; i++) {
+    prev = p;
+    p += R * stepLen;
+    stepLen *= 1.17;
+    vec4 c = uViewProj * vec4(p, 1.0);
+    if (c.w <= 0.05) return vec4(0.0);
+    vec2 uv = c.xy / c.w * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
+    float sd = texture(uDepth, uv).r;
+    if (sd >= 1.0 || sd < 0.021) continue;
+    float diff = c.w - linearDepth(sd);
+    if (diff > 0.0 && diff < stepLen * 2.5 + 0.25) {
+      vec3 a = prev, b = p;
+      for (int j = 0; j < 4; j++) {
+        vec3 m = (a + b) * 0.5;
+        vec4 mc = uViewProj * vec4(m, 1.0);
+        float md = linearDepth(texture(uDepth, mc.xy / mc.w * 0.5 + 0.5).r);
+        if (mc.w > md) b = m; else a = m;
+      }
+      vec4 pc = uPrevViewProj * vec4(b + uCamDelta.xyz, 1.0);
+      vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+      vec2 edge = smoothstep(0.0, 0.07, puv) * smoothstep(1.0, 0.93, puv);
+      return vec4(texture(uPrevColor, puv).rgb, edge.x * edge.y * (1.0 - float(i) / 28.0));
+    }
+  }
+  return vec4(0.0);
+}
 
 const vec2 POISSON[16] = vec2[16](
   vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -244,6 +305,7 @@ void main() {
       vec4 cl = texture(uClouds, vUV);
       sky = sky * cl.a + cl.rgb;
     }
+    sky += vec3(0.62, 0.67, 0.85) * uWeather.z * (0.5 + 0.8 * saturate(dir.y));
     oColor = vec4(sky, 1.0);
     return;
   }
@@ -268,6 +330,30 @@ void main() {
   bool foliage = mat == MAT_FOLIAGE || mat == MAT_PLANT;
   float ssao = uUseSSAO > 0.5 ? texture(uAO, vUV).r : 1.0;
   vec3 world = rel + uCamPos.xyz;
+
+  // ---- rain: surfaces open to the sky get darker and glossier; flat ground collects puddles
+  float wet = uWeather.y * smoothstep(0.6, 0.93, skyL) * (1.0 - uWeather.w);
+  float puddle = 0.0;
+  if (wet > 0.01 && mat != MAT_EMISSIVE) {
+    float up = saturate(Ng.y);
+    float porous = mat == MAT_SAND ? 1.0 : foliage ? 0.12 : (mat == MAT_METAL || mat == MAT_GLOSSY) ? 0.0 : 0.72;
+    albedo *= mix(1.0, 0.55, wet * porous);
+    // plant sprites use a faked up-normal, so only leaves (real cube faces) turn glossy
+    if (mat != MAT_PLANT) rough = mix(rough, foliage ? 0.35 : 0.16, wet * (0.45 + 0.55 * up));
+    if (up > 0.9 && !foliage && mat != MAT_SAND && dist < 120.0) {
+      float pn = vnoise2(world.xz * 0.09) * 0.65 + vnoise2(world.xz * 0.31 + 7.0) * 0.35;
+      puddle = smoothstep(0.6, 0.68, pn + wet * 0.12) * smoothstep(0.3, 0.75, wet);
+      rough = mix(rough, 0.02, puddle);
+      N = normalize(mix(N, Ng, max(puddle, wet * 0.6)));
+      if (puddle > 0.0 && uWeather.x > 0.05) {
+        vec2 rp = rainRipples(world.xz, uCamPos.w, uWeather.x);
+        N = normalize(N + vec3(rp.x, 0.0, rp.y) * puddle);
+      }
+      albedo *= mix(1.0, 0.72, puddle);
+    } else if (!foliage) {
+      N = normalize(mix(N, Ng, wet * 0.4));
+    }
+  }
 
   vec3 L = uLightDir.xyz;
   float NdotL = dot(N, L);
@@ -313,7 +399,7 @@ void main() {
   vec3 skyIrr = N.y >= 0.0 ? mix(uHorizonColor.rgb, uSkyColor.rgb, N.y) : mix(uHorizonColor.rgb, uGroundColor.rgb, -N.y);
   // bounce from sunlit ground and walls
   vec3 bounce = uLightColor.rgb * max(uLightDir.y, 0.0) * 0.045 * (0.6 - 0.4 * N.y);
-  vec3 ambient = (skyIrr + bounce) * skyAmb * ao * ssao;
+  vec3 ambient = (skyIrr + bounce + vec3(0.75, 0.8, 1.0) * uWeather.z * 4.0) * skyAmb * ao * ssao;
   float bl = blockL;
   float flick = 0.92 + 0.08 * sin(uCamPos.w * 9.0 + world.x * 0.7) * sin(uCamPos.w * 13.7 + world.z * 0.9);
   vec3 torch = vec3(1.0, 0.58, 0.26) * (bl * bl * 1.3 + pow(bl, 8.0) * 2.3) * flick * mix(1.0, ao * ssao, 0.75);
@@ -325,6 +411,10 @@ void main() {
   vec3 envF = f0 + (max(vec3(1.0 - rough), f0) - f0) * pow(1.0 - NdV, 5.0);
   float gloss = (1.0 - rough) * (1.0 - rough);
   vec3 env = renderSky(R, false) * skyAmb * envF * gloss * ao;
+  if (uReflectSSR > 0.5 && gloss > 0.55 && dist < 90.0) {
+    vec4 hit = traceLastFrame(rel + Ng * 0.03, R, ign(gl_FragCoord.xy, uParams.z));
+    env = mix(env, hit.rgb * envF * gloss, hit.a);
+  }
   env += torch * envF * gloss * 0.3;
 
   vec3 emissive = albedo * emission * emission * 7.0;

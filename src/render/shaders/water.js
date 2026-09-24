@@ -1,7 +1,7 @@
 // Forward pass for translucent geometry: water (screen-space reflections, refraction,
 // absorption, sun glints) and ice (alpha blended).
 import { HEADER, FRAME_UBO, UTIL, SHADOW, SKY_LUT, WAVES } from './common.js';
-import { SKY_FUNCS, FOG_FUNCS, WATER_COMMON } from './lighting.js';
+import { SKY_FUNCS, FOG_FUNCS, WATER_COMMON, RAIN_FUNCS } from './lighting.js';
 
 export const waterVS = `${HEADER}
 ${FRAME_UBO}
@@ -38,6 +38,7 @@ ${SKY_LUT}
 ${SKY_FUNCS}
 ${FOG_FUNCS}
 ${WATER_COMMON}
+${RAIN_FUNCS}
 uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
 uniform sampler2DShadow uShadowCmp;
@@ -148,8 +149,12 @@ void main() {
   vec3 Ngeo = FACE_N[face];
   vec3 N;
   if (face == 2u) {
-    float strength = mix(0.34, 0.08, smoothstep(8.0, 80.0, dist));
+    float strength = mix(0.34, 0.08, smoothstep(8.0, 80.0, dist)) * (1.0 + uWeather.x * 0.8);
     N = waterWaveNormal(world.xz, uCamPos.w, strength);
+    if (uWeather.x > 0.05 && uWeather.w < 0.5 && dist < 48.0) {
+      vec2 rp = rainRipples(world.xz, uCamPos.w, uWeather.x);
+      N = normalize(N + vec3(rp.x, 0.0, rp.y));
+    }
   } else {
     vec3 wn = waterWaveNormal(world.xz + world.y, uCamPos.w, 0.2);
     N = normalize(Ngeo + vec3(wn.x, 0.0, wn.z) * 0.3);

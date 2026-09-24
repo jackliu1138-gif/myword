@@ -115,6 +115,14 @@ export class Audio {
       this.tone(t, 900, 0.05, 0.08, 'triangle', 600);
     } else if (kind === 'pop') {
       this.tone(t, 500, 0.08, 0.12, 'sine', 900);
+    } else if (kind === 'thunder') {
+      // a sharp crack for close strikes, then a long rolling rumble
+      const v = Math.max(0.15, volume);
+      if (v > 0.8) this.noise(t, 0.35, 'bandpass', 1400, 0.6, 0.5 * v);
+      const rumble = this.noise(t + 0.05, 3.8, 'lowpass', 260, 0.9, 0.9 * v);
+      rumble.f.frequency.setValueAtTime(420, t);
+      rumble.f.frequency.exponentialRampToValueAtTime(90, t + 3.5);
+      for (let i = 1; i < 4; i++) this.noise(t + 0.4 * i + Math.random() * 0.3, 1.6, 'lowpass', 180, 0.8, 0.45 * v / i);
     }
   }
 
@@ -132,7 +140,23 @@ export class Audio {
     g.gain.value = 0;
     src.connect(lp).connect(g).connect(this.master);
     src.start();
-    this.ambient = { wind: g, windFilter: lp };
+    // rain: bright hiss plus a softer low patter, both on looping noise
+    const rs = c.createBufferSource();
+    rs.buffer = this.noiseBuf;
+    rs.loop = true;
+    rs.playbackRate.value = 0.9;
+    const rf = c.createBiquadFilter();
+    rf.type = 'bandpass';
+    rf.frequency.value = 2600;
+    rf.Q.value = 0.35;
+    const rl = c.createBiquadFilter();
+    rl.type = 'lowpass';
+    rl.frequency.value = 9000;
+    const rg = c.createGain();
+    rg.gain.value = 0;
+    rs.connect(rf).connect(rl).connect(rg).connect(this.master);
+    rs.start();
+    this.ambient = { wind: g, windFilter: lp, rain: rg, rainFilter: rl };
   }
 
   // Called every frame with the environment around the player.
@@ -145,7 +169,12 @@ export class Audio {
     const windTarget = on * (0.018 + 0.05 * gust) * outdoor * outdoor * (1 + Math.max(0, env.altitude - 80) / 40) * (env.underwater ? 0.2 : 1);
     this.ambient.wind.gain.setTargetAtTime(windTarget, t, 0.5);
     this.ambient.windFilter.frequency.setTargetAtTime(env.underwater ? 180 : 300 + gust * 400, t, 0.5);
+    // rain is muffled indoors and under water
+    const rain = env.rain || 0;
+    this.ambient.rain.gain.setTargetAtTime(on * rain * (0.05 + 0.13 * outdoor) * (env.underwater ? 0.3 : 1), t, 0.6);
+    this.ambient.rainFilter.frequency.setTargetAtTime(env.underwater ? 500 : 1200 + 7800 * outdoor * outdoor, t, 0.4);
     if (!on || env.underwater) return;
+    if (rain > 0.3) return; // birds and crickets keep quiet in the rain
     // birds by day in the open
     if (env.day > 0.5 && outdoor > 0.7 && t > this.nextBird) {
       this.nextBird = t + 2 + Math.random() * 7;

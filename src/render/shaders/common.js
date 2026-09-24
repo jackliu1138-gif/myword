@@ -36,6 +36,7 @@ layout(std140) uniform Frame {
   vec4 uCloudParams;   // x base, y top, zw wind offset
   vec4 uMoonDir;       // xyz direction to the moon, w night factor
   vec4 uQuality;       // x shadows on, y pcf samples, z volumetric steps, w cloud steps
+  vec4 uWeather;       // x precipitation, y surface wetness, z lightning flash, w snow (0/1)
 };
 vec3 reconstructRel(vec2 uv, float depth) {
   vec4 p = uInvViewProj * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);

@@ -3,7 +3,7 @@ import { HEADER, FRAME_UBO, UTIL, SKY_LUT } from './common.js';
 
 export const CLOUD_FUNCS = `
 uniform sampler3D uNoise3D;
-uniform sampler2D uWeather;
+uniform sampler2D uWeatherMap;
 
 const float CLOUD_SCALE = 1.0 / 720.0;
 const float WEATHER_SCALE = 1.0 / 7000.0;
@@ -18,7 +18,7 @@ float cloudDensity(vec3 p, bool detail) {
   float h = (p.y - base) / (top - base);
   if (h <= 0.0 || h >= 1.0) return 0.0;
   vec2 wind = uCloudParams.zw;
-  vec4 w = texture(uWeather, (p.xz + wind * 0.6) * WEATHER_SCALE);
+  vec4 w = texture(uWeatherMap, (p.xz + wind * 0.6) * WEATHER_SCALE);
   float coverage = coverageFrom(w.r);
   if (coverage <= 0.001) return 0.0;
   // cumulus height profile: flat-ish bottoms, rounded tops of varying height
@@ -104,9 +104,13 @@ void main() {
   vec3 L = uLightDir.xyz;
   float cosT = dot(dir, L);
   float phase = mix(hgPhase(cosT, 0.72), hgPhase(cosT, -0.2), 0.32) + 0.03;
+  float rain = uWeather.x;
   vec3 lightCol = uLightColor.rgb * 1.15;
   vec3 ambTop = uSkyColor.rgb * 0.95;
-  vec3 ambBot = mix(uHorizonColor.rgb, uGroundColor.rgb, 0.4) * 0.42;
+  vec3 ambBot = mix(uHorizonColor.rgb, uGroundColor.rgb, 0.4) * mix(0.42, 0.3, rain);
+  // lightning lights the storm clouds from inside
+  ambTop += vec3(0.75, 0.8, 1.0) * uWeather.z * 6.0;
+  ambBot += vec3(0.75, 0.8, 1.0) * uWeather.z * 4.0;
 
   float T = 1.0;
   vec3 S = vec3(0.0);

@@ -7,11 +7,12 @@ import { Player, raycast } from './player.js';
 import { Input, TouchControls } from './input.js';
 import { Audio, materialOf } from './audio.js';
 import { Particles } from './particles.js';
+import { Weather } from './weather.js';
 import * as store from './save.js';
 import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_LIQUID, TINT, MAT, CHUNK_SIZE } from '../world/blocks.js';
 import { clockText } from '../ui/ui.js';
 import { buildIcons } from '../ui/icons.js';
-import { BIOME_NAMES } from '../world/generator.js';
+import { BIOME_NAMES, BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
 
 const DEFAULT_HOTBAR = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE_BRICKS, BLOCK.OAK_PLANKS, BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, BLOCK.WATER, BLOCK.GLOWSTONE];
@@ -50,6 +51,7 @@ export function defaultSettings() {
     timeOfDay: 0.06,
     cloudCoverage: 0.5,
     brightness: 1,
+    weather: 'auto',
   };
 }
 
@@ -91,6 +93,12 @@ export class Game {
     this.loadingDone = false;
     this.lastSelected = -1;
     this.BLOCK = BLOCK; // handy for the console and automated tests
+    this.weather = new Weather();
+    this.precip = { amount: 0, type: 'rain' };
+    this.rainMapKey = '';
+    this.rainMapTime = 0;
+    this.rainMapData = new Uint8Array(64 * 64);
+    this.biomeTimer = 0;
   }
 
   async start() {
@@ -246,7 +254,8 @@ export class Game {
     }
     if (key === 'volume') this.audio.setVolume(value);
     if (key === 'ambience') this.audio.ambientOn = value;
-    if (!live) this.renderer.applySettings(s);
+    const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa'];
+    if (!live && graphics.includes(key)) this.renderer.applySettings(s);
     store.saveSettings(s);
   }
 
@@ -431,9 +440,15 @@ export class Game {
       this.cloudOffset[1] += dt * 1.1;
     }
 
+    // weather
+    if (this.state !== 'paused') {
+      this.weather.update(dt, this.settings.weather, (distance) => this.audio.play('thunder', 'stone', 1.2 - distance * 0.7));
+    }
+
     // camera
     const cam = this.computeCamera(dt);
     this.camera = cam;
+    this.updatePrecipitation(dt, cam);
 
     // streaming and mesh uploads
     this.world.update(cam.pos[0], cam.pos[2], cam.forward[0], cam.forward[2]);
@@ -452,7 +467,10 @@ export class Game {
     this.eyeSky += (sl / 15 - this.eyeSky) * (1 - Math.exp(-dt * 1.5));
     this.eyeBlock = (this.eyeBlock || 0) + (bl / 15 - (this.eyeBlock || 0)) * (1 - Math.exp(-dt * 1.5));
     const sunY = Math.sin(this.dayTime * Math.PI * 2);
-    this.audio.update({ skyLight: this.eyeSky, day: sunY > 0 ? 1 : 0, underwater: this.player.headInWater && playing, altitude: eye[1] });
+    this.audio.update({
+      skyLight: this.eyeSky, day: sunY > 0 ? 1 : 0, underwater: this.player.headInWater && playing, altitude: eye[1],
+      rain: this.precip.type === 'rain' ? this.precip.amount : 0, storm: this.weather.storm,
+    });
 
     // autosave
     this.saveTimer += dt;
@@ -486,6 +504,40 @@ export class Game {
   markTuned() {
     this.settings.autoTuned = true;
     store.saveSettings(this.settings);
+  }
+
+  // What falls from the sky here (none in deserts, snow in the cold and on high peaks)
+  // and a top-down map of the columns around the camera so roofs keep it off.
+  updatePrecipitation(dt, cam) {
+    this.biomeTimer -= dt;
+    if (this.biomeTimer <= 0) {
+      this.biomeTimer = 1;
+      const col = this.world.generator.column(Math.floor(cam.pos[0]), Math.floor(cam.pos[2]));
+      this.precipType = col.biome === BIOME.DESERT ? 'none' : col.biome === BIOME.SNOWY || col.temp < -0.42 || cam.pos[1] > 104 ? 'snow' : 'rain';
+    }
+    const amount = this.precipType === 'none' ? 0 : Math.max(0, (this.weather.rain - 0.15) / 0.85);
+    this.precip.amount = amount;
+    this.precip.type = this.precipType || 'rain';
+    if (amount <= 0) return;
+    const ox = Math.floor(cam.pos[0]) - 32, oz = Math.floor(cam.pos[2]) - 32;
+    const key = ox + ',' + oz;
+    const now = performance.now();
+    if (key === this.rainMapKey && now - this.rainMapTime < 1500) return;
+    this.rainMapKey = key;
+    this.rainMapTime = now;
+    const w = this.world, d = this.rainMapData;
+    for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        let y = 127;
+        while (y > 0) {
+          const b = w.getBlock(ox + x, y, oz + z);
+          if (b && (IS_SOLID[b] || IS_LIQUID[b] || BLOCKS[b].wave === 1)) break;
+          y--;
+        }
+        d[z * 64 + x] = y;
+      }
+    }
+    this.renderer.updateRainMap(ox, oz, d);
   }
 
   selectSlot(i) {
@@ -665,7 +717,11 @@ export class Game {
     const sunY = Math.sin(this.dayTime * Math.PI * 2);
     // morning mist near sunrise, clearer at noon
     const morning = Math.exp(-Math.pow((this.dayTime - 0.02) / 0.06, 2)) + Math.exp(-Math.pow((this.dayTime - 0.98) / 0.05, 2));
-    const fog = { density: 0.0011 + morning * 0.0045 + (sunY < 0 ? 0.001 : 0), falloff: 0.03 };
+    const rain = this.weather ? this.weather.rain : 0;
+    const fog = {
+      density: (0.0011 + morning * 0.0045 + (sunY < 0 ? 0.001 : 0)) * (1 + rain * 3.5) + rain * 0.002,
+      falloff: 0.03 * (1 - rain * 0.5),
+    };
     const state = {
       camera: cam,
       chunks: this.world.chunks.values(),
@@ -680,6 +736,14 @@ export class Game {
       cloudCoverage: this.settings.cloudCoverage,
       cloudOffset: this.cloudOffset,
       brightness: this.settings.brightness,
+      weather: {
+        rain: this.weather.rain,
+        storm: this.weather.storm,
+        wetness: this.precipType === 'none' ? 0 : this.weather.wetness,
+        flash: this.weather.flash,
+        snow: this.precip.type === 'snow',
+      },
+      precip: this.precip,
       selection: this.hudHidden ? null : this.selection,
       particles: this.particles,
       hand: this.handState(),
@@ -734,7 +798,7 @@ export class Game {
       `XYZ ${p.pos[0].toFixed(2)} ${p.pos[1].toFixed(2)} ${p.pos[2].toFixed(2)}`,
       `Chunk ${Math.floor(x / 16)} ${Math.floor(z / 16)}   facing ${facing}`,
       `Biome ${BIOME_NAMES[col.biome]}   light sky ${sl} block ${bl}`,
-      `Time ${clockText(this.dayTime)}   ${p.flying ? 'flying' : p.inWater ? 'swimming' : p.onGround ? 'on ground' : 'airborne'}`,
+      `Time ${clockText(this.dayTime)}   weather ${this.weather.describe()}${this.precip.type !== 'rain' ? ' (' + this.precip.type + ')' : ''}   ${p.flying ? 'flying' : p.inWater ? 'swimming' : p.onGround ? 'on ground' : 'airborne'}`,
       `Chunks ${this.world.chunks.size} loaded, ${r.stats.chunks} drawn, ${r.stats.shadowChunks} in shadow pass`,
       `Draws ${r.stats.draws}   tris ${(r.stats.tris / 1000).toFixed(0)}k`,
       `Render ${t ? t.w + 'x' + t.h : ''}  preset ${this.settings.preset}  shadows ${this.settings.shadows ? this.settings.shadowRes : 'off'}`,
