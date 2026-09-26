@@ -4,7 +4,7 @@
 
 import {
   CHUNK_SIZE, WORLD_HEIGHT, SHAPE, LAYER, BLOCKS, BLOCK, WAVE,
-  IS_OPAQUE, LIGHT_OPACITY, EMISSION, SHAPE_OF, LAYER_OF, CULL_SELF, FACE_TEX,
+  IS_OPAQUE, LIGHT_OPACITY, EMISSION, SHAPE_OF, LAYER_OF, CULL_SELF, FACE_TEX, BOX_SHAPES, IS_BED, BED_PARTNER,
 } from './blocks.js';
 import { hash2 } from './noise.js';
 
@@ -266,6 +266,13 @@ export class ChunkMesher {
           } else if (shape === SHAPE.TORCH) {
             this.torch(ri, b, x, y, z);
             emitted = true;
+          } else if (shape === SHAPE.BOXES) {
+            const boxes = BOX_SHAPES[b];
+            for (const bx of boxes) this.box(ri, b, x, y, z, bx.b, bx.top, bx.bottom, bx.side, bx.faces, false, temp, hum);
+            emitted = true;
+          } else if (shape === SHAPE.BED) {
+            this.bed(ri, b, x, y, z, temp, hum);
+            emitted = true;
           }
           if (emitted) {
             if (y < minY) minY = y;
@@ -467,6 +474,76 @@ export class ChunkMesher {
       buf.push(x0 + bx, y0 + 16, z0 + bz, u1, 0, tex, faceFlags, 3 | 4 | (mat << 3), s, k, temp, hum);
       buf.push(x0 + ax, y0 + 16, z0 + az, u0, 0, tex, faceFlags, 3 | 4 | (mat << 3), s, k, temp, hum);
     }
+  }
+
+  // One axis-aligned box inside the cell, bounds in 1/16 block units. Faces on the cell's boundary
+  // are skipped against opaque neighbours (and against the same block when it culls itself, or the
+  // other half of a bed for mattresses: joined).
+  box(ri, b, x, y, z, bb, texTop, texBottom, texSide, faces, joined, temp, hum) {
+    const R = this.blocks, sky = this.sky, blk = this.blk;
+    const buf = this.buffers[LAYER_OF[b]];
+    const tint = TINT_OF[b], wave = WAVE_OF[b], mat = MAT_OF[b];
+    const [x0, y0, z0, x1, y1, z1] = bb;
+    const lo = [x0, y0, z0], hi = [x1, y1, z1];
+    for (let f = 0; f < 6; f++) {
+      if (!(faces & (1 << f))) continue;
+      const face = FACES[f];
+      const axis = face.n[0] ? 0 : face.n[1] ? 1 : 2;
+      const pos = face.n[axis] > 0 ? hi[axis] === 16 : lo[axis] === 0;
+      const o = ri + FACE_NOFF[f];
+      if (pos) {
+        if (f === 3 && y === 0) continue;
+        const n = f === 2 && y === H - 1 ? 0 : R[o];
+        if (IS_OPAQUE[n]) continue;
+        if (n === b && CULL_SELF[b]) continue;
+        if (joined && IS_BED[n]) continue;
+      }
+      const tex = f === 2 ? texTop : f === 3 ? texBottom : texSide;
+      const s = Math.round(Math.max(sky[o], sky[ri]) * 17);
+      const k = Math.round(Math.max(blk[o], blk[ri]) * 17);
+      const faceFlags = f | (wave << 3) | (tint << 5);
+      buf.ensure(4);
+      for (let v = 0; v < 4; v++) {
+        const c = face.corners[v];
+        const px = c[0] ? x1 : x0, py = c[1] ? y1 : y0, pz = c[2] ? z1 : z0;
+        // texture coordinates from the position on the face, so partial boxes show part of the texture
+        let u, w;
+        if (f === 0) { u = 16 - pz; w = 16 - py; } else if (f === 1) { u = pz; w = 16 - py; }
+        else if (f === 2) { u = px; w = pz; } else if (f === 3) { u = px; w = 16 - pz; }
+        else if (f === 4) { u = px; w = 16 - py; } else { u = 16 - px; w = 16 - py; }
+        buf.push(x * 16 + px, y * 16 + py, z * 16 + pz, u, w, tex, faceFlags, 3 | (c[1] ? 4 : 0) | (mat << 3), s, k, temp, hum);
+      }
+    }
+  }
+
+  // A bed half: a mattress on short legs, with a pillow on the head half. It finds its other half
+  // among its four neighbours to know which way it points.
+  bed(ri, b, x, y, z, temp, hum) {
+    const R = this.blocks;
+    const partner = BED_PARTNER[b];
+    const head = BLOCKS[b].bed.head;
+    // direction from this half towards the head end
+    let dx = 0, dz = -1;
+    for (const [ox, oz] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      if (R[ri + ox + oz * RSZ] === partner) { dx = head ? -ox : ox; dz = head ? -oz : oz; break; }
+    }
+    // canonical boxes point their head end towards -Z; turn them to (dx, dz)
+    const turn = (bb) => {
+      const pts = [[bb[0], bb[2]], [bb[3], bb[5]]].map(([px, pz]) => {
+        if (dx === 1) return [16 - pz, px];
+        if (dx === -1) return [pz, 16 - px];
+        if (dz === 1) return [16 - px, 16 - pz];
+        return [px, pz];
+      });
+      return [Math.min(pts[0][0], pts[1][0]), bb[1], Math.min(pts[0][1], pts[1][1]), Math.max(pts[0][0], pts[1][0]), bb[4], Math.max(pts[0][1], pts[1][1])];
+    };
+    const wool = FACE_TEX[b * 4];
+    const plank = FACE_TEX[BLOCK.OAK_PLANKS * 4];
+    const white = FACE_TEX[BLOCK.WHITE_WOOL * 4];
+    this.box(ri, b, x, y, z, turn([0, 3, 0, 16, 9, 16]), wool, plank, wool, 63, true, temp, hum);
+    const legs = head ? [[0, 0, 0, 3, 3, 3], [13, 0, 0, 16, 3, 3]] : [[0, 0, 13, 3, 3, 16], [13, 0, 13, 16, 3, 16]];
+    for (const l of legs) this.box(ri, b, x, y, z, turn(l), plank, plank, plank, 63 & ~(1 << 2), false, temp, hum);
+    if (head) this.box(ri, b, x, y, z, turn([2, 9, 1, 14, 11, 7]), white, white, white, 63 & ~(1 << 3), false, temp, hum);
   }
 
   torch(ri, b, x, y, z) {

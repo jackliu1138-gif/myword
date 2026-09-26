@@ -26,14 +26,28 @@
 <div id="app">
   <canvas id="view" tabindex="0" data-i18n-attr="aria-label:hud.gameView"></canvas>
   <div id="hurt" aria-hidden="true"></div>
+  <div id="portalfx" aria-hidden="true"></div>
+  <div id="sleep" class="sleep" hidden>
+    <div class="sleep-card">
+      <p id="sleep-text" class="sleep-text" role="status" aria-live="polite"></p>
+      <button id="btn-wake" class="btn" type="button" data-i18n="bed.leave"></button>
+    </div>
+  </div>
 
   <div id="hud" hidden>
     <div class="crosshair" aria-hidden="true"></div>
     <pre id="debug" hidden></pre>
     <div id="toast" role="status" aria-live="polite"></div>
+    <div id="bossbar" class="bossbar" hidden>
+      <span id="boss-name" class="boss-name"></span>
+      <div class="boss-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i id="boss-fill"></i></div>
+    </div>
     <div id="blockname" aria-hidden="true"></div>
     <div id="vitals" hidden>
-      <div id="hearts" class="hearts" role="img"></div>
+      <div class="vit-left">
+        <div id="armorbar" class="armorbar" role="img" hidden></div>
+        <div id="hearts" class="hearts" role="img"></div>
+      </div>
       <div id="bubbles" class="bubbles" role="img" hidden></div>
     </div>
     <div id="hotbar" data-i18n-attr="aria-label:hud.hotbar"></div>
@@ -184,19 +198,38 @@
         <h2 id="inv-title" data-i18n="inv.title"></h2>
         <p class="hint" id="inv-hint" data-i18n="inv.hint"></p>
       </header>
-      <div id="inv-grid" class="inv-grid"></div>
-      <div id="inv-survival" class="inv-survival" hidden>
-        <div class="inv-col">
-          <h3 class="inv-h" data-i18n="inv.bag"></h3>
-          <div id="inv-bag" class="bag-grid"></div>
+      <div class="inv-body">
+        <div class="inv-player">
+          <div class="inv-armor-col">
+            <h3 class="inv-h" data-i18n="inv.armor"></h3>
+            <div id="inv-armor" class="inv-armor"></div>
+            <p class="inv-armor-pts" id="inv-armor-pts"></p>
+          </div>
+          <div class="inv-col inv-main">
+            <h3 class="inv-h" data-i18n="inv.bag"></h3>
+            <div id="inv-bag" class="bag-grid"></div>
+            <div class="inv-hotrow">
+              <div id="inv-hotbar" class="bag-grid inv-hotbar"></div>
+            </div>
+          </div>
         </div>
-        <div class="inv-col">
-          <h3 class="inv-h" data-i18n="inv.crafting"></h3>
-          <div id="inv-recipes" class="recipe-list"></div>
+        <div class="inv-col inv-side">
+          <div id="inv-creative" class="inv-creative" hidden>
+            <div class="inv-tools">
+              <div id="inv-tabs" class="inv-tabs" role="tablist"></div>
+              <input id="inv-search" class="inv-search" type="search" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:inv.search; aria-label:inv.search">
+            </div>
+            <div id="inv-grid" class="inv-grid"></div>
+            <button id="inv-trash" class="slot inv-trash" type="button" data-ref="trash"><span class="trash-glyph" aria-hidden="true"></span><span class="lbl" data-i18n="inv.trash"></span></button>
+          </div>
+          <div id="inv-survival" class="inv-survival" hidden>
+            <h3 class="inv-h" data-i18n="inv.crafting"></h3>
+            <div id="inv-recipes" class="recipe-list"></div>
+          </div>
         </div>
       </div>
-      <div id="inv-hotbar" class="inv-hotbar"></div>
     </div>
+    <div id="inv-cursor" class="inv-cursor" hidden><img alt=""><span class="count"></span></div>
   </section>
 
   <section id="death" class="screen death" hidden>

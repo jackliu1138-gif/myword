@@ -278,6 +278,11 @@ export class TerrainGenerator {
     // ---- 5. ores
     this.placeOres(blocks, cx, cz);
 
+    // ---- 5b. strongholds, deep underground: their portal room leads to the End
+    for (const sh of this.strongholds()) {
+      if (Math.abs(sh.x - (x0 + 8)) < 48 && Math.abs(sh.z - (z0 + 8)) < 48) this.stronghold(blocks, cx, cz, sh);
+    }
+
     // ---- 6. trees & plants (may cross chunk borders)
     this.decorate(blocks, cx, cz, colBiome);
 
@@ -599,6 +604,62 @@ export class TerrainGenerator {
   cactus(set, x, y, z, rnd) {
     const h = 1 + Math.floor(rnd() * 3);
     for (let k = 0; k < h; k++) set(x, y + k, z, B.CACTUS);
+  }
+
+  // Three strongholds in a ring around the world's centre (eyes of ender fly towards the nearest).
+  strongholds() {
+    if (this.strongholdList) return this.strongholdList;
+    const a0 = hash2(3, 7, this.seed ^ 0x5701) * Math.PI * 2;
+    this.strongholdList = [0, 1, 2].map((i) => {
+      const a = a0 + (i * Math.PI * 2) / 3;
+      const r = 520 + hash2(i, 11, this.seed ^ 0x5702) * 380;
+      return { x: Math.round(Math.cos(a) * r), y: 22, z: Math.round(Math.sin(a) * r) };
+    });
+    return this.strongholdList;
+  }
+
+  // The portal room (an end portal frame ring over lava on a raised dais) and three corridors.
+  stronghold(blocks, cx, cz, sh) {
+    const x0 = cx * CS, z0 = cz * CS;
+    const set = (wx, y, wz, b) => {
+      const x = wx - x0, z = wz - z0;
+      if (x < 0 || x >= CS || z < 0 || z >= CS || y < 1 || y >= H - 1) return;
+      blocks[idx(x, y, z)] = b;
+    };
+    const brick = (wx, y, wz) => {
+      const h = hash3(wx, y, wz, this.seed ^ 0x5b1);
+      return h < 0.12 ? B.MOSSY_STONE_BRICKS : h < 0.22 ? B.CRACKED_STONE_BRICKS : B.STONE_BRICKS;
+    };
+    // a hollow box of stone bricks: [x0, y0, z0] .. [x1, y1, z1] inclusive, walls included
+    const room = (ax, ay, az, bx, by, bz) => {
+      for (let y = ay; y <= by; y++) for (let z = az; z <= bz; z++) for (let x = ax; x <= bx; x++) {
+        const wall = x === ax || x === bx || y === ay || y === by || z === az || z === bz;
+        set(x, y, z, wall ? brick(x, y, z) : 0);
+      }
+    };
+    const { x, y, z } = sh;
+    room(x - 6, y - 1, z - 9, x + 6, y + 8, z + 9);
+    // corridors out of three walls, lit every few blocks
+    room(x - 2, y - 1, z - 34, x + 2, y + 3, z - 9);
+    room(x + 6, y - 1, z - 2, x + 30, y + 3, z + 2);
+    room(x - 30, y - 1, z - 2, x - 6, y + 3, z + 2);
+    for (let k = 0; k < 3; k++) {
+      for (let d = -1; d <= 1; d++) { set(x + d, y + k, z - 9, 0); set(x + 6, y + k, z + d, 0); set(x - 6, y + k, z + d, 0); }
+    }
+    for (let d = 4; d <= 28; d += 6) { set(x - 1, y, z - 9 - d, B.TORCH); set(x + 6 + d, y, z - 1, B.TORCH); set(x - 6 - d, y, z + 1, B.TORCH); }
+    // the dais with the frame ring; lava under the portal's middle
+    const cz0 = z + 4;
+    for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) set(x + dx, y, cz0 + dz, brick(x + dx, y, cz0 + dz));
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) set(x + dx, y, cz0 + dz, B.LAVA);
+    for (let i = -1; i <= 1; i++) {
+      for (const [fx, fz] of [[x + i, cz0 - 2], [x + i, cz0 + 2], [x - 2, cz0 + i], [x + 2, cz0 + i]]) {
+        set(fx, y + 1, fz, hash3(fx, y, fz, this.seed ^ 0xe7e) < 0.1 ? B.END_PORTAL_FRAME_EYE : B.END_PORTAL_FRAME);
+      }
+    }
+    // steps up to the dais, lava pools on either side of the door, torches on the walls
+    for (let dx = -1; dx <= 1; dx++) set(x + dx, y, z, brick(x + dx, y, z));
+    for (const sx of [-4, 4]) for (let dz = -7; dz <= -4; dz++) set(x + sx, y - 1, z + dz, B.LAVA);
+    for (const [tx, tz] of [[-5, -8], [5, -8], [-5, 8], [5, 8], [-5, 0], [5, 0]]) set(x + tx, y, z + tz, B.TORCH);
   }
 
   // Find a good spawn position near the origin: on land, not in water.

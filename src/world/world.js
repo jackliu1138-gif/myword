@@ -1,8 +1,8 @@
 // Chunk storage, streaming around the player, and the generation/meshing worker pool.
 
 import { CHUNK_SIZE, WORLD_HEIGHT, BLOCK, IS_SOLID, IS_LIQUID, BLOCKS } from './blocks.js';
-import { TerrainGenerator } from './generator.js';
 import { ChunkMesher } from './mesher.js';
+import { createGenerator } from './dimensions.js';
 
 const CS = CHUNK_SIZE;
 const H = WORLD_HEIGHT;
@@ -19,7 +19,8 @@ function createWorker() {
 }
 
 class WorkerPool {
-  constructor(seed, count, onResult) {
+  constructor(seed, count, onResult, dimension = 0) {
+    this.dimension = dimension;
     this.onResult = onResult;
     this.workers = [];
     this.inflight = [];
@@ -36,7 +37,7 @@ class WorkerPool {
           console.warn('Worker failed, falling back to main thread', e.message || e);
           this.useFallback(seed);
         };
-        w.postMessage({ type: 'init', seed });
+        w.postMessage({ type: 'init', seed, dimension });
         this.workers.push(w);
         this.inflight.push(0);
       }
@@ -52,7 +53,7 @@ class WorkerPool {
     for (const w of this.workers) w.terminate();
     this.workers = [];
     this.inflight = [];
-    const gen = new TerrainGenerator(seed);
+    const gen = createGenerator(seed, this.dimension);
     this.fallback = { gen, mesher: new ChunkMesher(gen) };
     // anything that was in flight is lost; the world re-requests pending chunks
     this.lost = true;
@@ -114,20 +115,23 @@ class Chunk {
 }
 
 export class World {
-  constructor(seed, { renderDistance = 8, workers = 3, edits = null, meshOptions = null } = {}) {
+  // dimension: 0 the overworld, 1 the nether, 2 the end (see dimensions.js)
+  constructor(seed, { renderDistance = 8, workers = 3, edits = null, meshOptions = null, dimension = 0 } = {}) {
     this.seed = seed;
+    this.dimension = dimension;
     this.meshOptions = meshOptions || { fancyLeaves: true };
-    this.generator = new TerrainGenerator(seed);
+    this.generator = createGenerator(seed, dimension);
     this.chunks = new Map();
     this.edits = edits || new Map(); // chunkKey -> Map(index -> id)
     this.renderDistance = renderDistance;
     this.meshQueue = []; // results waiting for upload
-    this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r));
+    this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r), dimension);
     this.jobId = 0;
     this.lastCx = null;
     this.lastCz = null;
     this.onChunkUnload = null;
     this.onEdit = null; // (x, y, z, id) for edits made here (multiplayer sends them on)
+    this.onBlockChanged = null; // (x, y, z, id) for every change, here or from another player
     this.stats = { generated: 0, meshed: 0 };
     this._last = null;
     this.pendingFluids = [];
@@ -210,6 +214,7 @@ export class World {
       if (id === 0) this.scheduleFluid(x, y, z);
       if (this.onEdit) this.onEdit(x, y, z, id);
     }
+    if (this.onBlockChanged) this.onBlockChanged(x, y, z, id);
     return true;
   }
 
@@ -386,8 +391,12 @@ export class World {
 
   // Serialisable edits for saving
   serializeEdits() {
+    return World.serializeEditMap(this.edits);
+  }
+
+  static serializeEditMap(edits) {
     const out = {};
-    for (const [k, m] of this.edits) out[k] = Array.from(m.entries()).flat();
+    for (const [k, m] of edits) out[k] = Array.from(m.entries()).flat();
     return out;
   }
 
@@ -405,6 +414,13 @@ export class World {
 
   dispose() {
     this.pool.terminate();
+  }
+
+  // The top of the first solid block at or below (x, y, z), within 40 blocks (or y - 40).
+  surfaceBelow(x, y, z) {
+    const bx = Math.floor(x), bz = Math.floor(z);
+    for (let yy = Math.floor(y); yy > Math.max(0, y - 40); yy--) if (IS_SOLID[this.getBlock(bx, yy, bz)] || IS_LIQUID[this.getBlock(bx, yy, bz)]) return yy + 1;
+    return y - 40;
   }
 
   // Height of the highest solid (or liquid) block in a column, ignoring tree canopies.

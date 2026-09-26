@@ -822,6 +822,229 @@ function flower(t, petals, center, round = false) {
 
 for (const [c, h] of WOOL_COLORS) GEN[c + '_wool'] = (t) => woolPattern(t, h);
 
+// ---------- farming, the Nether and the End ----------
+Object.assign(GEN, {
+  farmland: (t) => {
+    // furrows of dark, damp soil
+    t.each((x, y, i) => {
+      const n = pnoise(x, y, t.seed) * 0.5 + tfbm(x / S, y / S, 4, 2, t.seed + 1) * 0.5;
+      const furrow = y % 4 === 0 || y % 4 === 3;
+      let c = scalec([92, 62, 40], 0.8 + n * 0.35);
+      if (furrow) c = scalec(c, 0.72);
+      t.set(x, y, c);
+      t.height[i] = furrow ? 0.25 : 0.55 + n * 0.3;
+      t.rough[i] = 0.7;
+    });
+    t.normalStrength = 1.6;
+  },
+  netherrack: (t) => {
+    t.each((x, y, i) => {
+      const n = tfbm(x / S, y / S, 4, 3, t.seed) * 0.6 + pnoise(x, y, t.seed + 2) * 0.4;
+      const q = Math.round((n - 0.5) * 5) / 5;
+      const c = mixc([98, 32, 30], [150, 62, 56], clamp01(0.5 + q));
+      t.set(x, y, c);
+      t.height[i] = clamp01(0.5 + q * 0.7);
+      t.rough[i] = 0.85;
+    });
+    t.normalStrength = 1.6;
+  },
+  soul_sand: (t) => {
+    sandLike(t, [84, 64, 50], { rough: 0.95, normal: 1.4 });
+    // faint faces pressed into the sand
+    for (const [fx, fy] of [[3, 3], [10, 9]]) {
+      for (const [dx, dy] of [[0, 0], [2, 0], [0, 3], [1, 3], [2, 3]]) {
+        const x = fx + dx, y = fy + dy;
+        t.set(x, y, [44, 32, 26]);
+        t.height[y * S + x] = 0.1;
+      }
+    }
+  },
+  nether_quartz_ore: (t) => {
+    GEN.netherrack(t);
+    const rand = mulberry32(t.seed);
+    for (let k = 0; k < 7; k++) {
+      const x0 = Math.floor(rand() * S), y0 = Math.floor(rand() * S);
+      for (let j = 0; j < 3; j++) {
+        const x = wrap(x0 + j, S), y = wrap(y0 + (j === 1 ? 1 : 0), S);
+        t.set(x, y, mixc([226, 220, 206], [250, 248, 240], rand()));
+        t.height[y * S + x] = 0.9;
+        t.rough[y * S + x] = 0.2;
+      }
+    }
+  },
+  nether_bricks: (t) => bricksPattern(t, { brick: [62, 28, 34], mortar: [30, 14, 18] }, 8, 4),
+  magma: (t) => {
+    t.each((x, y, i) => {
+      const vo = voronoi(x, y, 4, t.seed, 0.9);
+      const edge = vo.f2 - vo.f1;
+      const n = hash2(vo.id, 3, t.seed);
+      let c = mixc([110, 40, 20], [150, 64, 26], n);
+      let e = 0.05, h = 0.7;
+      if (edge < 1.1) { c = mixc([255, 150, 40], [255, 220, 90], pnoise(x, y, t.seed)); e = 1; h = 0.1; }
+      t.set(x, y, c);
+      t.emit[i] = e;
+      t.height[i] = h;
+      t.rough[i] = 0.6;
+    });
+    t.normalStrength = 1.8;
+  },
+  ancient_debris_side: (t) => {
+    t.each((x, y, i) => {
+      const ring = Math.abs(Math.sin((y + tfbm(x / S, y / S, 2, 2, t.seed) * 5) * 1.3));
+      const n = pnoise(x, y, t.seed);
+      let c = mixc([66, 46, 40], [110, 82, 72], clamp01(ring * 0.7 + n * 0.3));
+      if (ring < 0.2) c = [44, 30, 26];
+      t.set(x, y, c);
+      t.height[i] = ring * 0.8;
+      t.rough[i] = 0.7;
+    });
+    t.normalStrength = 2;
+  },
+  ancient_debris_top: (t) => {
+    const c0 = (S - 1) / 2;
+    t.each((x, y, i) => {
+      const r = Math.hypot(x - c0, y - c0) + pnoise(x, y, t.seed) * 1.2;
+      const ring = Math.floor(r * 0.8) % 2;
+      const c = scalec(ring ? [92, 66, 58] : [120, 92, 80], 0.9 + pnoise(x, y, t.seed + 1) * 0.2);
+      t.set(x, y, c);
+      t.height[i] = ring ? 0.4 : 0.7;
+      t.rough[i] = 0.7;
+    });
+  },
+  nether_portal: (t) => {
+    t.each((x, y, i) => {
+      const u = x / S, v = y / S;
+      const n = tfbm(u, v, 3, 3, t.seed);
+      const swirl = Math.sin((u * 2 + n * 2.5) * Math.PI * 2) * 0.5 + 0.5;
+      const c = ramp([[0, [60, 10, 120]], [0.5, [130, 40, 220]], [1, [220, 150, 255]]], clamp01(swirl * 0.7 + n * 0.4));
+      t.set(x, y, c);
+      t.emit[i] = 0.7 + swirl * 0.3;
+      t.rough[i] = 0.3;
+    });
+    t.normalStrength = 0;
+  },
+  netherite_block: (t) => metalBlock(t, { light: [96, 86, 90], dark: [50, 44, 48] }, { rough: 0.3, lines: true }),
+  fire: (t) => plantSprite(t, (t) => {
+    // tongues of flame rising from the bottom edge
+    for (let x = 0; x < S; x++) {
+      const h = 6 + Math.floor(pnoise(x, 0, t.seed) * 8) + (x % 5 === 2 ? 2 : 0);
+      for (let y = S - 1; y >= S - h; y--) {
+        const k = (S - 1 - y) / h;
+        if (pnoise(x, y, t.seed + 3) < k * 0.55 - 0.12) continue;
+        const c = ramp([[0, [255, 250, 190]], [0.35, [255, 200, 60]], [0.7, [240, 110, 20]], [1, [190, 50, 10]]], k);
+        t.set(x, y, c, 1);
+        t.emit[y * S + x] = 1;
+      }
+    }
+  }),
+  end_stone: (t) => {
+    t.each((x, y, i) => {
+      const vo = voronoi(x, y, 5, t.seed, 1);
+      const n = pnoise(x, y, t.seed) * 0.6 + tfbm(x / S, y / S, 4, 2, t.seed + 1) * 0.4;
+      let c = scalec([222, 224, 164], 0.86 + n * 0.2);
+      let h = 0.6 + n * 0.3;
+      if (vo.f1 < 1.1 && hash2(vo.id, 1, t.seed) > 0.4) { c = scalec(c, 0.8); h = 0.2; } // pits
+      t.set(x, y, c);
+      t.height[i] = h;
+      t.rough[i] = 0.9;
+    });
+    t.normalStrength = 1.4;
+  },
+  end_stone_bricks: (t) => bricksPattern(t, { brick: [226, 230, 170], mortar: [160, 160, 112] }, 8, 4),
+  end_portal_frame_top: (t) => {
+    t.each((x, y, i) => {
+      const edge = Math.min(x, y, S - 1 - x, S - 1 - y);
+      const n = pnoise(x, y, t.seed) * 0.15;
+      let c = scalec([56, 108, 92], 0.9 + n);
+      let h = 0.7;
+      if (edge < 3) { c = scalec([214, 220, 162], 0.9 + n); h = 0.8; }
+      if (edge === 3) { c = [34, 60, 52]; h = 0.3; }
+      t.set(x, y, c);
+      t.height[i] = h;
+      t.rough[i] = 0.45;
+    });
+    t.normalStrength = 1.5;
+  },
+  end_portal_frame_side: (t) => {
+    GEN.end_stone(t);
+    t.each((x, y, i) => {
+      if (y > 3) return;
+      t.set(x, y, y === 3 ? [30, 56, 48] : scalec([56, 108, 92], 0.9 + pnoise(x, y, t.seed) * 0.2));
+      t.height[i] = y === 3 ? 0.2 : 0.7;
+      t.rough[i] = 0.4;
+    });
+  },
+  end_portal_eye: (t) => {
+    t.each((x, y, i) => {
+      const d = Math.hypot(x - 7.5, y - 7.5);
+      let c = mixc([30, 110, 80], [80, 200, 150], clamp01(1 - d / 8));
+      if (d < 2.2) c = [16, 30, 22];
+      t.set(x, y, c);
+      t.emit[i] = d < 6 ? 0.35 : 0;
+      t.rough[i] = 0.15;
+    });
+  },
+  end_portal: (t) => {
+    // the shader draws the starfield; this is only its base colour
+    t.each((x, y, i) => { t.set(x, y, [8, 14, 18]); t.emit[i] = 1; t.rough[i] = 0.5; });
+    t.normalStrength = 0;
+  },
+  dragon_egg: (t) => {
+    t.each((x, y, i) => {
+      const n = tfbm(x / S, y / S, 4, 2, t.seed);
+      let c = mixc([12, 6, 16], [40, 20, 50], n);
+      if (pnoise(x, y, t.seed + 4) > 0.94) c = [110, 40, 150];
+      t.set(x, y, c);
+      t.height[i] = n;
+      t.rough[i] = 0.2;
+    });
+  },
+  mossy_stone_bricks: (t) => {
+    bricksPattern(t, { brick: [120, 124, 118], mortar: [76, 80, 72] }, 8, 8);
+    t.each((x, y, i) => {
+      const m = tfbm(x / S, y / S, 4, 2, t.seed + 5);
+      if (m > 0.56) { t.set(x, y, mixc([70, 106, 40], [98, 134, 52], pnoise(x, y, t.seed))); t.height[i] += 0.05; }
+    });
+  },
+  cracked_stone_bricks: (t) => {
+    bricksPattern(t, { brick: [120, 120, 120], mortar: [76, 76, 76] }, 8, 8);
+    const rand = mulberry32(t.seed);
+    for (let k = 0; k < 3; k++) {
+      let x = Math.floor(rand() * S), y = Math.floor(rand() * S);
+      for (let j = 0; j < 7; j++) {
+        t.set(wrap(x, S), wrap(y, S), [58, 58, 58]);
+        t.height[wrap(y, S) * S + wrap(x, S)] = 0.05;
+        x += rand() < 0.5 ? 1 : 0; y += rand() < 0.6 ? 1 : -1;
+      }
+    }
+  },
+});
+// wheat: sprouts, then taller green stalks, then golden ears
+for (let stage = 0; stage < 4; stage++) {
+  GEN['wheat_stage_' + stage] = (t) => plantSprite(t, (t) => {
+    const h = [4, 8, 11, 14][stage];
+    const green = [[70, 150, 40], [90, 160, 44], [120, 160, 50], [150, 150, 50]][stage];
+    for (const x0 of [2, 5, 8, 11, 14]) {
+      for (let k = 0; k < h; k++) {
+        const y = S - 1 - k;
+        const x = x0 + (k > h / 2 && x0 % 2 ? 1 : 0);
+        t.set(x, y, scalec(green, 0.85 + pnoise(x, y, t.seed) * 0.3), 1);
+      }
+      if (stage === 3) for (let k = 0; k < 4; k++) t.set(x0 + (x0 % 2), S - h + k - 1, mixc([214, 176, 70], [240, 210, 110], pnoise(x0, k, t.seed)), 1);
+    }
+  });
+}
+
+// One pixel-pack texture by name (the HD pack falls back on these for textures it has no
+// detailed version of).
+export function generatePixelTexture(name) {
+  const t = new Tex(name);
+  const gen = GEN[name];
+  if (gen) gen(t);
+  else stoneLike(t, { base: [200, 0, 200] });
+  return t;
+}
+
 // ---------- derived maps + packing ----------
 function deriveNormals(t) {
   const Z = t.size;

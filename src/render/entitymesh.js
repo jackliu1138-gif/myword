@@ -1,8 +1,9 @@
 // Builds the triangles for every creature, dropped item and arrow each frame, interpolating
 // between simulation ticks so movement stays smooth at any frame rate.
 
-import { emitModel, emitBlockCube, emitSprite, emitArrow, modelVertexCount, ENTITY_FLOATS } from './models.js';
+import { emitModel, emitBlockCube, emitSprite, emitArrow, modelVertexCount, ENTITY_FLOATS, GEAR_VERTICES } from './models.js';
 import { isBlockItem } from '../sim/items.js';
+import { BLOCK } from '../world/blocks.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
@@ -33,10 +34,11 @@ export class EntityMesh {
         const q = e.pos;
         const dx = q[0] - cam[0], dy = q[1] - cam[1], dz = q[2] - cam[2];
         if (dx * dx + dy * dy + dz * dz > maxDist * maxDist) continue;
-        this.ensure(o + modelVertexCount('player') * ENTITY_FLOATS);
+        this.ensure(o + (modelVertexCount('player') + GEAR_VERTICES) * ENTITY_FLOATS);
         const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + 1.2), Math.floor(q[2]));
         const tint = e.hurtTime > 0.2 ? [1, 0.18, 0.12, 0.55] : [0, 0, 0, 0];
-        o = emitModel(this.data, o, e, 'player', q, e.yaw, cam, [sl / 15, bl / 15], this.skins, t, tint, e.skin);
+        const gear = { held: e.held, armor: e.armor, sprites: this.sprites };
+        o = emitModel(this.data, o, e, 'player', q, e.yaw, cam, [sl / 15, bl / 15], this.skins, t, tint, e.skin, gear);
       }
     }
     for (const e of sim.entities.values()) {
@@ -49,20 +51,30 @@ export class EntityMesh {
       const [sl, bl] = world.getLight(Math.floor(p[0]), Math.floor(p[1] + b.h * 0.6), Math.floor(p[2]));
       const light = [sl / 15, bl / 15];
       if (e.kind === 'mob') {
-        this.ensure(o + modelVertexCount(e.type) * ENTITY_FLOATS);
+        this.ensure(o + (modelVertexCount(e.model || e.type) + GEAR_VERTICES) * ENTITY_FLOATS);
         let tint = [0, 0, 0, 0];
         if (e.hurtTime > 0.2 || e.deathTime > 0) tint = [1, 0.18, 0.12, 0.55];
         else if (e.type === 'creeper' && e.fuse > 0 && Math.sin(e.fuse * 18) > 0.2) tint = [1, 1, 1, 0.55];
         if (e.burning > 0 && e.deathTime === 0) tint = [1, 0.55, 0.2, Math.max(tint[3], 0.25 + 0.2 * Math.sin(t * 20))];
         const yaw = lerpAngle(e.prevYaw, e.yaw, alpha);
         const skin = e.type === 'sheep' && e.variant ? 'sheep:' + e.variant : e.type;
-        o = emitModel(this.data, o, e, e.type, p, yaw, cam, light, this.skins, t, tint, skin);
+        const held = e.def && e.def.held;
+        const gear = held || e.armor ? { held, armor: e.armor, sprites: this.sprites } : null;
+        o = emitModel(this.data, o, e, e.type, p, yaw, cam, light, this.skins, t, tint, skin, gear);
       } else if (e.kind === 'item') {
         this.ensure(o + 36 * ENTITY_FLOATS);
         const bob = Math.sin(e.age * 2.4) * 0.05 + 0.12;
         const q = [p[0], p[1] + bob, p[2]];
         if (isBlockItem(e.item)) o = emitBlockCube(this.data, o, e.item, [q[0], q[1] + 0.1, q[2]], e.spin, 0.25, cam, light);
         else o = emitSprite(this.data, o, this.sprites.index.get(e.item) || 0, q, e.spin, 0.42, cam, light);
+      } else if (e.kind === 'thrown') {
+        // pearls and eyes: a small sprite turned to face the camera
+        this.ensure(o + 6 * ENTITY_FLOATS);
+        const face = Math.atan2(cam[0] - p[0], cam[2] - p[2]);
+        o = emitSprite(this.data, o, this.sprites.index.get(e.item) || 0, [p[0], p[1] - 0.15, p[2]], face, 0.36, cam, [Math.max(light[0], 0.5), Math.max(light[1], 0.4)]);
+      } else if (e.kind === 'fireball') {
+        this.ensure(o + 36 * ENTITY_FLOATS);
+        o = emitBlockCube(this.data, o, e.small ? BLOCK.MAGMA_BLOCK : BLOCK.GLOWSTONE, [p[0], p[1] + 0.15, p[2]], e.spin, e.small ? 0.3 : 0.75, cam, [0, 1]);
       } else if (e.kind === 'arrow') {
         this.ensure(o + 108 * ENTITY_FLOATS);
         o = emitArrow(this.data, o, p, e.dir || b.vel, cam, light, this.skins);

@@ -5,7 +5,7 @@
 
 import { hash2, mulberry32 } from './noise.js';
 import { TEXTURE_NAMES, WOOL_COLORS } from './blocks.js';
-import { Tex } from './textures.js';
+import { Tex, generatePixelTexture } from './textures.js';
 
 export const HD_SIZE = 64;
 const R = HD_SIZE;
@@ -1055,12 +1055,27 @@ const GEN = {
 };
 for (const [c, h] of WOOL_COLORS) GEN[c + '_wool'] = (t) => wool(t, h);
 
+// Textures without a detailed version: the 16px one, each texel repeated 4x4.
+function upscalePixel(name) {
+  const src = generatePixelTexture(name);
+  const t = new Tex(name, R);
+  const k = R / src.size;
+  t.normalStrength = src.normalStrength;
+  t.cutout = src.cutout;
+  t.each((x, y, i) => {
+    const j = Math.floor(y / k) * src.size + Math.floor(x / k);
+    for (let c = 0; c < 4; c++) t.albedo[i * 4 + c] = src.albedo[j * 4 + c];
+    t.height[i] = src.height[j]; t.rough[i] = src.rough[j]; t.metal[i] = src.metal[j]; t.emit[i] = src.emit[j];
+  });
+  return t;
+}
+
 export function generateHdTextures() {
   return TEXTURE_NAMES.map((name) => {
-    const t = new Tex(name, R);
     const gen = GEN[name];
-    if (gen) gen(t);
-    else stone(t, { base: [200, 0, 200] });
+    if (!gen) return upscalePixel(name);
+    const t = new Tex(name, R);
+    gen(t);
     return t;
   });
 }

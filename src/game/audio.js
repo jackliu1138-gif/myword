@@ -206,6 +206,21 @@ export class Audio {
       case 'pickup': tone(t, 700 * r(), 0.06, 0.12, 'sine', 1300); break;
       case 'swing': noise(t, 0.12, 'bandpass', 1600, 0.6, 0.12); break;
       case 'toolBreak': noise(t, 0.2, 'bandpass', 3200, 3, 0.4); tone(t, 900, 0.2, 0.15, 'square', 400); break;
+      case 'ignite': noise(t, 0.18, 'highpass', 2600, 0.8, 0.35); noise(t + 0.05, 0.4, 'bandpass', 700, 0.6, 0.25); break;
+      case 'eyePlace': tone(t, 520, 0.25, 0.2, 'sine', 780); tone(t + 0.08, 1040, 0.3, 0.1, 'sine', 1300); break;
+      case 'glassBreak': for (let i = 0; i < 4; i++) noise(t + i * 0.03, 0.08, 'bandpass', 4000 * r(), 3, 0.3); break;
+      case 'teleport': { const o = tone(t, 180, 0.5, 0.3, 'sawtooth', 900); void o; noise(t, 0.4, 'bandpass', 1500, 1.5, 0.2); break; }
+      case 'throw': noise(t, 0.15, 'bandpass', 1100, 0.8, 0.2); break;
+      case 'travel': tone(t, 110, 2.2, 0.35, 'sawtooth', 440); noise(t, 2, 'bandpass', 600, 0.8, 0.3); break;
+      case 'portalOpen': for (let i = 0; i < 4; i++) tone(t + i * 0.12, 330 * (1 + i * 0.25), 1.4, 0.18, 'triangle'); break;
+      case 'blazeShoot': noise(t, 0.3, 'bandpass', 800, 0.7, 0.4); tone(t, 220, 0.25, 0.2, 'sawtooth', 90); break;
+      case 'ghastShoot': voice(t, 520, 300, 0.5, 1300, 0.4, 7); noise(t + 0.2, 0.4, 'lowpass', 900, 0.6, 0.4); break;
+      case 'ghast': voice(t, 380 * r(), 260, 1.2, 1100, 0.3, 5); break;
+      case 'blaze': noise(t, 0.8, 'bandpass', 500 * r(), 0.9, 0.3); break;
+      case 'enderman': voice(t, 90 * r(), 60, 0.9, 300, 0.4, 9); break;
+      case 'zombified_piglin': voice(t, 160 * r(), 110, 0.6, 520, 0.45, 6); break;
+      case 'dragon': voice(t, 70, 45, 2.2, 280, 0.8, 4); noise(t, 1.8, 'lowpass', 600, 0.7, 0.4); break;
+      case 'crystal': tone(t, 1600, 0.5, 0.12, 'sine', 2400); break;
       default: break;
     }
   }
@@ -259,6 +274,7 @@ export class Audio {
     this.ambient.rainFilter.frequency.setTargetAtTime(env.underwater ? 500 : 1200 + 7800 * outdoor * outdoor, t, 0.4);
     if (!on || env.underwater) return;
     if (rain > 0.3) return; // birds and crickets keep quiet in the rain
+    if (env.dimension) return; // and there are none in the nether or the end
     // birds by day in the open
     if (env.day > 0.5 && outdoor > 0.7 && t > this.nextBird) {
       this.nextBird = t + 2 + Math.random() * 7;

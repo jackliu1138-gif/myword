@@ -104,6 +104,8 @@ PASSWORD=你们的密码 SERVER_NAME=我们的世界 node server/server.mjs
 | `DATA_DIR` | `dataDir` | server/data | 世界存档的位置 |
 
 世界存档是 `server/data/world.json`，每 30 秒自动保存一次，关服时也会保存。备份时复制这个文件就行。
+用上面的一键脚本部署时，存档放在 `/var/lib/lumencraft/world.json`（不在程序目录里，所以更新游戏不会丢存档），
+每次更新前还会自动备份一份（保留最近 5 份，文件名是 `world.json.bak-日期`）。
 
 ## 第 4 步：开机自动运行（systemd）
 

@@ -2,8 +2,9 @@
 // (1/16 block) around a pivot, painted into one 64x64 skin layer per creature, and animated
 // procedurally (walk cycles, head turns, zombie arms, creeper swelling, flapping wings).
 
-import { BLOCKS, FACE_TEX, TINT, LAYER } from '../world/blocks.js';
+import { BLOCKS, FACE_TEX, TINT, LAYER, SHAPE } from '../world/blocks.js';
 import { hash2 } from '../world/noise.js';
+import { itemDef, isBlockItem } from '../sim/items.js';
 
 const SKIN = 64;
 const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
@@ -140,12 +141,90 @@ const SKINS = {
     if (part.endsWith('Arm')) return v < 4 ? jitter(shirt, 0.1, u, v + fi * 5, 38) : jitter(skin, 0.05, u, v, 39);
     return v >= 10 ? rgb(0x2e2a28) : jitter(pants, 0.08, u, v + fi * 5, 40);
   },
+  zombified_piglin(part, face, u, v, w, h) {
+    const pink = rgb(0xe8a09a), rot = rgb(0x6c9a54), gold = rgb(0xe8c040), loin = rgb(0x5a4030);
+    const fi = FACES.indexOf(face);
+    if (part === 'snout') return face === 'front' && v === 1 && (u === 1 || u === 3) ? [90, 40, 40] : rgb(0xd88880);
+    if (part === 'earR' || part === 'earL') return jitter(pink, 0.1, u, v, 3);
+    if (part === 'head') {
+      if (face === 'front' && v === 3 && (u === 1 || u === 6)) return [40, 20, 20];
+      // half the face has rotted away
+      return jitter(u < 4 && face === 'front' ? rot : pink, 0.12, u, v + fi * 9, 5);
+    }
+    if (part === 'body') return v > 9 ? jitter(loin, 0.1, u, v, 6) : face === 'front' && v === 1 ? gold : jitter((u + v) % 4 === 0 ? rot : pink, 0.12, u, v + fi * 13, 7);
+    if (part.endsWith('Arm')) return jitter(v > 8 ? rot : pink, 0.12, u, v + fi * 5, 8);
+    return jitter(v > 8 ? rgb(0x3a2a20) : pink, 0.12, u, v + fi * 5, 9);
+  },
+  blaze(part, face, u, v, w, h) {
+    if (part === 'head') {
+      if (face === 'front' && v >= 3 && v <= 4 && (u === 1 || u === 2 || u === 5 || u === 6)) return [40, 30, 10];
+      return jitter(v < 2 ? rgb(0xf0c040) : rgb(0xe8a020), 0.12, u, v + FACES.indexOf(face) * 9, 11);
+    }
+    return jitter(v % 3 === 0 ? rgb(0xfff070) : rgb(0xf0a830), 0.1, u, v, 12);
+  },
+  ghast(part, face, u, v, w, h) {
+    const white = rgb(0xf0f0f0), grey = rgb(0xc8c8c8);
+    if (part === 'body' && face === 'front') {
+      // closed eyes and a small mouth (scaled texture: the face is 8 x 8 texels)
+      if (v === 3 && (u === 1 || u === 2 || u === 5 || u === 6)) return [70, 70, 70];
+      if (v === 5 && u >= 3 && u <= 4) return [60, 50, 50];
+    }
+    if (part.startsWith('tent')) return jitter(grey, 0.08, u, v, 13);
+    return jitter(hash2(u, v, 17 + FACES.indexOf(face)) > 0.85 ? grey : white, 0.05, u, v, 14);
+  },
+  enderman(part, face, u, v, w, h) {
+    const black = [22, 18, 26];
+    if (part === 'head' && face === 'front' && v === 4) {
+      if (u === 1 || u === 6) return [230, 120, 250];
+      if (u === 0 || u === 2 || u === 5 || u === 7) return [180, 60, 220];
+    }
+    return jitter(black, 0.25, u, v + FACES.indexOf(face) * 7 + part.length, 15);
+  },
+  ender_dragon(part, face, u, v, w, h) {
+    const scale = [30, 26, 34], dark = [16, 14, 20], purple = [120, 50, 170];
+    const fi = FACES.indexOf(face);
+    if (part === 'head' && face === 'front' && v === 1 && (u === 1 || u === w - 2)) return purple;
+    if (part === 'head' && (face === 'right' || face === 'left') && v === 1 && u === 1) return [220, 120, 255];
+    if (part.startsWith('wing')) return (u + v) % 5 === 0 ? [50, 44, 56] : jitter(dark, 0.2, u, v + fi * 11, 18);
+    if (part === 'body' && face === 'top' && u % 4 === 0) return [70, 62, 76]; // spine plates
+    return jitter(hash2(u, v, fi + part.length * 3) > 0.7 ? dark : scale, 0.18, u, v, 19);
+  },
+  end_crystal(part, face, u, v, w, h) {
+    if (part === 'base') return jitter(v === 0 ? [90, 90, 96] : [52, 52, 58], 0.1, u, v, 20);
+    if (part === 'core') return jitter([240, 90, 190], 0.15, u, v + FACES.indexOf(face) * 4, 21);
+    // the glassy frames: only their edges
+    return u === 0 || v === 0 || u === w - 1 || v === h - 1 ? [230, 220, 250] : null;
+  },
+  // worn armour, one outfit per material (the variant); the helmet leaves the face open
+  armor(part, face, u, v, w, h, variant = 'iron') {
+    const pal = ARMOR_COLORS[variant] || ARMOR_COLORS.iron;
+    const fi = FACES.indexOf(face);
+    const n = hash2(u + fi * 17, v + part.length * 5, 77);
+    if (variant === 'chainmail' && (u + v) % 2 === 0 && face !== 'top' && part !== 'helmet') return null;
+    if (part === 'helmet' && face === 'front' && v >= 3 && u >= 1 && u < w - 1) return null;
+    if (part === 'helmet' && face !== 'top' && face !== 'bottom' && v >= 6) return null;
+    if (part === 'helmet' && face === 'bottom') return null;
+    const rim = v === 0 || v === h - 1 || u === 0 || u === w - 1;
+    const c = rim ? pal[1] : n > 0.8 ? pal[2] : pal[0];
+    return jitter(c, 0.08, u, v + fi * 7, 91);
+  },
   arrow(part, face, u, v) {
     if (part === 'tip') return rgb(0x9a9aa0);
     if (part === 'fletch') return rgb(0xeeeeea);
     return jitter(rgb(0x8a6436), 0.1, u, v, 3);
   },
 };
+
+// armour colours: base, rim, highlight
+const ARMOR_COLORS = {
+  leather: [[150, 94, 58], [104, 62, 36], [182, 124, 82]],
+  chainmail: [[150, 150, 156], [96, 96, 102], [196, 196, 204]],
+  iron: [[208, 208, 212], [150, 150, 158], [240, 240, 244]],
+  golden: [[246, 204, 64], [196, 144, 24], [255, 240, 140]],
+  diamond: [[86, 214, 206], [36, 150, 150], [180, 250, 246]],
+  netherite: [[74, 66, 70], [44, 38, 42], [110, 100, 104]],
+};
+export const ARMOR_SKINS = Object.keys(ARMOR_COLORS);
 
 const PLAYER_LOOKS = [
   { skin: 0xe6b894, hair: 0x3b2618, shirt: 0x2f7fd0, pants: 0x2b3450, eyes: 0x3a5a9a },
@@ -241,6 +320,85 @@ export const MODELS = {
       ['legL', [1.5, 5, 1], [-0.5, -5, -0.5, 1, 5, 1]],
     ],
   },
+  zombified_piglin: {
+    parts: [
+      ...HUMANOID(4),
+      ['snout', [0, 24, 0], [-2, 1, -5, 4, 3, 1]],
+      ['earR', [-4, 30, 0], [-1, -4, -2, 1, 5, 4]],
+      ['earL', [4, 30, 0], [0, -4, -2, 1, 5, 4]],
+    ],
+  },
+  blaze: {
+    parts: [
+      ['head', [0, 20, 0], [-4, 0, -4, 8, 8, 8]],
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => ['rod' + i, [0, i < 4 ? 20 : i < 8 ? 13 : 6, 0], [i < 4 ? 8 : i < 8 ? 6 : 4, -4, -1, 2, 8, 2]]),
+    ],
+  },
+  ghast: {
+    scale: 3.6,
+    texScale: 0.5,
+    parts: [
+      ['body', [0, 8, 0], [-8, 0, -8, 16, 16, 16]],
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => ['tent' + i, [-5 + (i % 3) * 5, 8, -5 + Math.floor(i / 3) * 5], [-1, -9 + (i % 2) * 2, -1, 2, 9 - (i % 2) * 2, 2]]),
+    ],
+  },
+  enderman: {
+    parts: [
+      ['body', [0, 34, 0], [-4, 0, -2, 8, 12, 4]],
+      ['head', [0, 46, 0], [-4, 0, -4, 8, 8, 8]],
+      ['rightArm', [-5, 45, 0], [-1, -29, -1, 2, 30, 2]],
+      ['leftArm', [5, 45, 0], [-1, -29, -1, 2, 30, 2]],
+      ['rightLeg', [-2, 34, 0], [-1, -34, -1, 2, 34, 2]],
+      ['leftLeg', [2, 34, 0], [-1, -34, -1, 2, 34, 2]],
+    ],
+  },
+  // the dragon faces -Z; its wing tips and jaw hang off parent parts (5th entry)
+  ender_dragon: {
+    scale: 1.5,
+    texScale: 0.25,
+    parts: [
+      ['body', [0, 16, 0], [-12, -8, -30, 24, 20, 60]],
+      ['neck1', [0, 22, -30], [-5, -5, -10, 10, 10, 10]],
+      ['neck2', [0, 24, -40], [-5, -5, -10, 10, 10, 10]],
+      ['neck3', [0, 26, -50], [-5, -5, -10, 10, 10, 10]],
+      ['head', [0, 28, -60], [-8, -6, -18, 16, 12, 18]],
+      ['jaw', [0, 23, -60], [-6, -4, -17, 12, 4, 17]],
+      ['wingR', [-12, 22, -14], [-44, -2, -12, 44, 4, 30]],
+      ['wingR2', [-44, 0, 0], [-46, -1, -12, 46, 2, 28], null, 'wingR'],
+      ['wingL', [12, 22, -14], [0, -2, -12, 44, 4, 30]],
+      ['wingL2', [44, 0, 0], [0, -1, -12, 46, 2, 28], null, 'wingL'],
+      ['tail1', [0, 16, 30], [-4, -4, 0, 8, 8, 12]],
+      ['tail2', [0, 16, 42], [-3.5, -3.5, 0, 7, 7, 12]],
+      ['tail3', [0, 16, 54], [-3, -3, 0, 6, 6, 12]],
+      ['tail4', [0, 16, 66], [-2.5, -2.5, 0, 5, 5, 12]],
+      ['legFR', [-9, 10, -18], [-3, -12, -3, 6, 12, 6]],
+      ['legFL', [9, 10, -18], [-3, -12, -3, 6, 12, 6]],
+      ['legBR', [-9, 10, 18], [-4, -14, -4, 8, 14, 8]],
+      ['legBL', [9, 10, 18], [-4, -14, -4, 8, 14, 8]],
+    ],
+  },
+  end_crystal: {
+    parts: [
+      ['base', [0, 0, 0], [-8, 0, -8, 16, 4, 16]],
+      ['outer', [0, 16, 0], [-6, -6, -6, 12, 12, 12]],
+      ['inner', [0, 16, 0], [-4.5, -4.5, -4.5, 9, 9, 9]],
+      ['core', [0, 16, 0], [-3, -3, -3, 6, 6, 6]],
+    ],
+  },
+  // armour pieces, slightly bigger than the humanoid parts they are drawn on (4th entry)
+  armor: {
+    parts: [
+      ['helmet', [0, 24, 0], [-4.6, -0.6, -4.6, 9.2, 9.2, 9.2], 'head'],
+      ['chest', [0, 12, 0], [-4.5, 0.5, -2.5, 9, 12, 5], 'body'],
+      ['armR', [-6, 22, 0], [-2.5, -7, -2.5, 5, 7.6, 5], 'rightArm'],
+      ['armL', [6, 22, 0], [-2.5, -7, -2.5, 5, 7.6, 5], 'leftArm'],
+      ['waist', [0, 12, 0], [-4.3, -0.3, -2.3, 8.6, 4.6, 4.6], 'body'],
+      ['legR', [-2, 12, 0], [-2.35, -8.5, -2.35, 4.7, 8.8, 4.7], 'rightLeg'],
+      ['legL', [2, 12, 0], [-2.35, -8.5, -2.35, 4.7, 8.8, 4.7], 'leftLeg'],
+      ['bootR', [-2, 12, 0], [-2.6, -12.6, -2.6, 5.2, 4.2, 5.2], 'rightLeg'],
+      ['bootL', [2, 12, 0], [-2.6, -12.6, -2.6, 5.2, 4.2, 5.2], 'leftLeg'],
+    ],
+  },
   arrow: {
     parts: [
       ['shaft', [0, 0, 0], [-0.5, -0.5, -7, 1, 1, 14]],
@@ -258,16 +416,31 @@ export function buildSkins(woolColors = {}) {
   for (const type of types) {
     const model = MODELS[type];
     const px = new Uint8Array(SKIN * SKIN * 4);
-    let cx = 0, cy = 0, rowH = 0;
-    model.rects = {};
+    // shelf packing: every face of every part gets its own rect, tallest first
+    const rects = [];
+    const ts = model.texScale || 1; // big creatures get fewer texels per pixel of size
     for (const [name, , box] of model.parts) {
       const [, , , w, h, d] = box;
       const dims = { front: [w, h], back: [w, h], right: [d, h], left: [d, h], top: [w, d], bottom: [w, d] };
-      const r = {};
+      for (const f of FACES) rects.push({ name, f, w: Math.max(1, Math.ceil(dims[f][0] * ts)), h: Math.max(1, Math.ceil(dims[f][1] * ts)) });
+    }
+    rects.sort((a, b) => b.h - a.h || b.w - a.w);
+    const shelves = [];
+    model.rects = {};
+    for (const r of rects) {
+      let sh = shelves.find((q) => q.x + r.w <= SKIN && r.h <= q.h);
+      if (!sh) {
+        const y = shelves.length ? shelves[shelves.length - 1].y + shelves[shelves.length - 1].h : 0;
+        if (y + r.h > SKIN) throw new Error(`skin atlas overflow: ${type}.${r.name}`);
+        sh = { x: 0, y, h: r.h };
+        shelves.push(sh);
+      }
+      (model.rects[r.name] ||= {})[r.f] = [sh.x, sh.y, r.w, r.h];
+      sh.x += r.w;
+    }
+    for (const [name] of model.parts) {
       for (const f of FACES) {
-        const fw = Math.max(1, Math.ceil(dims[f][0])), fh = Math.max(1, Math.ceil(dims[f][1]));
-        if (cx + fw > SKIN) { cx = 0; cy += rowH; rowH = 0; }
-        r[f] = [cx, cy, fw, fh];
+        const [cx, cy, fw, fh] = model.rects[name][f];
         for (let v = 0; v < fh; v++) {
           for (let u = 0; u < fw; u++) {
             const c = SKINS[type](name, f, u, v, fw, fh);
@@ -276,10 +449,7 @@ export function buildSkins(woolColors = {}) {
             px[o] = Math.max(0, Math.min(255, c[0])); px[o + 1] = Math.max(0, Math.min(255, c[1])); px[o + 2] = Math.max(0, Math.min(255, c[2])); px[o + 3] = 255;
           }
         }
-        cx += fw;
-        rowH = Math.max(rowH, fh);
       }
-      model.rects[name] = r;
     }
     layerOf[type] = layers.length;
     layers.push(px);
@@ -299,6 +469,24 @@ export function buildSkins(woolColors = {}) {
       }
     }
     layerOf['player:' + variant] = layers.length;
+    layers.push(px);
+  }
+  // armour, one layer per material
+  for (const variant of ARMOR_SKINS) {
+    const model = MODELS.armor;
+    const px = new Uint8Array(SKIN * SKIN * 4);
+    for (const [name] of model.parts) {
+      for (const f of FACES) {
+        const [cx, cy, fw, fh] = model.rects[name][f];
+        for (let v = 0; v < fh; v++) for (let u = 0; u < fw; u++) {
+          const c = SKINS.armor(name, f, u, v, fw, fh, variant);
+          if (!c) continue;
+          const o = ((cy + v) * SKIN + cx + u) * 4;
+          px[o] = Math.max(0, Math.min(255, c[0])); px[o + 1] = Math.max(0, Math.min(255, c[1])); px[o + 2] = Math.max(0, Math.min(255, c[2])); px[o + 3] = 255;
+        }
+      }
+    }
+    layerOf['armor:' + variant] = layers.length;
     layers.push(px);
   }
   // coloured sheep: the same skin with the wool repainted
@@ -360,13 +548,17 @@ function pose(e, type, t) {
   const walk = e.walkPhase || 0, amt = e.walkAmount || 0;
   const sw = Math.sin(walk * 2.2) * 0.9 * amt;
   const headYaw = Math.atan2(Math.sin((e.headYaw ?? e.yaw) - e.yaw), Math.cos((e.headYaw ?? e.yaw) - e.yaw));
-  const headPitch = -(e.headPitch || 0);
+  // rx > 0 turns a part's front (-Z) upwards and swings a hanging limb forwards, so a positive
+  // pitch (looking up) is a positive head rotation
+  const headPitch = e.headPitch || 0;
   if (type === 'player') {
     r.head = [headPitch, headYaw, 0];
     r.rightLeg = [sw, 0, 0];
     r.leftLeg = [-sw, 0, 0];
-    const swing = e.swing > 0 ? Math.sin(Math.min(1, e.swing) * Math.PI) : 0;
-    r.rightArm = [-sw * 0.8 - swing * 1.4, 0, 0.05 + swing * 0.2];
+    // attacking: the arm swings forwards and back down, turning in across the body
+    const s = e.swing > 0 ? Math.sin(Math.min(1, e.swing) * Math.PI) : 0;
+    const hold = e.held ? 0.32 : 0; // an arm holding something is carried a little forwards
+    r.rightArm = [(-sw * 0.8 + hold) * (1 - s) + s * 1.9, -s * 0.35, 0.05 - s * 0.2];
     r.leftArm = [sw * 0.8, 0, -0.05];
   } else if (type === 'zombie' || type === 'skeleton') {
     r.head = [headPitch, headYaw, 0];
@@ -375,12 +567,12 @@ function pose(e, type, t) {
     const idle = Math.sin(t * 1.3 + e.id) * 0.05;
     if (type === 'zombie') {
       const swing = e.swing > 0 ? Math.sin((e.swing / 0.4) * Math.PI) * 0.5 : 0;
-      r.rightArm = [-Math.PI / 2 + idle - swing, 0, 0.05];
-      r.leftArm = [-Math.PI / 2 - idle - swing, 0, -0.05];
+      r.rightArm = [Math.PI / 2 + idle - swing, 0, 0.05];
+      r.leftArm = [Math.PI / 2 - idle - swing, 0, -0.05];
     } else if (e.mode === 'chase') {
       // bow drawn: arms forward, turned inwards
-      r.rightArm = [-Math.PI / 2 + headPitch, -0.1, 0];
-      r.leftArm = [-Math.PI / 2 + headPitch, 0.4, 0];
+      r.rightArm = [Math.PI / 2 + headPitch, -0.1, 0];
+      r.leftArm = [Math.PI / 2 + headPitch, 0.4, 0];
     } else {
       r.rightArm = [-sw * 0.8 + idle, 0, 0.05];
       r.leftArm = [sw * 0.8 - idle, 0, -0.05];
@@ -403,8 +595,53 @@ function pose(e, type, t) {
     r.legFL = r.legBR = [-sw, 0, 0];
     // grazing: head dips while standing still
     const graze = amt < 0.1 && e.mode === 'idle' ? Math.max(0, Math.sin(t * 0.7 + e.id * 1.7)) * 0.9 : 0;
-    r.head = [headPitch + graze, headYaw, 0];
+    r.head = [headPitch - graze, headYaw, 0];
     r.horns = r.snout = r.headWool = r.head;
+  } else if (type === 'zombified_piglin') {
+    r.head = r.snout = r.earR = r.earL = [headPitch, headYaw, 0];
+    r.rightLeg = [sw, 0, 0];
+    r.leftLeg = [-sw, 0, 0];
+    const swing = e.swing > 0 ? Math.sin((e.swing / 0.4) * Math.PI) * 1.2 : 0;
+    r.rightArm = [-sw * 0.8 + 0.3 + swing, 0, 0.05];
+    r.leftArm = [sw * 0.8, 0, -0.05];
+    r.earR = [headPitch, headYaw, 0.35];
+    r.earL = [headPitch, headYaw, -0.35];
+  } else if (type === 'blaze') {
+    r.head = [headPitch, headYaw, 0];
+    for (let i = 0; i < 12; i++) {
+      const ring = Math.floor(i / 4);
+      const spin = t * (ring === 1 ? -1.6 : 1.2) + (i % 4) * Math.PI / 2 + ring * 0.4;
+      r['rod' + i] = [0, spin, 0];
+    }
+  } else if (type === 'ghast') {
+    for (let i = 0; i < 9; i++) r['tent' + i] = [Math.sin(t * 2.2 + i * 1.3) * 0.35, 0, Math.cos(t * 1.7 + i) * 0.2];
+  } else if (type === 'enderman') {
+    r.head = [headPitch, headYaw, 0];
+    r.rightLeg = [sw * 0.6, 0, 0];
+    r.leftLeg = [-sw * 0.6, 0, 0];
+    const up = e.mode === 'chase' ? 0.25 : 0;
+    r.rightArm = [-sw * 0.5 + up, 0, 0.05];
+    r.leftArm = [sw * 0.5 + up, 0, -0.05];
+  } else if (type === 'ender_dragon') {
+    const f = e.walkPhase || t * 3;
+    const flap = Math.sin(f);
+    r.wingR = [0, 0, 0.15 + flap * 0.65];
+    r.wingR2 = [0, 0, flap * 0.45 + 0.1];
+    r.wingL = [0, 0, -0.15 - flap * 0.65];
+    r.wingL2 = [0, 0, -flap * 0.45 - 0.1];
+    const bob = Math.sin(f * 0.5) * 0.08;
+    r.neck1 = [headPitch * 0.3 + bob, 0, 0];
+    r.neck2 = [headPitch * 0.3 + bob, 0, 0];
+    r.neck3 = [headPitch * 0.3 + bob, 0, 0];
+    r.head = [headPitch * 0.5 + bob, 0, 0];
+    r.jaw = [headPitch * 0.5 + bob - 0.15 - Math.max(0, Math.sin(t * 1.3)) * 0.25, 0, 0];
+    for (let i = 1; i <= 4; i++) r['tail' + i] = [0, Math.sin(t * 1.4 + i * 0.7) * 0.18 * i * 0.5, 0];
+    r.legFR = r.legFL = [0.9, 0, 0];
+    r.legBR = r.legBL = [0.7, 0, 0];
+  } else if (type === 'end_crystal') {
+    r.outer = [t * 1.3, t * 1.7, 0.6];
+    r.inner = [-t * 1.9, t * 1.1, 0.3];
+    r.core = [t * 2.3, -t * 1.6, 0];
   } else if (type === 'chicken') {
     r.head = [headPitch, headYaw, 0];
     r.beak = r.wattle = r.head;
@@ -421,13 +658,41 @@ function pose(e, type, t) {
 // pos3 (camera relative), normal3, uv2, layer, sky, block, mode, tint rgba -> 16 floats.
 export const ENTITY_FLOATS = 16;
 
-export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint, skinKey = type) {
+// One textured box (in the part's pixel units) through matrix m.
+function emitBox(out, o, m, box, rects, layer, light, tint) {
+  const [x0, y0, z0, w, h, d] = box;
+  const X = [x0, x0 + w], Y = [y0, y0 + h], Z = [z0, z0 + d];
+  for (const f of FACES) {
+    const [rx, ry, rw, rh] = rects[f];
+    const nrm = applyN(m, ...NORMALS[f]);
+    const corners = CORNERS[f];
+    const uv = [[rx, ry], [rx + rw, ry], [rx + rw, ry + rh], [rx, ry + rh]];
+    for (const qi of QUAD) {
+      const c = corners[qi];
+      const p = apply(m, X[c[0]], Y[c[1]], Z[c[2]]);
+      out[o++] = p[0]; out[o++] = p[1]; out[o++] = p[2];
+      out[o++] = nrm[0]; out[o++] = nrm[1]; out[o++] = nrm[2];
+      out[o++] = uv[qi][0] / SKIN; out[o++] = uv[qi][1] / SKIN;
+      out[o++] = layer; out[o++] = light[0]; out[o++] = light[1]; out[o++] = 0;
+      out[o++] = tint[0]; out[o++] = tint[1]; out[o++] = tint[2]; out[o++] = tint[3];
+    }
+  }
+  return o;
+}
+
+// which armour parts each slot (head, chest, legs, feet) puts on
+const ARMOR_PARTS = [['helmet'], ['chest', 'armR', 'armL'], ['waist', 'legR', 'legL'], ['bootR', 'bootL']];
+export const GEAR_VERTICES = 9 * 36 + 36;
+
+// gear: { held: item id, armor: [4 item ids], sprites } for creatures and players that carry things
+export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint, skinKey = type, gear = null) {
   const model = MODELS[type];
   if (!model || !model.rects) return o;
   const layer = skins.layerOf[skinKey] ?? skins.layerOf[type];
   const rots = pose(e, type, t);
   let scale = 1 / 16;
   let root = mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]);
+  if (e.lying) root = mul(root, mat(-Math.PI / 2, 0, 0, 0, 0.22, 1.0)); // asleep on the back along the bed, head on the pillow
   if (e.deathTime > 0) {
     // topple over sideways
     const k = Math.min(1, e.deathTime / 0.45);
@@ -435,28 +700,52 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   }
   let swell = 1;
   if (type === 'creeper' && e.fuse > 0) swell = 1 + (e.fuse / 1.5) * 0.25 + Math.sin(e.fuse * 40) * 0.02;
+  if (model.scale) scale *= model.scale;
   const byName = {};
   for (const part of model.parts) {
-    const [name, pivot, box] = part;
+    const [name, pivot, box, , parent] = part;
     const rot = rots[name] || [0, 0, 0];
-    let m = mul(root, mat(rot[0], rot[1], rot[2], pivot[0] * scale * swell, pivot[1] * scale * swell, pivot[2] * scale * swell, scale * swell));
+    // a child's pivot is in its parent's (already scaled) space
+    const m = parent && byName[parent]
+      ? mul(byName[parent], mat(rot[0], rot[1], rot[2], pivot[0], pivot[1], pivot[2], 1))
+      : mul(root, mat(rot[0], rot[1], rot[2], pivot[0] * scale * swell, pivot[1] * scale * swell, pivot[2] * scale * swell, scale * swell));
     byName[name] = m;
-    const [x0, y0, z0, w, h, d] = box;
-    const X = [x0, x0 + w], Y = [y0, y0 + h], Z = [z0, z0 + d];
-    const rects = model.rects[name];
-    for (const f of ['front', 'back', 'right', 'left', 'top', 'bottom']) {
-      const [rx, ry, rw, rh] = rects[f];
-      const nrm = applyN(m, ...NORMALS[f]);
-      const corners = CORNERS[f];
-      const uv = [[rx, ry], [rx + rw, ry], [rx + rw, ry + rh], [rx, ry + rh]];
-      for (const qi of QUAD) {
-        const c = corners[qi];
-        const p = apply(m, X[c[0]], Y[c[1]], Z[c[2]]);
-        out[o++] = p[0]; out[o++] = p[1]; out[o++] = p[2];
-        out[o++] = nrm[0]; out[o++] = nrm[1]; out[o++] = nrm[2];
-        out[o++] = uv[qi][0] / SKIN; out[o++] = uv[qi][1] / SKIN;
-        out[o++] = layer; out[o++] = light[0]; out[o++] = light[1]; out[o++] = 0;
-        out[o++] = tint[0]; out[o++] = tint[1]; out[o++] = tint[2]; out[o++] = tint[3];
+    o = emitBox(out, o, m, box, model.rects[name], layer, light, tint);
+  }
+  if (!gear) return o;
+  // armour over the body parts it covers
+  if (gear.armor && byName.head) {
+    const am = MODELS.armor;
+    gear.armor.forEach((id, slot) => {
+      const d = id ? itemDef(id) : null;
+      if (!d || d.kind !== 'armor') return;
+      const al = skins.layerOf['armor:' + d.material];
+      if (al === undefined) return;
+      for (const name of ARMOR_PARTS[slot]) {
+        const part = am.parts.find((q) => q[0] === name);
+        const m = byName[part[3]];
+        if (m) o = emitBox(out, o, m, part[2], am.rects[name], al, light, tint);
+      }
+    });
+  }
+  // the held item in the right hand: blocks as a small cube, items as a flat sprite with the
+  // handle in the fist and the blade pointing forwards
+  const arm = byName.rightArm;
+  if (gear.held && arm) {
+    if (isBlockItem(gear.held)) {
+      const d = BLOCKS[gear.held];
+      // torches and flowers stand upright out of the fist, as two crossed cards
+      if (d && (d.shape === SHAPE.CROSS || d.shape === SHAPE.TORCH)) {
+        for (const ry of [0, Math.PI / 2]) o = emitBlockSpriteM(out, o, gear.held, mul(arm, mat(0.25, ry, 0, 0, -13, -2.4, 10)), light);
+      }
+      else if (d) o = emitBlockCubeM(out, o, gear.held, mul(arm, mat(0, 0.6, 0, 0, -11.5, -2.5, 6)), light);
+    } else if (gear.sprites) {
+      const d = itemDef(gear.held);
+      const sl = gear.sprites.index.get(gear.held);
+      if (d && sl !== undefined) {
+        const flat = d.kind === 'food' || d.kind === 'material' || d.kind === 'pearl' || d.kind === 'eye' || d.kind === 'bed';
+        const grip = flat ? mat(-0.2, Math.PI / 2, 0, 0, -12.5, -1.5, 7) : mul(mat(-0.5, 0, 0, 0, -10.5, -1), mul(mat(0, Math.PI / 2, 0, 0, 0, 0, 11), mat(0, 0, 0, 0.36, -0.12, 0)));
+        o = emitSpriteM(out, o, sl, mul(arm, grip), light);
       }
     }
   }
@@ -470,6 +759,11 @@ export function modelVertexCount(type) {
 
 // A small textured cube for dropped blocks (mode 1 = block texture array).
 export function emitBlockCube(out, o, blockId, pos, spin, size, cam, light) {
+  return emitBlockCubeM(out, o, blockId, mat(0, spin, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2], size), light);
+}
+
+// The same through any matrix (a unit cube centred on the origin).
+export function emitBlockCubeM(out, o, blockId, m, light) {
   const tex = FACE_TEX;
   const layers = { top: tex[blockId * 4], bottom: tex[blockId * 4 + 1] };
   const side = tex[blockId * 4 + 2];
@@ -479,9 +773,8 @@ export function emitBlockCube(out, o, blockId, pos, spin, size, cam, light) {
   const cutout = d && d.layer === LAYER.CUTOUT;
   // tint flags understood by the entity shader
   const flag = cutout ? (tinted ? -3 : -2) : tinted ? -1 : 0;
-  const m = mat(0, spin, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2], size);
   const X = [-0.5, 0.5];
-  for (const f of ['front', 'back', 'right', 'left', 'top', 'bottom']) {
+  for (const f of FACES) {
     const nrm = applyN(m, ...NORMALS[f]);
     const layer = layers[f] ?? side;
     const uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
@@ -498,9 +791,33 @@ export function emitBlockCube(out, o, blockId, pos, spin, size, cam, light) {
   return o;
 }
 
+// A torch or a plant held in the hand: its block texture on a flat card (mode 1, cut out).
+export function emitBlockSpriteM(out, o, blockId, m, light) {
+  const d = BLOCKS[blockId];
+  const layer = FACE_TEX[blockId * 4 + 2];
+  const tinted = d && d.tint && d.tint !== TINT.WATER;
+  const tint = tinted ? (d.tint === TINT.GRASS ? [0.5, 0.76, 0.33] : [0.42, 0.7, 0.27]) : [1, 1, 1];
+  const pts = [[-0.5, 1, 0], [0.5, 1, 0], [0.5, 0, 0], [-0.5, 0, 0]];
+  const uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const nrm = applyN(m, 0, 0, 1);
+  for (const qi of QUAD) {
+    const p = apply(m, ...pts[qi]);
+    out[o++] = p[0]; out[o++] = p[1]; out[o++] = p[2];
+    out[o++] = nrm[0]; out[o++] = nrm[1]; out[o++] = nrm[2];
+    out[o++] = uv[qi][0]; out[o++] = uv[qi][1];
+    out[o++] = layer; out[o++] = light[0]; out[o++] = light[1]; out[o++] = 1;
+    out[o++] = tint[0]; out[o++] = tint[1]; out[o++] = tint[2]; out[o++] = tinted ? -3 : -2;
+  }
+  return o;
+}
+
 // A flat, double-sided item sprite (mode 2 = item sprite array) standing upright and spinning.
 export function emitSprite(out, o, layer, pos, spin, size, cam, light) {
-  const m = mat(0, spin, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2], size);
+  return emitSpriteM(out, o, layer, mat(0, spin, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2], size), light);
+}
+
+// The sprite through any matrix: x -0.5..0.5, y 0..1 (the top of the image) in the z = 0 plane.
+export function emitSpriteM(out, o, layer, m, light) {
   const pts = [[-0.5, 1, 0], [0.5, 1, 0], [0.5, 0, 0], [-0.5, 0, 0]];
   const uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
   const nrm = applyN(m, 0, 0, 1);
@@ -519,11 +836,10 @@ export function emitSprite(out, o, layer, pos, spin, size, cam, light) {
 export function emitArrow(out, o, pos, dir, cam, light, skins) {
   const yaw = Math.atan2(-dir[0], -dir[2]);
   const pitch = Math.atan2(dir[1], Math.hypot(dir[0], dir[2]));
-  const e = { id: 0 };
-  void e;
   const model = MODELS.arrow;
   const layer = skins.layerOf.arrow;
-  const root = mul(mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]), mat(-pitch, 0, 0, 0, 0, 0, 1 / 16));
+  // the tip is at -Z: a positive rotation about X lifts it for an arrow going up
+  const root = mul(mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]), mat(pitch, 0, 0, 0, 0, 0, 1 / 16));
   for (const [name, , box] of model.parts) {
     const [x0, y0, z0, w, h, d] = box;
     const X = [x0, x0 + w], Y = [y0, y0 + h], Z = [z0, z0 + d];

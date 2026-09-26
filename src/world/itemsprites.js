@@ -1,7 +1,8 @@
 // 16x16 pixel-art sprites for non-block items (tools, weapons, food, materials). Used for the
 // interface icons and, as a texture array, for held and dropped items in the world.
 
-import { ITEMS } from '../sim/items.js';
+import { ITEMS, ARMOR_PIECES } from '../sim/items.js';
+import { WOOL_COLORS } from './blocks.js';
 
 const S = 16;
 
@@ -44,11 +45,16 @@ class Sprite {
 }
 
 const shade = (c, k) => c.map((v) => Math.max(0, Math.min(255, v * k)));
+// tool and armour materials: [light, dark]
 const TIER = {
-  1: [[178, 136, 78], [124, 92, 50]], // wood
-  2: [[150, 150, 150], [98, 98, 100]], // stone
-  3: [[226, 226, 230], [160, 160, 168]], // iron
-  4: [[110, 236, 226], [40, 160, 160]], // diamond
+  wooden: [[178, 136, 78], [124, 92, 50]],
+  stone: [[150, 150, 150], [98, 98, 100]],
+  iron: [[226, 226, 230], [160, 160, 168]],
+  golden: [[255, 226, 80], [212, 150, 30]],
+  diamond: [[110, 236, 226], [40, 160, 160]],
+  netherite: [[98, 88, 92], [56, 48, 52]],
+  leather: [[176, 110, 66], [118, 70, 38]],
+  chainmail: [[176, 176, 184], [104, 104, 112]],
 };
 const WOOD = [150, 108, 60], WOOD_D = [104, 74, 40];
 
@@ -125,8 +131,8 @@ function drumstick(s, meatCol) {
   s.outline([90, 50, 30]);
 }
 
-function tool(kind, tier) {
-  const [c, cd] = TIER[tier];
+function tool(kind, material) {
+  const [c, cd] = TIER[material];
   return (s) => {
     if (kind === 'sword') {
       s.line(5, 10, 12, 3, c);
@@ -146,16 +152,74 @@ function tool(kind, tier) {
       handle(s, 3, 13, 9, 7);
       s.rect(9, 3, 4, 4, (i, j) => (i + j < 3 ? c : cd));
       s.set(13, 3, cd);
+    } else if (kind === 'hoe') {
+      handle(s, 3, 13, 11, 5);
+      s.rect(8, 3, 4, 2, (i, j) => (j === 0 ? c : cd));
+      s.set(7, 4, cd);
     }
     s.outline();
   };
 }
-for (const [name, kind] of [['sword', 'sword'], ['pickaxe', 'pickaxe'], ['axe', 'axe'], ['shovel', 'shovel']]) {
-  DRAW['wooden_' + name] = tool(kind, 1);
-  DRAW['stone_' + name] = tool(kind, 2);
-  DRAW['iron_' + name] = tool(kind, 3);
-  DRAW['diamond_' + name] = tool(kind, 4);
+for (const mat of ['wooden', 'stone', 'iron', 'golden', 'diamond', 'netherite']) {
+  for (const kind of ['sword', 'pickaxe', 'axe', 'shovel', 'hoe']) DRAW[mat + '_' + kind] = tool(kind, mat);
 }
+
+// armour: helmet, chestplate, leggings and boots as flat front views
+function armor(piece, material) {
+  const [c, cd] = TIER[material];
+  const hi = shade(c, 1.15);
+  return (s) => {
+    if (piece === 'helmet') {
+      s.rect(3, 4, 10, 3, (i, j) => (j === 0 ? hi : c));
+      s.rect(3, 7, 2, 4, cd); s.rect(11, 7, 2, 4, cd);
+    } else if (piece === 'chestplate') {
+      s.rect(2, 3, 4, 3, c); s.rect(10, 3, 4, 3, c);
+      s.rect(4, 5, 8, 9, (i, j) => (i === 0 || j === 0 ? hi : (i + j) % 5 === 0 ? cd : c));
+      s.rect(6, 3, 4, 2, [0, 0, 0]); s.rect(6, 3, 4, 2, c);
+      for (let x = 6; x < 10; x++) s.set(x, 3, [0, 0, 0]), s.px[(3 * 16 + x) * 4 + 3] = 0;
+    } else if (piece === 'leggings') {
+      s.rect(4, 3, 8, 3, (i, j) => (j === 0 ? hi : c));
+      s.rect(4, 6, 3, 8, (i, j) => (i === 0 ? hi : c)); s.rect(9, 6, 3, 8, (i, j) => (i === 2 ? cd : c));
+    } else {
+      s.rect(3, 8, 3, 4, c); s.rect(10, 8, 3, 4, c);
+      s.rect(2, 11, 5, 3, (i, j) => (j === 0 ? hi : cd)); s.rect(9, 11, 5, 3, (i, j) => (j === 0 ? hi : cd));
+    }
+    if (material === 'chainmail') for (let y = 0; y < 16; y++) for (let x = (y % 2); x < 16; x += 2) { const i = (y * 16 + x) * 4; if (s.px[i + 3]) s.set(x, y, shade(cd, 0.8)); }
+    s.outline([30, 26, 24]);
+  };
+}
+for (const mat of ['leather', 'chainmail', 'iron', 'golden', 'diamond', 'netherite']) {
+  for (const piece of ARMOR_PIECES) DRAW[mat + '_' + piece] = armor(piece, mat);
+}
+
+// beds: a blanket of the bed's colour, a white pillow, wooden legs
+for (const [color, hexc] of WOOL_COLORS) {
+  const v = parseInt(hexc.slice(1), 16);
+  const wool = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  DRAW[color + '_bed'] = (s) => {
+    s.rect(1, 7, 14, 4, (i, j) => (j === 0 ? shade(wool, 1.15) : wool));
+    s.rect(1, 6, 4, 2, [236, 236, 230]);
+    s.rect(1, 11, 14, 1, [150, 108, 60]);
+    s.rect(1, 12, 2, 2, WOOD_D); s.rect(13, 12, 2, 2, WOOD_D);
+    s.outline([30, 22, 16]);
+  };
+}
+
+Object.assign(DRAW, {
+  flint_and_steel: (s) => {
+    s.rect(3, 3, 5, 3, [200, 200, 206]); s.rect(3, 6, 2, 5, [170, 170, 176]); // the steel striker
+    s.rect(9, 8, 5, 5, (i, j) => (i + j < 5 ? [86, 86, 94] : [48, 48, 54])); // the flint
+    s.outline([20, 20, 22]);
+  },
+  netherite_scrap: (s) => { s.rect(4, 5, 8, 7, (i, j) => ((i * 3 + j * 5) % 4 ? [96, 70, 62] : [64, 46, 40])); s.set(4, 5, [0, 0, 0], 0); s.set(11, 11, [0, 0, 0], 0); s.outline([30, 20, 18]); },
+  netherite_ingot: (s) => ingot(s, [100, 90, 94], [58, 50, 54]),
+  quartz: (s) => { gem(s, [244, 240, 232], [196, 184, 170]); },
+  blaze_rod: (s) => { s.line(4, 13, 11, 3, [255, 210, 60]); s.line(5, 13, 12, 3, [220, 150, 30]); s.set(11, 3, [255, 250, 180]); s.outline([110, 60, 10]); },
+  blaze_powder: (s) => { s.disc(8, 10, 4, (x, y) => ((x * 7 + y * 3) % 5 === 0 ? [255, 240, 120] : [240, 160, 40])); s.disc(8, 7.5, 2.4, [255, 200, 70]); s.outline([120, 60, 10]); },
+  gold_nugget: (s) => { s.disc(7, 9, 2.6, [255, 226, 80]); s.disc(10, 7, 1.8, [236, 190, 50]); s.set(6, 8, [255, 250, 190]); s.outline([110, 80, 20]); },
+  ender_pearl: (s) => { s.disc(8, 8, 4.6, (x, y) => (x + y < 13 ? [40, 140, 120] : [16, 80, 70])); s.disc(8, 8, 1.8, [120, 230, 200]); s.set(6, 6, [200, 255, 240]); s.outline([6, 30, 26]); },
+  eye_of_ender: (s) => { s.disc(8, 8, 4.6, (x, y) => (x + y < 13 ? [110, 190, 90] : [50, 120, 60])); s.rect(7, 5, 2, 6, [20, 40, 20]); s.set(6, 6, [220, 255, 200]); s.outline([10, 30, 12]); },
+});
 
 // { key -> layer index }, and RGBA pixels for every item layer (16x16 each)
 export function buildItemSprites() {

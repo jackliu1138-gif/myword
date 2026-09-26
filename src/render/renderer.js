@@ -58,7 +58,7 @@ export class Renderer {
     this.time = 0;
     this.stats = { draws: 0, tris: 0, chunks: 0, shadowChunks: 0 };
     this.emptyVao = gl.createVertexArray();
-    this.ubo = new UniformBuffer(gl, 196, 0);
+    this.ubo = new UniformBuffer(gl, 204, 0);
     this.indexBuffer = createQuadIndices(gl, MAX_QUADS);
     this.frustum = new Frustum();
     this.shadowFrustum = new Frustum();
@@ -690,6 +690,17 @@ export class Renderer {
       for (let i = 0; i < 3; i++) L.skySide[i] += (L.skyUp[i] * 0.85 - L.skySide[i]) * rainAmt;
       grey(L.ground, rainAmt * 0.6, 1 - 0.3 * rainAmt);
     }
+    // the nether and the end: no sun or moon, a constant light and a coloured haze instead
+    const dim = state.dimension || 0;
+    const DIM = [null, { amb: [0.2, 0.085, 0.06], sky: [0.05, 0.022, 0.02], fog: [0.085, 0.022, 0.015] }, { amb: [0.05, 0.045, 0.06], sky: [0.34, 0.3, 0.42], fog: [0.028, 0.022, 0.042] }][dim];
+    if (DIM) {
+      L.lightColor = [0, 0, 0];
+      L.skyUp = DIM.sky.slice();
+      L.skySide = DIM.sky.map((v) => v * 0.8);
+      L.ground = DIM.sky.map((v) => v * 0.4);
+      L.night = 0;
+      L.fadeSun = L.fadeMoon = 0;
+    }
     this.light = L;
     // shadow matrix: orthographic around the (snapped) camera, looking along -light
     const R = s.shadowDistance;
@@ -746,6 +757,8 @@ export class Renderer {
     v4(188, s.shadows ? 1 : 0, s.pcf, s.volSteps || 1, s.cloudSteps || 1);
     const wx = state.weather || {};
     v4(192, wx.rain || 0, wx.wetness || 0, wx.flash || 0, wx.snow ? 1 : 0);
+    v4(196, dim, DIM ? DIM.amb[0] : 0, DIM ? DIM.amb[1] : 0, DIM ? DIM.amb[2] : 0);
+    v4(200, DIM ? DIM.fog[0] : 0, DIM ? DIM.fog[1] : 0, DIM ? DIM.fog[2] : 0, 0);
     this.ubo.upload();
   }
 
@@ -789,6 +802,14 @@ export class Renderer {
 
   // ------------------------------------------------------------------ the frame
   render(state, dt) {
+    // no sun (so no shadows or god rays) and no clouds outside the overworld
+    if (state.dimension && !this.dimSettings) {
+      const saved = this.settings;
+      this.settings = { ...saved, shadows: false, clouds: false, volumetric: false, ssr: saved.ssr };
+      this.dimSettings = true;
+      try { this.render(state, dt); } finally { this.settings = saved; this.dimSettings = false; }
+      return;
+    }
     const gl = this.gl;
     const s = this.settings;
     this.time += dt;
@@ -1180,7 +1201,10 @@ export class Renderer {
     const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
     const sky = state.eyeSky ?? 1;
     const elev = Math.max(0, L.light[1]);
-    const env = (lum(L.lightColor) * (0.25 + 0.75 * elev) + lum(L.skyUp) * 2.5) * sky * sky;
+    let env = (lum(L.lightColor) * (0.25 + 0.75 * elev) + lum(L.skyUp) * 2.5) * sky * sky;
+    // the nether's glow and the end's pale light: keep them dim and moody, not washed out
+    if (state.dimension === 1) env += 3.0;
+    else if (state.dimension === 2) env += 1.0;
     const torch = Math.pow(state.eyeBlock ?? 0, 2.6) * 10;
     return 10.0 / (env + torch + 0.03);
   }

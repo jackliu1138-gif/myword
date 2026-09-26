@@ -126,3 +126,76 @@ test('the server serves the game but not its own data', async () => {
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('everyone in the overworld asleep skips the night; each dimension keeps its own edits', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'lumen-'));
+  const open = [];
+  let srv = null;
+  try {
+    srv = startServer({ port: 0, dataDir, seed: 'beds', quiet: true });
+    const port = await srv.ready;
+    const a = client(port), b = client(port);
+    open.push(a, b);
+    await a.send({ t: 'hello', n: 'Ann', v: PROTOCOL });
+    const wa = await a.next('welcome');
+    assert.deepEqual(wa.dimEdits, { 1: {}, 2: {} });
+    await b.send({ t: 'hello', n: 'Ben', v: PROTOCOL });
+    await b.next('welcome');
+    await a.send({ t: 'st', p: [0, 70, 0], y: 0, pi: 0, h: 0, f: 0 });
+    await b.send({ t: 'st', p: [5, 70, 0], y: 0, pi: 0, h: 0, f: 0, a: [329, 0, 0, 336] });
+    const st = await a.next('st');
+    assert.deepEqual(st.a, [329, 0, 0, 336], 'armour is passed on');
+    // one of two in bed: nothing happens yet
+    await a.send({ t: 'sleep', on: true });
+    const s1 = await b.next('sleepers');
+    assert.deepEqual([s1.n, s1.m], [1, 2]);
+    // someone in the nether does not count
+    await b.send({ t: 'st', p: [5, 70, 0], y: 0, pi: 0, h: 0, f: 0, d: 1 });
+    let s2 = await a.next('sleepers');
+    while (s2.m !== 1) s2 = await a.next('sleepers');
+    assert.deepEqual([s2.n, s2.m], [1, 1]);
+    const wake = await a.next('wake', 6000);
+    assert.equal(wake.skip, true);
+    // (a regular clock update may still be queued before the skip)
+    let time = await a.next('time');
+    while (time.d >= 0.01) time = await a.next('time');
+    assert.ok(time.d < 0.01);
+    // edits in the nether reach others with their dimension, and are stored apart
+    await b.send({ t: 'b', l: [[1, 40, 1, 38]], d: 1 });
+    const e1 = await a.next('b');
+    assert.equal(e1.d, 1);
+    await a.send({ t: 'b', l: [[2, 60, 2, 4]] });
+    const e0 = await b.next('b');
+    assert.equal(e0.d, undefined);
+    // the first player in the End runs its dragon
+    await b.send({ t: 'st', p: [100, 49, 0], y: 0, pi: 0, h: 0, f: 0, d: 2 });
+    let host = await a.next('endHost');
+    assert.equal(host.id, (await b.next('endHost')).id);
+    await b.send({ t: 'end', s: { dragonDead: true, dragonHp: 0, crystals: new Array(10).fill(false), portalOpen: true }, slain: true });
+    const end = await a.next('end');
+    assert.equal(end.s.dragonDead, true);
+    assert.equal((await a.next('ev')).k, 'dragon');
+    b.close();
+    host = await a.next('endHost');
+    assert.equal(host.id, null, 'nobody left in the End');
+    a.close();
+    await srv.stop();
+    srv = null;
+    // restart: the nether's edit and the End's state come back
+    srv = startServer({ port: 0, dataDir, quiet: true });
+    const c = client(await srv.ready);
+    open.push(c);
+    await c.send({ t: 'hello', n: 'Cat', v: PROTOCOL });
+    const wc = await c.next('welcome');
+    assert.equal(Object.values(wc.dimEdits[1]).flat().length, 2);
+    assert.equal(Object.values(wc.edits).flat().length, 2);
+    assert.equal(wc.endState.dragonDead, true);
+    c.close();
+    await srv.stop();
+    srv = null;
+  } finally {
+    for (const c of open) c.close();
+    if (srv) await srv.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

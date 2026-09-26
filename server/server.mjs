@@ -17,7 +17,7 @@ import { extname, join, normalize, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { acceptUpgrade } from './ws.mjs';
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2; // 2: beds, armour, the nether and the end (new block and item ids)
 const here = dirname(fileURLToPath(import.meta.url));
 
 function loadConfig(overrides = {}) {
@@ -79,7 +79,8 @@ export function startServer(overrides = {}) {
   const cfg = loadConfig(overrides);
   const log = (...a) => { if (!cfg.quiet) console.log(new Date().toISOString().slice(0, 19).replace('T', ' '), ...a); };
   const worldFile = join(cfg.dataDir, 'world.json');
-  const world = { seed: 0, dayTime: 0.06, dayCount: 0, edits: new Map(), players: {} };
+  // edits: the overworld's; dimEdits: the nether's (1) and the end's (2)
+  const world = { seed: 0, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {} };
   let dirty = false;
   let nextId = 1;
   const clients = new Map();
@@ -92,12 +93,18 @@ export function startServer(overrides = {}) {
       world.dayTime = num(d.dayTime, 0, 1, 0.06);
       world.dayCount = d.dayCount | 0;
       world.players = d.players && typeof d.players === 'object' ? d.players : {};
-      for (const k of Object.keys(d.edits || {})) {
-        const arr = d.edits[k];
-        const m = new Map();
-        for (let i = 0; i + 1 < arr.length; i += 2) m.set(arr[i], arr[i + 1]);
-        world.edits.set(Number(k), m);
-      }
+      const readEdits = (obj, into) => {
+        for (const k of Object.keys(obj || {})) {
+          const arr = obj[k];
+          const m = new Map();
+          for (let i = 0; i + 1 < arr.length; i += 2) m.set(arr[i], arr[i + 1]);
+          into.set(Number(k), m);
+        }
+      };
+      readEdits(d.edits, world.edits);
+      readEdits(d.dimEdits && d.dimEdits[1], world.dimEdits[1]);
+      readEdits(d.dimEdits && d.dimEdits[2], world.dimEdits[2]);
+      world.endState = d.endState && typeof d.endState === 'object' ? d.endState : null;
       log(`world loaded: seed ${world.seed}, ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players`);
     } catch (e) {
       world.seed = seedFromString(cfg.seed);
@@ -106,11 +113,12 @@ export function startServer(overrides = {}) {
     }
   }
 
-  function serializeEdits() {
+  function serializeEdits(edits = world.edits) {
     const out = {};
-    for (const [k, m] of world.edits) out[k] = Array.from(m.entries()).flat();
+    for (const [k, m] of edits) out[k] = Array.from(m.entries()).flat();
     return out;
   }
+  const serializeDimEdits = () => ({ 1: serializeEdits(world.dimEdits[1]), 2: serializeEdits(world.dimEdits[2]) });
 
   let saving = null;
   async function saveWorld() {
@@ -118,7 +126,10 @@ export function startServer(overrides = {}) {
     const job = (async () => {
       dirty = false;
       await mkdir(cfg.dataDir, { recursive: true });
-      const body = JSON.stringify({ version: 1, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(), players: world.players });
+      const body = JSON.stringify({
+        version: 1, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(),
+        dimEdits: serializeDimEdits(), endState: world.endState, players: world.players,
+      });
       const tmp = worldFile + '.tmp';
       await writeFile(tmp, body);
       await rename(tmp, worldFile);
@@ -127,11 +138,12 @@ export function startServer(overrides = {}) {
     try { await job; } catch (e) { dirty = true; console.error('saving the world failed:', e.message); } finally { if (saving === job) saving = null; }
   }
 
-  function applyEdit(x, y, z, b) {
+  function applyEdit(x, y, z, b, d = 0) {
+    const edits = d === 1 || d === 2 ? world.dimEdits[d] : world.edits;
     const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
     const k = chunkKey(cx, cz);
-    let m = world.edits.get(k);
-    if (!m) { m = new Map(); world.edits.set(k, m); }
+    let m = edits.get(k);
+    if (!m) { m = new Map(); edits.set(k, m); }
     m.set((y << 8) | ((z - cz * 16) << 4) | (x - cx * 16), b);
     dirty = true;
   }
@@ -164,11 +176,48 @@ export function startServer(overrides = {}) {
   }
   const byId = (id) => { const c = clients.get(String(id)); return c && c.ready ? c : null; };
 
+  // ------------------------------------------------------------------ sleeping and the End
+  // The night is skipped once everyone in the overworld is in bed.
+  let sleepTimer = null;
+  function checkSleep() {
+    const ow = [...clients.values()].filter((o) => o.ready && !(o.state && o.state.d));
+    const n = ow.filter((o) => o.sleeping).length;
+    broadcast({ t: 'sleepers', n, m: ow.length });
+    if (n > 0 && n === ow.length) {
+      if (!sleepTimer) {
+        sleepTimer = setTimeout(() => {
+          sleepTimer = null;
+          const still = [...clients.values()].filter((o) => o.ready && !(o.state && o.state.d));
+          if (!still.length || !still.every((o) => o.sleeping)) return;
+          if (world.dayTime > 0.3) world.dayCount++;
+          world.dayTime = 0.002;
+          dirty = true;
+          for (const o of still) o.sleeping = false;
+          broadcast({ t: 'time', d: world.dayTime, n: world.dayCount });
+          broadcast({ t: 'wake', skip: true });
+          log('everyone slept: morning');
+        }, 2600);
+      }
+    } else if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
+  }
+
+  // One player in the End runs its dragon (the first to arrive); another takes over if they leave.
+  let endHost = null;
+  function checkEndHost() {
+    const inEnd = [...clients.values()].filter((o) => o.ready && o.state && o.state.d === 2);
+    const next = inEnd.some((o) => o.id === endHost) ? endHost : inEnd.length ? inEnd[0].id : null;
+    if (next !== endHost) {
+      endHost = next;
+      broadcast({ t: 'endHost', id: endHost });
+    }
+  }
+
   function welcome(c, hello) {
     const saved = world.players[c.key] || null;
     const msg = {
       t: 'welcome', v: PROTOCOL, id: c.id, name: cfg.name, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount,
-      dayLength: cfg.dayLength, mode: cfg.mode, difficulty: cfg.difficulty, edits: serializeEdits(), me: saved,
+      dayLength: cfg.dayLength, mode: cfg.mode, difficulty: cfg.difficulty, edits: serializeEdits(), dimEdits: serializeDimEdits(),
+      endState: world.endState, endHost, me: saved,
       players: [...clients.values()].filter((o) => o.ready && o !== c).map((o) => ({ id: o.id, n: o.name, st: o.state, voice: o.voice })),
       ice: iceServersFor(c.id),
     };
@@ -210,11 +259,34 @@ export function startServer(overrides = {}) {
         const p = Array.isArray(m.p) ? m.p.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : null;
         if (!p) return;
         c.state = { p, y: num(m.y, -100, 100), pi: num(m.pi, -2, 2), h: int(m.h) || 0, f: int(m.f) || 0 };
+        if (Array.isArray(m.a)) c.state.a = m.a.slice(0, 4).map((v) => int(v) || 0);
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        if (d) c.state.d = d;
         broadcast({ t: 'st', id: c.id, ...c.state }, c, true);
+        if ((c.lastDim || 0) !== d) { c.lastDim = d; c.sleeping = false; checkEndHost(); checkSleep(); }
         break;
       }
-      case 'b': { // block edits [[x, y, z, id], ...]
+      case 'sleep':
+        c.sleeping = !!m.on;
+        checkSleep();
+        break;
+      case 'end': { // the End's dragon and crystals, from whoever runs them
+        const st = m.s;
+        if (!st || typeof st !== 'object' || !Array.isArray(st.crystals)) return;
+        world.endState = {
+          dragonDead: !!st.dragonDead || !!(world.endState && world.endState.dragonDead),
+          dragonHp: num(st.dragonHp, 0, 200, 200),
+          crystals: st.crystals.slice(0, 10).map((v) => !!v),
+          portalOpen: !!st.portalOpen || !!(world.endState && world.endState.portalOpen),
+        };
+        dirty = true;
+        broadcast({ t: 'end', s: world.endState, slain: !!m.slain }, c);
+        if (m.slain) { broadcast({ t: 'ev', id: c.id, n: c.name, k: 'dragon', s: '' }); log(`${c.name} slew the ender dragon`); }
+        break;
+      }
+      case 'b': { // block edits [[x, y, z, id], ...] in dimension d
         if (!Array.isArray(m.l)) return;
+        const dim = m.d === 1 || m.d === 2 ? m.d : 0;
         const now = Date.now();
         if (now - c.editWindow > 1000) { c.editWindow = now; c.editCount = 0; }
         const out = [];
@@ -223,11 +295,11 @@ export function startServer(overrides = {}) {
           const [x, y, z, b] = e;
           if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z) || !Number.isInteger(b)) continue;
           if (y < 0 || y > 127 || b < 0 || b > 255 || Math.abs(x) > 5e5 || Math.abs(z) > 5e5) continue;
-          applyEdit(x, y, z, b);
+          applyEdit(x, y, z, b, dim);
           out.push([x, y, z, b]);
           c.editCount++;
         }
-        if (out.length) broadcast({ t: 'b', id: c.id, l: out }, c);
+        if (out.length) broadcast(dim ? { t: 'b', id: c.id, l: out, d: dim } : { t: 'b', id: c.id, l: out }, c);
         break;
       }
       case 'm': // creature snapshots from the client that simulates them
@@ -281,6 +353,8 @@ export function startServer(overrides = {}) {
     clients.delete(c.id);
     if (!c.ready) return;
     broadcast({ t: 'leave', id: c.id });
+    checkEndHost();
+    checkSleep();
     log(`${c.name} left (${[...clients.values()].filter((o) => o.ready).length} online)`);
     dirty = true;
   }

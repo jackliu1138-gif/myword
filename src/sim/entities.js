@@ -30,6 +30,25 @@ export const MOBS = {
   pig: { hw: 0.45, h: 0.9, eye: 0.8, health: 10, speed: 1.3, drops: [[ITEM.RAW_PORKCHOP, 1, 3]] },
   sheep: { hw: 0.45, h: 1.3, eye: 1.2, health: 8, speed: 1.3, drops: [[ITEM.RAW_MUTTON, 1, 2], ['wool', 1, 1]] },
   chicken: { hw: 0.2, h: 0.7, eye: 0.6, health: 4, speed: 1.2, flutter: true, drops: [[ITEM.RAW_CHICKEN, 1, 1], [ITEM.FEATHER, 0, 2]] },
+  // the Nether and the End (appended: snapshots send the type's index)
+  zombified_piglin: {
+    neutral: true, hw: 0.3, h: 1.9, eye: 1.7, health: 20, speed: 1.6, chase: 3.0, damage: 5, reach: 1.25, follow: 32,
+    held: ITEM.GOLDEN_SWORD, fireproof: true, drops: [[ITEM.ROTTEN_FLESH, 0, 1], [ITEM.GOLD_NUGGET, 0, 1], [ITEM.GOLD_INGOT, 0, 0.05]], xp: 5,
+  },
+  blaze: {
+    hostile: true, hw: 0.3, h: 1.8, eye: 1.5, health: 20, speed: 1.3, chase: 1.8, flies: 'hover', follow: 32, fireproof: true,
+    drops: [[ITEM.BLAZE_ROD, 0, 1]], xp: 10,
+  },
+  ghast: {
+    hostile: true, hw: 2, h: 4, eye: 2.6, health: 10, speed: 1.4, flies: 'float', follow: 64, fireproof: true,
+    drops: [[ITEM.GUNPOWDER, 0, 2]], xp: 5,
+  },
+  enderman: {
+    neutral: true, hw: 0.3, h: 2.9, eye: 2.55, health: 40, speed: 1.8, chase: 4.4, damage: 7, reach: 1.4, follow: 48,
+    teleports: true, drops: [[ITEM.ENDER_PEARL, 0, 1]], xp: 5,
+  },
+  ender_dragon: { hostile: true, boss: true, hw: 3, h: 3, eye: 1.5, health: 200, damage: 10, follow: 220, fireproof: true, drops: [], xp: 500 },
+  end_crystal: { hw: 1, h: 2, eye: 1, health: 1, fixed: true, fireproof: true, drops: [] },
 };
 
 export const HOSTILE_TYPES = ['zombie', 'creeper', 'skeleton', 'spider'];
@@ -114,9 +133,73 @@ export class Mob extends Entity {
       this.body.vel[2] += (dz / l) * 6 * knock;
       this.body.vel[1] = Math.max(this.body.vel[1], 4.5 * knock);
     }
-    if (!this.hostile) { this.panic = 5; this.path = null; }
+    if (!this.hostile && !this.def.neutral && !this.def.fixed) { this.panic = 5; this.path = null; }
     if (this.health <= 0) { this.deathTime = 0.001; this.sim.onMobDeath(this); }
+    else if (this.def.teleports && Math.random() < 0.7) this.teleportAway();
     return true;
+  }
+
+  // Endermen blink to a random spot nearby when hurt.
+  teleportAway() {
+    const b = this.body;
+    for (let i = 0; i < 16; i++) {
+      const x = Math.floor(b.pos[0] + (rnd() - 0.5) * 24), z = Math.floor(b.pos[2] + (rnd() - 0.5) * 24);
+      let y = Math.floor(b.pos[1] + (rnd() - 0.5) * 12);
+      for (let k = 0; k < 12; k++, y--) {
+        if (this.sim.standable(x, y, z, 3)) {
+          this.sim.emit({ type: 'sound', name: 'teleport', pos: b.pos.slice() });
+          b.pos = [x + 0.5, y, z + 0.5];
+          this.prevPos = b.pos.slice();
+          b.vel = [0, 0, 0];
+          this.path = null;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Flying creatures: ghasts drift and shoot fireballs from afar; blazes hover near the target
+  // and fire bursts of small fireballs.
+  flyTowards(tp, dist, sees) {
+    const d = this.def, b = this.body;
+    this.faceTowards(tp[0], tp[2], 6);
+    const ghast = this.type === 'ghast';
+    const wantDist = ghast ? 18 : 7;
+    const wantY = tp[1] + (ghast ? 6 : 2.5);
+    let wish = [0, 0];
+    if (dist > wantDist + 3 || !sees) wish = this.walkTowards(tp[0], tp[2], d.speed * 1.4);
+    else if (dist < wantDist - 3) wish = this.walkTowards(b.pos[0] * 2 - tp[0], b.pos[2] * 2 - tp[2], d.speed);
+    b.vel[1] += (Math.max(-2, Math.min(2, (wantY - b.pos[1]) * 0.8)) - b.vel[1]) * 0.1;
+    this.shootTime -= TICK;
+    if (sees && dist < (ghast ? 52 : 26) && this.shootTime <= 0) {
+      if (ghast) { this.shootTime = 3 + rnd() * 1.5; this.sim.mobFireball(this, this.target, false); }
+      else {
+        this.burst = 3;
+        this.shootTime = 4 + rnd() * 1.5;
+      }
+    }
+    if (this.burst > 0 && (this.burstTimer = (this.burstTimer || 0) - TICK) <= 0) {
+      this.burst--;
+      this.burstTimer = 0.3;
+      this.sim.mobFireball(this, this.target, true);
+    }
+    return { wish, jump: false };
+  }
+
+  flyIdle() {
+    const d = this.def, b = this.body;
+    this.modeTime -= TICK;
+    if (!this.goal || this.modeTime <= 0 || b.hitWall) {
+      const a = rnd() * Math.PI * 2, r = 4 + rnd() * (this.type === 'ghast' ? 20 : 6);
+      const floor = this.sim.world.surfaceBelow ? this.sim.world.surfaceBelow(b.pos[0], b.pos[1], b.pos[2]) : b.pos[1] - 3;
+      const y = this.type === 'ghast' ? b.pos[1] + (rnd() - 0.5) * 10 : floor + 1.5 + rnd() * 2;
+      this.goal = [b.pos[0] + Math.cos(a) * r, Math.max(8, Math.min(118, y)), b.pos[2] + Math.sin(a) * r];
+      this.modeTime = 3 + rnd() * 4;
+    }
+    this.mode = 'idle';
+    b.vel[1] += (Math.max(-1.5, Math.min(1.5, (this.goal[1] - b.pos[1]) * 0.5)) - b.vel[1]) * 0.08;
+    return { wish: this.walkTowards(this.goal[0], this.goal[2], d.speed), jump: false };
   }
 
   // Steering helpers --------------------------------------------------------
@@ -174,8 +257,15 @@ export class Mob extends Entity {
     let wish = null, jump = false;
     if (this.deathTime > 0) return { wish: null, jump: false };
 
-    if (this.hostile) {
-      const t = this.sim.nearestTarget(this, d.follow);
+    if (this.hostile || this.angryAt) {
+      let t;
+      if (d.neutral) {
+        // neutral creatures only go after whoever angered them, while they stay close
+        const a = this.angryAt;
+        const ok = a && !a.dead && a.mode !== 'creative' && Math.hypot(a.pos[0] - b.pos[0], a.pos[2] - b.pos[2]) < d.follow && this.sim.players.get(a.id) === a;
+        t = ok ? a : null;
+        if (!ok) this.angryAt = null;
+      } else t = this.sim.nearestTarget(this, d.follow);
       this.target = t;
       if (t) {
         const tp = t.pos;
@@ -185,6 +275,11 @@ export class Mob extends Entity {
         if (sees) this.lastSeen = 0; else this.lastSeen += TICK;
         this.headYaw = this.yaw;
         this.headPitch = Math.atan2(tp[1] + 1.5 - (b.pos[1] + d.eye), Math.max(dist, 0.1)) * 0.8;
+        if (d.flies) {
+          ({ wish, jump } = this.flyTowards(tp, dist, sees));
+          this.mode = 'chase';
+          return { wish, jump };
+        }
         if (this.type === 'creeper') {
           if (dist < 3 && sees) { this.fuse += TICK; wish = [0, 0]; this.faceTowards(tp[0], tp[2]); }
           else {
@@ -237,6 +332,7 @@ export class Mob extends Entity {
       this.fuse = Math.max(0, this.fuse - TICK);
     }
 
+    if (d.flies) return this.flyIdle();
     // animals and idle monsters: wander, graze, panic when hurt
     if (this.panic > 0) {
       this.panic -= TICK;
@@ -299,6 +395,8 @@ export class Mob extends Entity {
       if (this.deathTime > 1.0) this.removed = true;
       return;
     }
+    if (this.def.fixed) { this.walkAmount = 0; return; }
+    b.gravity = this.def.flies ? 0 : 28;
     const { wish, jump } = this.think(env);
     if (!this.hostile || this.mode !== 'chase') {
       // the head follows the body when nothing holds its attention
@@ -306,9 +404,9 @@ export class Mob extends Entity {
       this.headYaw += dd * 0.15;
       this.headPitch *= 0.9;
     }
-    const landed = b.step(TICK, wish, jump, { swim: true, jumpV: this.type === 'spider' ? 7 : 8.4 });
+    const landed = b.step(TICK, wish, jump, { swim: !this.def.flies, jumpV: this.type === 'spider' ? 7 : 8.4 });
     if (this.def.flutter && !b.onGround && b.vel[1] < -2) b.vel[1] = -2; // chickens glide down
-    else if (landed > 3.5 && !this.def.flutter) this.hurt(Math.floor(landed - 3), null);
+    else if (landed > 3.5 && !this.def.flutter && !this.def.flies) this.hurt(Math.floor(landed - 3), null);
     const hs = Math.hypot(b.vel[0], b.vel[2]);
     this.walkAmount += ((b.onGround || b.inWater ? Math.min(1, hs / 2.5) : 0) - this.walkAmount) * 0.3;
     this.walkPhase += hs * TICK * 2.6;
@@ -318,7 +416,9 @@ export class Mob extends Entity {
       if (sl >= 14) this.burning = Math.max(this.burning, 3);
     }
     if (b.inWater) this.burning = 0;
-    if (b.inLava) { this.burning = 8; if (this.age % 0.5 < TICK) this.hurt(4, null, 0.1); }
+    if (b.inWater && this.def.teleports && this.age % 1 < TICK) this.teleportAway();
+    if (b.inLava && !this.def.fireproof) { this.burning = 8; if (this.age % 0.5 < TICK) this.hurt(4, null, 0.1); }
+    if (this.def.fireproof) this.burning = 0;
     if (this.burning > 0) {
       this.burning -= TICK;
       this.burnTick = (this.burnTick || 0) + TICK;
@@ -400,5 +500,124 @@ export class Arrow extends Entity {
     }
     this.dir = [v[0], v[1], v[2]];
     if (b.pos[1] < -20 || this.age > 20) this.removed = true;
+  }
+}
+
+// ---------------------------------------------------------------------------- thrown things
+// An ender pearl: flies like a thrown ball; where it lands, its thrower appears.
+export class Thrown extends Entity {
+  constructor(sim, id, owner, item, x, y, z, vx, vy, vz) {
+    super(sim, id, 'thrown');
+    this.owner = owner;
+    this.item = item;
+    this.body = new Body(sim.world, 0.1, 0.2);
+    this.body.pos = [x, y, z];
+    this.body.vel = [vx, vy, vz];
+    this.prevPos = [x, y, z];
+  }
+
+  update() {
+    const b = this.body;
+    this.age += TICK;
+    this.prevPos[0] = b.pos[0]; this.prevPos[1] = b.pos[1]; this.prevPos[2] = b.pos[2];
+    b.vel[1] -= 18 * TICK;
+    const v = b.vel;
+    const steps = Math.max(1, Math.ceil((Math.hypot(v[0], v[1], v[2]) * TICK) / 0.3));
+    for (let s = 0; s < steps; s++) {
+      const nx = b.pos[0] + (v[0] * TICK) / steps, ny = b.pos[1] + (v[1] * TICK) / steps, nz = b.pos[2] + (v[2] * TICK) / steps;
+      const hitMob = this.sim.projectileHitsMob(this, [nx, ny, nz]);
+      if (hitMob || this.sim.world.isSolidAt(Math.floor(nx), Math.floor(ny), Math.floor(nz))) {
+        if (hitMob) hitMob.hurt(0, b.pos, 0.4);
+        this.sim.emit({ type: 'pearlLand', owner: this.owner, pos: b.pos.slice() });
+        this.removed = true;
+        return;
+      }
+      b.pos[0] = nx; b.pos[1] = ny; b.pos[2] = nz;
+    }
+    if (b.pos[1] < -40 || this.age > 30) {
+      this.sim.emit({ type: 'pearlLand', owner: this.owner, pos: null });
+      this.removed = true;
+    }
+  }
+}
+
+// An eye of ender: rises and flies a little way towards the nearest stronghold, then falls
+// (and sometimes shatters).
+export class EyeOfEnder extends Entity {
+  constructor(sim, id, owner, x, y, z, target) {
+    super(sim, id, 'thrown');
+    this.owner = owner;
+    this.item = ITEM.EYE_OF_ENDER;
+    this.body = new Body(sim.world, 0.1, 0.2);
+    this.body.pos = [x, y, z];
+    this.prevPos = [x, y, z];
+    this.start = [x, y, z];
+    this.target = target; // [x, z] or null
+  }
+
+  update() {
+    const b = this.body;
+    this.age += TICK;
+    this.prevPos[0] = b.pos[0]; this.prevPos[1] = b.pos[1]; this.prevPos[2] = b.pos[2];
+    const t = this.age;
+    if (t < 1.8) {
+      let dx = 0, dz = 0;
+      if (this.target) {
+        const ex = this.target[0] - this.start[0], ez = this.target[1] - this.start[2];
+        const l = Math.hypot(ex, ez) || 1;
+        // straight up when standing right over it
+        const k = Math.min(1, l / 12);
+        dx = (ex / l) * k; dz = (ez / l) * k;
+      }
+      const f = Math.min(1, t / 1.5);
+      b.pos[0] = this.start[0] + dx * 12 * f;
+      b.pos[2] = this.start[2] + dz * 12 * f;
+      b.pos[1] = this.start[1] + Math.sin(f * Math.PI * 0.5) * 5;
+      if (this.age % 0.1 < TICK) this.sim.emit({ type: 'eyeTrail', pos: b.pos.slice() });
+    } else {
+      this.removed = true;
+      this.sim.emit({ type: 'eyeDone', owner: this.owner, pos: b.pos.slice(), shatter: Math.random() < 0.2 });
+    }
+  }
+}
+
+// Fireballs: a ghast's explodes; a blaze's small ones set what they hit on fire.
+export class Fireball extends Entity {
+  constructor(sim, id, owner, x, y, z, dir, small) {
+    super(sim, id, 'fireball');
+    this.owner = owner;
+    this.small = small;
+    const speed = small ? 16 : 11;
+    this.body = new Body(sim.world, 0.15, 0.3);
+    this.body.pos = [x, y, z];
+    this.body.vel = [dir[0] * speed, dir[1] * speed, dir[2] * speed];
+    this.prevPos = [x, y, z];
+    this.spin = 0;
+  }
+
+  update() {
+    const b = this.body;
+    this.age += TICK;
+    this.spin += TICK * 8;
+    this.prevPos[0] = b.pos[0]; this.prevPos[1] = b.pos[1]; this.prevPos[2] = b.pos[2];
+    const v = b.vel;
+    const steps = Math.max(1, Math.ceil((Math.hypot(v[0], v[1], v[2]) * TICK) / 0.3));
+    for (let s = 0; s < steps; s++) {
+      const nx = b.pos[0] + (v[0] * TICK) / steps, ny = b.pos[1] + (v[1] * TICK) / steps, nz = b.pos[2] + (v[2] * TICK) / steps;
+      const player = this.sim.projectileHitsPlayer(this, [nx, ny, nz]);
+      const solid = this.sim.world.isSolidAt(Math.floor(nx), Math.floor(ny), Math.floor(nz));
+      if (player || solid) {
+        this.removed = true;
+        if (this.small) {
+          if (player) {
+            const shooter = this.sim.entities.get(this.owner);
+            if (this.sim.damagePlayer(player.id, 5 * this.sim.diff.damage, shooter ? shooter.type : 'fire', b.pos)) player.fire = Math.max(player.fire || 0, 4);
+          } else this.sim.emit({ type: 'igniteAt', pos: [b.pos[0], b.pos[1], b.pos[2]] });
+        } else this.sim.explode(b.pos[0], b.pos[1], b.pos[2], 1.6, this);
+        return;
+      }
+      b.pos[0] = nx; b.pos[1] = ny; b.pos[2] = nz;
+    }
+    if (this.age > 12) this.removed = true;
   }
 }

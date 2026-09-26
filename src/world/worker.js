@@ -1,7 +1,7 @@
 // Web worker: terrain generation and chunk meshing off the main thread.
 
-import { TerrainGenerator } from './generator.js';
 import { ChunkMesher } from './mesher.js';
+import { createGenerator } from './dimensions.js';
 
 let generator = null;
 let mesher = null;
@@ -9,7 +9,7 @@ let mesher = null;
 function handle(msg) {
   switch (msg.type) {
     case 'init':
-      generator = new TerrainGenerator(msg.seed);
+      generator = createGenerator(msg.seed, msg.dimension || 0);
       mesher = new ChunkMesher(generator);
       return null;
     case 'gen': {

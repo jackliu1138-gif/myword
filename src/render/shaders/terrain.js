@@ -114,7 +114,7 @@ void main() {
   float dist = length(vRel);
   float selfShadow = 1.0;
 #ifndef CUTOUT
-  if (uTexMode.z > 0.5 && dist < 18.0 && mat != 3u) {
+  if (uTexMode.z > 0.5 && dist < 18.0 && mat != 3u && mat < 10u) {
     vec3 T = FACE_T[face], B = FACE_B[face];
     vec3 V = -vRel / max(dist, 1e-4);
     vec3 Vt = vec3(dot(V, T), dot(V, B), dot(V, N));
@@ -146,6 +146,41 @@ void main() {
   float metal = m.g;
   if (mat == 2u) mapped = N; // plants: lit like the ground they stand on
   if (mat == 3u) rough = m.b; // emissive blocks store emission in the roughness slot
+  if (mat == 10u) {
+    // nether portal: a slowly churning purple swirl, written as an emissive surface
+    vec3 w = vRel + uCamPos.xyz;
+    vec2 p = face < 2u ? w.zy : face < 4u ? w.xz : w.xy;
+    if (uTexMode.y > 0.5) p = (floor(p * 16.0) + 0.5) / 16.0;
+    float t = uCamPos.w;
+    vec2 q = p * 1.3;
+    for (int i = 0; i < 3; i++) q += vec2(sin(q.y * 2.3 + t * 1.1 + float(i)), cos(q.x * 2.1 - t * 0.9 + float(i) * 1.7)) * 0.35;
+    float v = 0.5 + 0.5 * sin(q.x * 3.0 + q.y * 2.0 + t * 0.7);
+    float detail = luma(textureGrad(uAlbedo, vec3(q * 0.35, layer), gx, gy).rgb);
+    albedo.rgb = mix(vec3(0.24, 0.04, 0.46), vec3(0.78, 0.5, 1.0), clamp(v * 0.75 + detail * 0.5 - 0.15, 0.0, 1.0));
+    rough = 0.5 + v * 0.25;
+    mapped = N;
+    mat = 3u;
+  } else if (mat == 11u) {
+    // end portal: layers of drifting stars far below the surface
+    vec3 V = normalize(vRel);
+    vec3 w = vRel + uCamPos.xyz;
+    vec3 col = vec3(0.02, 0.04, 0.05);
+    float t = uCamPos.w;
+    for (int i = 0; i < 5; i++) {
+      float depth = 1.5 + float(i) * 2.5;
+      vec2 sp = w.xz + V.xz / max(-V.y, 0.12) * depth;
+      sp = sp * (0.9 + float(i) * 0.35) + vec2(t * 0.03, t * 0.017) * float(i + 1);
+      vec2 cell = floor(sp * 3.0);
+      vec3 h = hash33(vec3(cell, float(i) * 7.0));
+      vec2 f = fract(sp * 3.0) - 0.5 - (h.xy - 0.5) * 0.6;
+      float star = smoothstep(0.16, 0.0, length(f)) * step(0.72, h.z);
+      col += mix(vec3(0.25, 0.95, 0.75), vec3(0.65, 0.45, 1.0), h.x) * star * (1.0 - float(i) * 0.15);
+    }
+    albedo.rgb = col;
+    rough = 1.0;
+    mapped = N;
+    mat = 3u;
+  }
   // fade normal detail with distance: reduces shimmering of small normal maps far away
   mapped = normalize(mix(mapped, N, smoothstep(24.0, 96.0, dist)));
   oAlbedo = vec4(albedo.rgb, rough);

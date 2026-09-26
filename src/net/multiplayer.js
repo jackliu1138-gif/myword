@@ -12,7 +12,7 @@ import { t } from '../ui/i18n.js';
 const STATE_INTERVAL = 1 / 12;
 const MOB_INTERVAL = 1 / 8;
 const SHARE_RADIUS = 72; // our creatures within this distance of another player are sent to them
-const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16 };
+const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32 };
 const MP_KEY = 'lumencraft.multiplayer';
 
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -82,6 +82,19 @@ export function installMultiplayer(Game) {
     }
     saveMultiplayerPrefs({ address, name });
     await this.save(); // the single-player world, before switching over
+    try {
+      this.enterServerWorld(net, w, name);
+    } catch (e) {
+      // don't leave a half-joined game behind
+      console.error('joining failed', e);
+      this.mp = null;
+      net.close();
+      await this.loadSinglePlayer();
+      throw new Error('unreachable');
+    }
+  };
+
+  P.enterServerWorld = function enterServerWorld(net, w, name) {
     this.mp = {
       net, id: w.id, name, serverName: w.name, dayLength: w.dayLength || 20,
       players: new Map(), ghosts: new Map(), ghostIds: new Map(), nextGhost: 1e9,
@@ -89,9 +102,11 @@ export function installMultiplayer(Game) {
       edits: [],
     };
     const me = w.me && typeof w.me === 'object' ? w.me : {};
+    this.mp.endHost = w.endHost || null;
     const data = {
-      version: 2, seed: w.seed, edits: w.edits, dayTime: w.dayTime, dayCount: w.dayCount,
-      mode: me.mode || w.mode, difficulty: w.difficulty,
+      version: 2, seed: w.seed, edits: w.edits, dimEdits: w.dimEdits || {}, dayTime: w.dayTime, dayCount: w.dayCount,
+      mode: me.mode || w.mode, difficulty: w.difficulty, endState: w.endState || undefined,
+      dimension: me.dimension === 1 || me.dimension === 2 ? me.dimension : 0,
       inventory: Array.isArray(me.inventory) ? me.inventory : undefined,
       selected: me.selected, spawn: me.spawn || null,
       player: me.player && Array.isArray(me.player.pos) ? me.player : undefined,
@@ -124,8 +139,30 @@ export function installMultiplayer(Game) {
       const p = mp.players.get(m.id);
       if (p) this.applyRemoteState(p, m);
     });
-    net.on('b', (m) => { for (const [x, y, z, b] of m.l) this.world.applyRemoteEdit(x, y, z, b); });
+    net.on('b', (m) => {
+      const d = m.d | 0;
+      if (d === (this.dimension | 0)) { for (const [x, y, z, b] of m.l) this.world.applyRemoteEdit(x, y, z, b); return; }
+      // an edit in another dimension: kept for when we go there
+      const edits = this.dimEdits[d] || (this.dimEdits[d] = new Map());
+      for (const [x, y, z, b] of m.l) {
+        if (y < 0 || y > 127) continue;
+        const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+        const key = (cx + 32768) * 65536 + (cz + 32768);
+        let e = edits.get(key);
+        if (!e) { e = new Map(); edits.set(key, e); }
+        e.set((y << 8) | ((z - cz * 16) << 4) | (x - cx * 16), b);
+      }
+    });
     net.on('m', (m) => this.applyMobSnapshots(m.id, m.l));
+    net.on('sleepers', (m) => { this.mpSleepers = { n: m.n | 0, m: m.m | 0 }; });
+    net.on('wake', () => { if (this.sleeping) this.wakeUp(true); });
+    net.on('endHost', (m) => { mp.endHost = m.id; });
+    net.on('end', (m) => {
+      if (!m.s || typeof m.s !== 'object') return;
+      const was = this.endState && this.endState.dragonDead;
+      this.endState = { ...this.endState, ...m.s };
+      if (m.slain && !was) this.ui.toast(t('boss.slain'), 5000);
+    });
     net.on('hit', (m) => this.sim.remoteHit(m.from, m.e, m.d, m.f));
     net.on('hurt', (m) => this.sim.damagePlayer('local', Number(m.a) || 0, String(m.s || 'other'), Array.isArray(m.f) ? m.f : null));
     net.on('knock', (m) => { if (Array.isArray(m.f)) this.sim.emit({ type: 'knock', id: 'local', from: m.f, strength: Math.min(3, Number(m.k) || 1) }); });
@@ -135,7 +172,10 @@ export function installMultiplayer(Game) {
     });
     net.on('fx', (m) => { if (m.k === 'boom') this.sim.emit({ type: 'explosion', pos: m.p, power: m.pw, remote: true }); });
     net.on('chat', (m) => { this.ui.addChat(m.n, m.x); if (m.id !== mp.id) this.audio.sfx('pickup', 0.35, 0); });
-    net.on('ev', (m) => { if (m.k === 'death') this.ui.addChat(null, t('mp.died', { name: m.n })); });
+    net.on('ev', (m) => {
+      if (m.k === 'death') this.ui.addChat(null, t('mp.died', { name: m.n }));
+      else if (m.k === 'dragon') this.ui.addChat(null, t('mp.dragon', { name: m.n }));
+    });
     net.on('voice', (m) => { const p = mp.players.get(m.id); if (p) { p.voice = { on: !!m.on, muted: !!m.muted }; this.refreshMpPanel(); } });
     net.on('rtc', (m) => { if (this.voice) this.voice.signal(m.from, m.d); });
     net.on('time', (m) => {
@@ -184,6 +224,8 @@ export function installMultiplayer(Game) {
     p.goalYaw = s.y || 0;
     p.pitch = s.pi || 0;
     p.held = s.h || 0;
+    p.armor = Array.isArray(s.a) ? s.a.slice(0, 4).map((v) => v | 0) : null;
+    p.dim = s.d | 0;
     p.flags = s.f || 0;
     if (p.flags & FLAG.SWING) p.swing = 1;
     const rec = p.rec;
@@ -195,6 +237,8 @@ export function installMultiplayer(Game) {
   P.applyMobSnapshots = function applyMobSnapshots(owner, list) {
     const mp = this.mp;
     if (!mp || !mp.players.has(owner) || !Array.isArray(list)) return;
+    // creatures of a player in another dimension are not here
+    if ((mp.players.get(owner).dim | 0) !== (this.dimension | 0)) list = [];
     const seen = new Set();
     for (const s of list) {
       if (!Array.isArray(s) || s.length < 10) continue;
@@ -221,17 +265,18 @@ export function installMultiplayer(Game) {
     if (!mp) return;
     const net = mp.net;
     // our block edits
-    if (mp.edits.length) {
-      while (mp.edits.length) net.send({ t: 'b', l: mp.edits.splice(0, 512) });
-    }
+    this.flushEdits();
     // our position and look
     mp.stateTimer -= dt;
     const me = this.me();
     if (mp.stateTimer <= 0) {
       mp.stateTimer = STATE_INTERVAL;
       const pl = this.player;
-      const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0);
+      const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0);
       const msg = { t: 'st', p: [round2(pl.pos[0]), round2(pl.pos[1]), round2(pl.pos[2])], y: round2(pl.yaw), pi: round2(pl.pitch), h: this.heldId(), f };
+      const armor = this.inventory ? this.inventory.armorIds() : null;
+      if (armor && armor.some(Boolean)) msg.a = armor;
+      if (this.dimension) msg.d = this.dimension;
       const key = JSON.stringify(msg);
       mp.idle = key === mp.lastState ? (mp.idle || 0) + STATE_INTERVAL : 0;
       if (key !== mp.lastState || mp.idle > 1) { net.send(msg); mp.lastState = key; if (mp.idle > 1) mp.idle = 0; }
@@ -240,7 +285,7 @@ export function installMultiplayer(Game) {
     mp.mobTimer -= dt;
     if (mp.mobTimer <= 0 && mp.players.size) {
       mp.mobTimer = MOB_INTERVAL;
-      const others = [...mp.players.values()].filter((p) => p.pos);
+      const others = [...mp.players.values()].filter((p) => p.pos && (p.dim | 0) === (this.dimension | 0));
       const list = [];
       for (const e of this.sim.entities.values()) {
         if (e.kind !== 'mob' || e.ghost || e.removed) continue;
@@ -266,7 +311,8 @@ export function installMultiplayer(Game) {
       p.swing = Math.max(0, p.swing - dt * 3);
       p.hurtTime = p.rec.hurtTime > 0 ? 0.3 : Math.max(0, p.hurtTime - dt);
       p.deathTime = p.flags & FLAG.DEAD ? Math.min(1, p.deathTime + dt) : 0;
-      p.rec.pos = p.pos.slice();
+      // someone in another dimension is nowhere near us, whatever their coordinates say
+      p.rec.pos = (p.dim | 0) === (this.dimension | 0) ? p.pos.slice() : [0, -1000, 0];
     }
     // voice: loudness by distance, a few times a second
     mp.voiceTimer -= dt;
@@ -291,6 +337,16 @@ export function installMultiplayer(Game) {
     }
   };
 
+  P.flushEdits = function flushEdits() {
+    const mp = this.mp;
+    if (!mp) return;
+    while (mp.edits.length) {
+      const msg = { t: 'b', l: mp.edits.splice(0, 512) };
+      if (this.dimension) msg.d = this.dimension;
+      mp.net.send(msg);
+    }
+  };
+
   P.mpSaveState = function mpSaveState() {
     const me = this.me();
     const p = this.player;
@@ -300,6 +356,7 @@ export function installMultiplayer(Game) {
       selected: this.selected,
       spawn: this.spawnPoint,
       mode: this.mode,
+      dimension: this.dimension || 0,
     };
   };
 
@@ -320,8 +377,9 @@ export function installMultiplayer(Game) {
     const out = [];
     for (const p of mp.players.values()) {
       if (!p.pos) continue;
+      if ((p.dim | 0) !== (this.dimension | 0)) continue; // in another dimension
       out.push({
-        id: p.id, pos: p.pos, yaw: p.yaw, headYaw: p.yaw, headPitch: p.pitch, skin: p.skin,
+        id: p.id, pos: p.pos, yaw: p.yaw, headYaw: p.yaw, headPitch: p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),
         walkPhase: p.walkPhase, walkAmount: p.walkAmount, swing: p.swing, hurtTime: p.hurtTime, deathTime: p.deathTime,
       });
     }
@@ -337,7 +395,7 @@ export function installMultiplayer(Game) {
     const show = this.state === 'playing' || this.state === 'chat';
     for (const p of mp.players.values()) {
       const tag = p.tag;
-      const head = p.pos ? [p.pos[0], p.pos[1] + 2.15, p.pos[2]] : null;
+      const head = p.pos && (p.dim | 0) === (this.dimension | 0) ? [p.pos[0], p.pos[1] + 2.15, p.pos[2]] : null;
       const dist = head ? Math.hypot(head[0] - cam.pos[0], head[1] - cam.pos[1], head[2] - cam.pos[2]) : Infinity;
       const at = head && show && !this.hudHidden && dist < 96 ? projectToScreen(cam, head, w, h) : null;
       tag.hidden = !at;

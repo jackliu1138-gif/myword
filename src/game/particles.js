@@ -10,11 +10,10 @@ export class Particles {
     this.leaves = 0;
   }
 
-  burst(x, y, z, block, sky, blockLight) {
+  burst(x, y, z, block, sky, blockLight, n = 22) {
     const def = BLOCKS[block];
     if (!def || !def.tex) return;
     const layer = FACE_TEX[block * 4 + 2];
-    const n = 22;
     for (let i = 0; i < n; i++) {
       const px = x + 0.15 + Math.random() * 0.7, py = y + 0.15 + Math.random() * 0.7, pz = z + 0.15 + Math.random() * 0.7;
       this.list.push({

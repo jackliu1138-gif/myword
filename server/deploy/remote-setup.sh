@@ -15,6 +15,8 @@ PORT="${1:-${LUMENCRAFT_PORT:-8080}}"
 BRANCH="${2:-${LUMENCRAFT_BRANCH:-claude/browser-minecraft-shaders-qznbst}}"
 REPO="${3:-${LUMENCRAFT_REPO:-https://github.com/jackliu1138-gif/myword.git}}"
 APP_DIR="/opt/games/lumencraft"
+# the shared world lives outside the app folder, which is wiped and refetched on every run
+DATA_DIR="/var/lib/lumencraft"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 CARD_MARKER="lumencraft-card"
 WS_MARKER="games/lumencraft/ws"
@@ -43,6 +45,23 @@ echo "==> fetching Lumencraft (branch $BRANCH)"
 # fails too. Either way $APP_DIR ends up holding exactly this branch's current tree — no .git
 # metadata to go stale, so it's just wiped and refetched fresh on every run.
 REPO_SLUG="$(echo "$REPO" | sed -E 's#^(https?://)?github\.com/##; s#\.git$##')"
+# stop the running game first, so it writes the world to disk, and keep the world safe: older
+# versions of this script kept it inside $APP_DIR (server/data), which is about to be wiped
+if systemctl list-unit-files lumencraft.service >/dev/null 2>&1 && systemctl is-active --quiet lumencraft; then
+  systemctl stop lumencraft || true
+fi
+mkdir -p "$DATA_DIR"
+if [ -f "$APP_DIR/server/data/world.json" ] && [ ! -f "$DATA_DIR/world.json" ]; then
+  cp -a "$APP_DIR/server/data/." "$DATA_DIR/"
+  echo "    moved the multiplayer world to $DATA_DIR"
+fi
+if [ -f "$DATA_DIR/world.json" ]; then
+  cp -a "$DATA_DIR/world.json" "$DATA_DIR/world.json.bak-$(date +%Y%m%d-%H%M%S)"
+  # keep the five newest backups
+  ls -1t "$DATA_DIR"/world.json.bak-* 2>/dev/null | tail -n +6 | xargs -r rm -f || true
+  echo "    world backed up ($(du -h "$DATA_DIR/world.json" | cut -f1))"
+fi
+chown -R "$SERVICE_USER" "$DATA_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 if curl -fsSL "https://codeload.github.com/$REPO_SLUG/tar.gz/refs/heads/$BRANCH" 2>>"$LOG" | tar -xz -C "$APP_DIR" --strip-components=1 2>>"$LOG"; then
@@ -81,6 +100,7 @@ RestartSec=3
 Environment=PORT=$PORT
 Environment=HOST=$1
 Environment=SERVER_NAME=Lumencraft
+Environment=DATA_DIR=$DATA_DIR
 
 [Install]
 WantedBy=multi-user.target

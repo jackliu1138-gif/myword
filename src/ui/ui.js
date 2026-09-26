@@ -1,9 +1,24 @@
 // DOM user interface: screens, settings, hotbar, inventory, toasts, help, device check, debug overlay.
 
 import { BLOCKS, BLOCK } from '../world/blocks.js';
-import { t, blockName, itemName, applyI18n, getLanguage } from './i18n.js';
+import { t, itemName, applyI18n, getLanguage } from './i18n.js';
 import { GLYPHS } from '../game/gamepad.js';
 import { ITEMS, RECIPES, itemDef } from '../sim/items.js';
+import { ARMOR_REF } from '../sim/inventory.js';
+
+// Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
+const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
+  'oak_leaves', 'birch_leaves', 'spruce_leaves', 'tall_grass', 'fern', 'poppy', 'dandelion', 'cornflower', 'dead_bush', 'pumpkin',
+  'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'obsidian', 'netherrack', 'soul_sand', 'nether_quartz_ore', 'magma_block',
+  'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water']);
+const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'misc'];
+function paletteTab(d) {
+  if (d.kind === 'block') return NATURE.has(d.key) ? 'nature' : 'building';
+  if (['sword', 'bow', 'arrow', 'armor'].includes(d.kind)) return 'combat';
+  if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye'].includes(d.kind)) return 'tools';
+  if (d.kind === 'food') return 'food';
+  return 'misc';
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -425,7 +440,8 @@ export class UI {
 
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
-      <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('');
+      <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['bed', 'farm', 'armor', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -545,6 +561,15 @@ export class UI {
         hearts.classList.add('hit');
       }
     }
+    // armour: ten chestplates above the hearts, two points each
+    const bar = $('armorbar');
+    const pts = Math.round(v.armor || 0);
+    bar.hidden = pts <= 0;
+    if (pts > 0 && (!prev || prev.armor !== v.armor || !bar.children.length)) {
+      if (bar.children.length !== 10) bar.innerHTML = '<i class="armor-pip"></i>'.repeat(10);
+      for (let i = 0; i < 10; i++) bar.children[i].className = 'armor-pip' + (pts >= (i + 1) * 2 ? ' full' : pts === i * 2 + 1 ? ' half' : '');
+      bar.setAttribute('aria-label', t('hud.armor', { n: pts }));
+    }
     const bubbles = $('bubbles');
     const showAir = v.underwater || v.air < v.maxAir - 0.01;
     bubbles.hidden = !showAir;
@@ -555,6 +580,41 @@ export class UI {
       for (let i = 0; i < m; i++) bubbles.children[i].classList.toggle('gone', i >= a);
       bubbles.setAttribute('aria-label', t('hud.air'));
     }
+  }
+
+  // Asleep: { fade 0..1, sleepers: { n, m } | null }, or null when awake.
+  setSleep(st) {
+    const el = $('sleep');
+    if (!st) { el.hidden = true; return; }
+    if (el.hidden) {
+      el.hidden = false;
+      const b = $('btn-wake');
+      if (!b.dataset.bound) { b.dataset.bound = '1'; b.addEventListener('click', () => this.emit('wake')); }
+    }
+    el.style.setProperty('--fade', (st.fade * 0.92).toFixed(3));
+    const s = st.sleepers;
+    const text = s && s.m > 1 ? t('bed.sleepers', { n: s.n, m: s.m }) : t('bed.sleeping');
+    const tx = $('sleep-text');
+    if (tx.textContent !== text) tx.textContent = text;
+  }
+
+  // The purple swirl while standing in a nether portal (0..1).
+  setPortal(amount) {
+    const v = String(Math.max(0, Math.min(1, amount)) * 0.9);
+    const el = $('portalfx');
+    if (el.style.opacity !== v) el.style.opacity = v;
+  }
+
+  // The boss bar: { name, frac } or null.
+  setBoss(b) {
+    const el = $('bossbar');
+    if (!b) { if (!el.hidden) el.hidden = true; return; }
+    el.hidden = false;
+    $('boss-name').textContent = b.name;
+    const w = (Math.max(0, Math.min(1, b.frac)) * 100).toFixed(1) + '%';
+    const fill = $('boss-fill');
+    if (fill.style.width !== w) fill.style.width = w;
+    fill.parentElement.setAttribute('aria-valuenow', String(Math.round(b.frac * 100)));
   }
 
   // Red vignette after taking damage (0..1).
@@ -623,9 +683,27 @@ export class UI {
   }
 
   // ------------------------------------------------------------ inventory
-  // The creative palette: every block that belongs in an inventory, then every item.
+  // The screen works like the familiar one: click a stack to pick it up (right click: half of it),
+  // click a slot to put it down (right click: one), drag it with the mouse, shift-click to send it
+  // across (armour onto the body). Touch taps pick up and put down; a long press takes half.
+  // Controllers: A picks up / puts down, X sends across. Events: invClick(ref, button),
+  // invQuick(ref), invOutside(), invTrash(), palettePick(id, button, shift), craft(i).
   buildInventory(icons) {
     this.icons = icons;
+    this.invTab = this.invTab || 'all';
+    const tabs = $('inv-tabs');
+    tabs.innerHTML = '';
+    for (const tab of PALETTE_TABS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'inv-tab';
+      b.setAttribute('role', 'tab');
+      b.dataset.tab = tab;
+      b.textContent = t('inv.tab.' + tab);
+      b.setAttribute('aria-selected', String(tab === this.invTab));
+      b.addEventListener('click', () => this.setPaletteTab(tab));
+      tabs.appendChild(b);
+    }
     const grid = $('inv-grid');
     grid.innerHTML = '';
     const add = (d) => {
@@ -633,16 +711,159 @@ export class UI {
       b.type = 'button';
       b.className = 'inv-slot';
       b.title = itemName(d);
+      b.dataset.item = String(d.id);
+      b.dataset.tab = paletteTab(d);
+      b.dataset.search = (d.name + ' ' + d.zh + ' ' + d.key).toLowerCase();
       b.setAttribute('aria-label', itemName(d));
       b.innerHTML = `<img alt="" src="${icons.get(d.id)}">`;
-      b.addEventListener('click', () => this.emit('pickBlock', d.id));
+      this.bindPalette(b, d.id);
       grid.appendChild(b);
     };
-    for (const d of BLOCKS) if (d.inventory && icons.has(d.id)) add(d);
+    for (const d of BLOCKS) if (d.inventory && icons.has(d.id)) add(itemDef(d.id));
     for (const d of ITEMS) if (icons.has(d.id)) add(d);
+    const search = $('inv-search');
+    if (!search.dataset.bound) {
+      search.dataset.bound = '1';
+      search.addEventListener('input', () => this.filterPalette());
+      // typing a name must not reach the game's keys (E would close the screen)
+      search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') search.blur(); });
+    }
+    this.filterPalette();
+    this.bindInventoryScreen();
   }
 
-  // Survival: the bag (slots 9-35) and the recipe book; creative: the palette.
+  setPaletteTab(tab) {
+    this.invTab = tab;
+    for (const b of $('inv-tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    this.filterPalette();
+  }
+
+  switchPaletteTab(dir) {
+    const i = PALETTE_TABS.indexOf(this.invTab || 'all');
+    this.setPaletteTab(PALETTE_TABS[(i + dir + PALETTE_TABS.length) % PALETTE_TABS.length]);
+  }
+
+  filterPalette() {
+    const q = $('inv-search').value.trim().toLowerCase();
+    for (const b of $('inv-grid').children) {
+      b.hidden = q ? !b.dataset.search.includes(q) : this.invTab !== 'all' && b.dataset.tab !== this.invTab;
+    }
+  }
+
+  // One-time listeners on the whole screen: the drag, the cursor stack following the pointer,
+  // dropping outside the sheet, number keys over a slot, no context menu.
+  bindInventoryScreen() {
+    if (this.invBound) return;
+    this.invBound = true;
+    const screen = $('inventory');
+    const cursorEl = $('inv-cursor');
+    this.drag = null;
+    screen.addEventListener('contextmenu', (e) => e.preventDefault());
+    const place = (x, y) => {
+      this.cursorAt = [x, y];
+      cursorEl.style.transform = `translate(${x}px, ${y}px)`;
+    };
+    screen.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') place(e.clientX, e.clientY);
+      const d = this.drag;
+      if (d && !d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true;
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      $('inv-trash').classList.toggle('hot', !!(d && d.moved && over && over.closest('#inv-trash')));
+    });
+    const finishDrag = (e) => {
+      const d = this.drag;
+      this.drag = null;
+      $('inv-trash').classList.remove('hot');
+      for (const el of screen.querySelectorAll('.drag-src')) el.classList.remove('drag-src');
+      if (!d || !d.moved) return;
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      const slot = over && over.closest('[data-ref]');
+      if (slot) {
+        if (slot.dataset.ref === 'trash') this.emit('invTrash');
+        else this.emit('invClick', Number(slot.dataset.ref), 0);
+      } else if (!over || !over.closest('.inv-sheet')) this.emit('invOutside');
+      else if (d.ref !== null) this.emit('invClick', d.ref, 0); // let go over the sheet: it goes back
+    };
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', () => { this.drag = null; });
+    // a click on the dimmed backdrop throws the held stack away (or drops it, in survival)
+    screen.addEventListener('pointerdown', (e) => {
+      if (e.target === screen && !this.drag) this.emit('invOutside');
+    });
+    // 1-9 over a slot swaps it with that hotbar slot
+    document.addEventListener('keydown', (e) => {
+      if (this.current !== 'inventory' || (e.target && e.target.tagName === 'INPUT')) return;
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (!m) return;
+      const el = document.querySelector('#inventory [data-ref]:hover') || document.activeElement;
+      if (!el || !el.dataset || el.dataset.ref === undefined || el.dataset.ref === 'trash') return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.emit('invSwap', Number(el.dataset.ref), Number(m[1]) - 1);
+    });
+    screen.addEventListener('focusin', (e) => {
+      if (this.lastPointer === 'mouse') return;
+      const r = e.target.getBoundingClientRect();
+      place(r.right - 6, r.bottom - 6);
+    });
+  }
+
+  // Pointer handling shared by every slot of the inventory screen.
+  bindSlot(el, ref) {
+    el.dataset.ref = String(ref);
+    let pressTimer = 0, longPressed = false;
+    el.addEventListener('pointerdown', (e) => {
+      this.lastPointer = e.pointerType;
+      if (e.pointerType === 'touch') {
+        longPressed = false;
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => { longPressed = true; this.emit('click'); this.emit('invClick', ref, 2); }, 480);
+        return;
+      }
+      if (e.button !== 0 && e.button !== 2) return;
+      e.preventDefault();
+      this.emit('click');
+      if (ref === 'trash') { this.emit('invTrash'); return; }
+      if (e.shiftKey) { this.emit('invQuick', ref); return; }
+      const hadCursor = !!(this.invState && this.invState[0].cursor);
+      this.emit('invClick', ref, e.button);
+      // picking a stack up starts a drag: letting go over another slot puts it there
+      if (!hadCursor && this.invState && this.invState[0].cursor) {
+        this.drag = { ref, x: e.clientX, y: e.clientY, moved: false };
+        el.classList.add('drag-src');
+      }
+    });
+    el.addEventListener('pointerup', (e) => { if (e.pointerType === 'touch') clearTimeout(pressTimer); });
+    el.addEventListener('pointerleave', () => clearTimeout(pressTimer));
+    // taps, and A / Enter on a focused slot, arrive as clicks
+    el.addEventListener('click', (e) => {
+      if (this.lastPointer === 'mouse' && e.detail > 0) return;
+      if (longPressed) { longPressed = false; return; }
+      this.emit('click');
+      if (ref === 'trash') this.emit('invTrash');
+      else this.emit('invClick', ref, 0);
+      if (e.detail === 0) this.lastPointer = 'keys';
+    });
+  }
+
+  bindPalette(el, id) {
+    el.addEventListener('pointerdown', (e) => {
+      this.lastPointer = e.pointerType;
+      if (e.pointerType === 'touch' || (e.button !== 0 && e.button !== 2)) return;
+      e.preventDefault();
+      this.emit('click');
+      this.emit('palettePick', id, e.button, e.shiftKey);
+      if (!e.shiftKey && this.invState && this.invState[0].cursor) this.drag = { ref: null, x: e.clientX, y: e.clientY, moved: false };
+    });
+    el.addEventListener('click', (e) => {
+      if (this.lastPointer === 'mouse' && e.detail > 0) return;
+      this.emit('click');
+      this.emit('palettePick', id, 0, false);
+      if (e.detail === 0) this.lastPointer = 'keys';
+    });
+  }
+
+  // inv: the Inventory (slots, armor, cursor); creative shows the palette instead of recipes
   renderInventory(inv, selected, creative, canCraft) {
     this.invState = [inv, selected, creative, canCraft];
     const title = $('inv-title'), hint = $('inv-hint');
@@ -650,56 +871,92 @@ export class UI {
     hint.dataset.i18n = creative ? 'inv.hint' : 'inv.survivalHint';
     title.textContent = t(title.dataset.i18n);
     hint.textContent = t(hint.dataset.i18n);
-    $('inv-grid').hidden = !creative;
+    $('inv-creative').hidden = !creative;
     $('inv-survival').hidden = creative;
-    if (creative) return;
-    // keep the focused slot or recipe focused across re-renders (controllers, remotes)
     const active = document.activeElement;
     const focusKey = active && active.dataset ? active.dataset.key : null;
-    const bag = $('inv-bag');
-    const size = inv.slots.length - 9;
-    if (bag.children.length !== size) {
-      bag.innerHTML = '';
-      for (let k = 0; k < size; k++) {
-        const i = k + 9;
+    const build = (host, refs, cls = 'slot') => {
+      if (host.children.length === refs.length) return;
+      host.innerHTML = '';
+      for (const ref of refs) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'slot bag-slot';
-        b.dataset.key = 'bag:' + i;
-        b.innerHTML = SLOT_HTML('');
-        b.addEventListener('click', () => { this.emit('click'); this.emit('invSlot', i); });
-        bag.appendChild(b);
+        b.className = cls;
+        b.dataset.key = 'slot:' + ref;
+        b.innerHTML = SLOT_HTML(ref < 9 ? ref + 1 : '');
+        this.bindSlot(b, ref);
+        host.appendChild(b);
+      }
+    };
+    const bagRefs = [];
+    for (let i = 9; i < inv.slots.length; i++) bagRefs.push(i);
+    build($('inv-bag'), bagRefs);
+    build($('inv-hotbar'), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    build($('inv-armor'), [ARMOR_REF, ARMOR_REF + 1, ARMOR_REF + 2, ARMOR_REF + 3]);
+    const trash = $('inv-trash');
+    if (!trash.dataset.bound) { trash.dataset.bound = '1'; this.bindSlot(trash, 'trash'); }
+    const fill = (el, slot, label) => {
+      const name = this.fillSlot(el, slot, true);
+      el.setAttribute('aria-label', name ? (slot.count > 1 ? `${name} ×${slot.count}` : name) : label);
+    };
+    for (const el of $('inv-bag').children) fill(el, inv.slots[Number(el.dataset.ref)], t('inv.bag'));
+    for (const el of $('inv-hotbar').children) {
+      const i = Number(el.dataset.ref);
+      el.classList.toggle('sel', i === selected);
+      fill(el, inv.slots[i], String(i + 1));
+    }
+    [...$('inv-armor').children].forEach((el, k) => {
+      const slot = inv.armor[k];
+      fill(el, slot, t('inv.armorSlot.' + k));
+      if (slot) el.removeAttribute('data-empty'); else el.dataset.empty = String(k);
+    });
+    const av = inv.armorValues();
+    $('inv-armor-pts').textContent = av.points ? t('inv.armorPts', { n: av.points }) : '';
+    // the stack on the cursor
+    const cursorEl = $('inv-cursor');
+    const c = inv.cursor;
+    cursorEl.hidden = !c;
+    if (c) {
+      const img = cursorEl.querySelector('img');
+      const src = (this.icons && this.icons.get(c.id)) || '';
+      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+      cursorEl.querySelector('.count').textContent = c.count > 1 ? String(c.count) : '';
+      if (!this.cursorAt && active && active.getBoundingClientRect) {
+        const r = active.getBoundingClientRect();
+        cursorEl.style.transform = `translate(${r.right - 6}px, ${r.bottom - 6}px)`;
       }
     }
-    for (let k = 0; k < size; k++) {
-      const el = bag.children[k];
-      const name = this.fillSlot(el, inv.slots[k + 9], true);
-      const sl = inv.slots[k + 9];
-      el.setAttribute('aria-label', name ? (sl.count > 1 ? `${name} ×${sl.count}` : name) : t('inv.bag'));
-    }
+    if (!creative) this.renderRecipes(canCraft, focusKey, selected);
+  }
+
+  renderRecipes(canCraft, focusKey, selected) {
     // recipes: what can be made now first, then the rest (dimmed, not focusable)
     const list = $('inv-recipes');
     const ready = [], later = [];
     RECIPES.forEach((r, i) => (canCraft(r) ? ready : later).push(i));
-    const recipeHtml = (i, ok) => {
-      const [out, n, ings] = RECIPES[i];
-      const d = itemDef(out);
-      const ingHtml = ings.map(([id, c]) => {
-        const isPlanks = id === 'planks';
-        const icon = this.icons.get(isPlanks ? BLOCK.OAK_PLANKS : id) || '';
-        const nm = isPlanks ? t('inv.planks') : itemName(itemDef(id));
-        return `<span class="ing" title="${escapeHtml(nm)}"><img alt="" src="${icon}"><b>${c}</b></span>`;
-      }).join('');
-      const label = `${itemName(d)}${n > 1 ? ' ×' + n : ''}`;
-      return `<button type="button" class="recipe${ok ? '' : ' no'}" data-key="recipe:${i}" data-i="${i}" ${ok ? '' : 'disabled'} aria-label="${escapeHtml(label)}">
-        <span class="out"><img alt="" src="${this.icons.get(out) || ''}">${n > 1 ? `<b>${n}</b>` : ''}</span>
-        <span class="rname">${escapeHtml(itemName(d))}</span>
-        <span class="ings">${ingHtml}</span></button>`;
-    };
-    list.innerHTML = (ready.length ? ready.map((i) => recipeHtml(i, true)).join('') : `<p class="hint">${escapeHtml(t('inv.noRecipes'))}</p>`) +
-      (later.length ? `<p class="inv-sub">${escapeHtml(t('inv.more'))}</p>` + later.map((i) => recipeHtml(i, false)).join('') : '');
-    for (const b of list.querySelectorAll('button.recipe')) {
-      b.addEventListener('click', () => { this.emit('click'); this.emit('craft', Number(b.dataset.i)); });
+    const key = ready.join(',') + '|' + getLanguage();
+    if (key !== this.recipeKey || !list.children.length) {
+      this.recipeKey = key;
+      const recipeHtml = (i, ok) => {
+        const [out, n, ings] = RECIPES[i];
+        const d = itemDef(out);
+        const ingHtml = ings.map(([id, c]) => {
+          const isPlanks = id === 'planks';
+          const icon = this.icons.get(isPlanks ? BLOCK.OAK_PLANKS : id) || '';
+          const nm = isPlanks ? t('inv.planks') : itemName(itemDef(id));
+          return `<span class="ing" title="${escapeHtml(nm)}"><img alt="" src="${icon}"><b>${c}</b></span>`;
+        }).join('');
+        const label = `${itemName(d)}${n > 1 ? ' ×' + n : ''}`;
+        return `<button type="button" class="recipe${ok ? '' : ' no'}" data-key="recipe:${i}" data-i="${i}" ${ok ? '' : 'disabled'} aria-label="${escapeHtml(label)}">
+          <span class="out"><img alt="" src="${this.icons.get(out) || ''}">${n > 1 ? `<b>${n}</b>` : ''}</span>
+          <span class="rname">${escapeHtml(itemName(d))}</span>
+          <span class="ings">${ingHtml}</span></button>`;
+      };
+      list.innerHTML = (ready.length ? ready.map((i) => recipeHtml(i, true)).join('') : `<p class="hint">${escapeHtml(t('inv.noRecipes'))}</p>`) +
+        (later.length ? `<p class="inv-sub">${escapeHtml(t('inv.more'))}</p>` + later.map((i) => recipeHtml(i, false)).join('') : '');
+      for (const b of list.querySelectorAll('button.recipe')) {
+        b.addEventListener('click', () => { this.emit('click'); this.emit('craft', Number(b.dataset.i)); });
+      }
     }
     if (focusKey && this.current === 'inventory') {
       let el = document.querySelector(`#inventory [data-key="${focusKey}"]:not([disabled])`);
@@ -708,27 +965,8 @@ export class UI {
     }
   }
 
-  renderInvHotbar(slots, selected, showCounts) {
-    const bar = $('inv-hotbar');
-    if (!bar) return;
-    if (bar.children.length !== slots.length) {
-      bar.innerHTML = '';
-      slots.forEach((_, i) => {
-        const s = document.createElement('button');
-        s.type = 'button';
-        s.className = 'slot';
-        s.dataset.key = 'hot:' + i;
-        s.innerHTML = SLOT_HTML(i + 1);
-        s.addEventListener('click', () => this.emit('selectSlot', i));
-        bar.appendChild(s);
-      });
-    }
-    slots.forEach((slot, i) => {
-      const s = bar.children[i];
-      s.classList.toggle('sel', i === selected);
-      const name = this.fillSlot(s, slot, showCounts);
-      s.setAttribute('aria-label', `${i + 1} ${name}`);
-    });
+  renderInvHotbar() {
+    // the inventory screen draws its own hotbar row (see renderInventory)
   }
 
   // ------------------------------------------------------------ settings

@@ -3,14 +3,15 @@
 // Installed as methods on Game.prototype so game.js stays about the frame loop and the UI.
 
 import { Simulation, MAX_HEALTH, MAX_AIR } from '../sim/simulation.js';
-import { Inventory } from '../sim/inventory.js';
+import { Inventory, ARMOR_REF } from '../sim/inventory.js';
 import { ITEM, itemDef, isBlockItem, blockDrops, breakInfo, RECIPES } from '../sim/items.js';
 import { raycast } from './player.js';
 import { materialOf } from './audio.js';
 import { EntityMesh } from '../render/entitymesh.js';
 import { buildSkins } from '../render/models.js';
 import { buildItemSprites } from '../world/itemsprites.js';
-import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, TINT, MAT, WOOL_COLORS } from '../world/blocks.js';
+import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_BED, TINT, MAT, WOOL_COLORS } from '../world/blocks.js';
+import { newEndState } from './travel.js';
 import { t, itemName } from '../ui/i18n.js';
 import { PAD } from './gamepad.js';
 import { mat4 } from '../engine/math.js';
@@ -23,7 +24,10 @@ const STARTER_KIT = [[ITEM.WOODEN_SWORD, 1], [ITEM.WOODEN_PICKAXE, 1], [ITEM.WOO
 const TINT_RGB = {
   [TINT.GRASS]: [0.5, 0.76, 0.33], [TINT.FOLIAGE]: [0.42, 0.7, 0.27], [TINT.BIRCH]: [0.52, 0.68, 0.36], [TINT.SPRUCE]: [0.4, 0.58, 0.4],
 };
-const MOB_SOUND = { zombie: 'zombie', skeleton: 'skeleton', spider: 'spider', cow: 'cow', pig: 'pig', sheep: 'sheep', chicken: 'chicken' };
+const MOB_SOUND = {
+  zombie: 'zombie', skeleton: 'skeleton', spider: 'spider', cow: 'cow', pig: 'pig', sheep: 'sheep', chicken: 'chicken',
+  zombified_piglin: 'zombified_piglin', ghast: 'ghast', blaze: 'blaze', enderman: 'enderman', ender_dragon: 'dragon', end_crystal: 'crystal',
+};
 
 export function installPlay(Game) {
   const P = Game.prototype;
@@ -53,7 +57,16 @@ export function installPlay(Game) {
     this.settings.gameMode = this.mode;
     this.settings.difficulty = this.difficulty;
     this.inventory.onChange = () => this.refreshInventoryUI();
-    this.sim = new Simulation(this.world, { difficulty: this.difficulty });
+    this.sim = new Simulation(this.world, { difficulty: this.difficulty, dimension: this.dimension || 0 });
+    if (this.dimension === 1) this.sim.fortressesNear = (x, z) => this.world.generator.fortressesNear(x, z, 40);
+    this.endState = data && data.endState && Array.isArray(data.endState.crystals) ? data.endState : newEndState();
+    this.sleeping = null;
+    this.arrival = null;
+    this.portalTime = 0;
+    this.dragon = null;
+    this.crops = new Map();
+    this.fires = new Map();
+    this.scanWorldBlocks();
     this.sim.pickup = (id, itemId, count, wear) => this.pickupItem(itemId, count, wear);
     const me = this.sim.addPlayer('local', { mode: this.mode });
     if (data && data.player && typeof data.player.health === 'number') { me.health = data.player.health; me.air = data.player.air ?? MAX_AIR; }
@@ -80,7 +93,12 @@ export function installPlay(Game) {
     this.ui.renderHotbar(this.inventory.slots.slice(0, 9), this.selected, !this.isCreative());
     if (this.state === 'inventory') this.ui.renderInventory(this.inventory, this.selected, this.isCreative(), (r) => this.canCraft(r));
     const me = this.me();
-    if (me) this.ui.setVitals(this.isCreative() ? null : { health: me.health, max: MAX_HEALTH, air: me.air, maxAir: MAX_AIR, underwater: this.player.headInWater });
+    if (me) this.ui.setVitals(this.vitals(me));
+  };
+
+  P.vitals = function vitals(me) {
+    if (this.isCreative()) return null;
+    return { health: me.health, max: MAX_HEALTH, air: me.air, maxAir: MAX_AIR, underwater: this.player.headInWater, armor: this.inventory.armorValues().points };
   };
 
   P.pickupItem = function pickupItem(itemId, count, wear) {
@@ -93,21 +111,76 @@ export function installPlay(Game) {
     return count - left;
   };
 
-  // Creative palette: put an item in the selected hotbar slot.
+  // Pick block (middle click) in creative: put an item in the selected hotbar slot.
   P.pickItem = function pickItem(id) {
     if (this.isCreative()) {
-      this.inventory.slots[this.selected] = { id, count: 1, wear: 0 };
+      const d = itemDef(id);
+      this.inventory.slots[this.selected] = { id, count: d ? d.stack : 1, wear: 0 };
       this.inventory.changed();
     }
     this.ui.showBlockName(itemName(itemDef(id)));
     this.audio.play('pop');
   };
 
-  // Survival inventory: swap a storage slot with the selected hotbar slot.
-  P.clickInventorySlot = function clickInventorySlot(i) {
-    if (i < 9) { this.selected = i; this.refreshInventoryUI(); return; }
-    this.inventory.swap(i, this.selected);
+  // ---- the inventory screen (see Inventory.click and ui.renderInventory)
+  P.inventoryClick = function inventoryClick(ref, button) {
+    if (this.inventory.click(ref, button)) this.audio.play('pop');
+  };
+
+  P.inventoryQuick = function inventoryQuick(ref) {
+    if (this.inventory.quickMove(ref)) this.audio.play('pop');
+  };
+
+  // A number key over a slot: swap it with that hotbar slot (armour only takes its own piece).
+  P.inventorySwap = function inventorySwap(ref, hot) {
+    const inv = this.inventory;
+    if (ref === hot) return;
+    if (ref >= ARMOR_REF && inv.slots[hot] && !inv.accepts(ref, inv.slots[hot])) return;
+    inv.swap(ref, hot);
     this.audio.play('pop');
+  };
+
+  // Let go of the held stack outside the window: thrown in front of the player (gone, in creative).
+  P.inventoryOutside = function inventoryOutside() {
+    const inv = this.inventory;
+    const c = inv.cursor;
+    if (!c) return;
+    inv.cursor = null;
+    if (!this.isCreative()) this.throwStack(c);
+    inv.changed();
+  };
+
+  P.inventoryTrash = function inventoryTrash() {
+    if (!this.inventory.cursor) return;
+    this.inventory.cursor = null;
+    this.inventory.changed();
+    this.audio.play('pop');
+  };
+
+  // The creative palette: a click takes a full stack (right click: one) on the cursor; shift-click
+  // puts a stack straight into the inventory; clicking it while holding something deletes that.
+  P.palettePick = function palettePick(id, button, shift) {
+    if (!this.isCreative()) return;
+    const inv = this.inventory;
+    const d = itemDef(id);
+    if (!d) return;
+    if (inv.cursor) { inv.cursor = null; inv.changed(); return; }
+    if (shift) inv.add(id, d.stack);
+    else inv.holdNew(id, button === 2 ? 1 : d.stack);
+    this.ui.showBlockName(itemName(d));
+    this.audio.play('pop');
+  };
+
+  P.throwStack = function throwStack(s) {
+    const p = this.player, e = p.eye, f = p.forward();
+    this.sim.dropItem(s.id, s.count, e[0] + f[0] * 0.5, e[1] - 0.3, e[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], s.wear);
+  };
+
+  // Closing the screen: the held stack goes back into the inventory (what doesn't fit is dropped).
+  P.returnCursorStack = function returnCursorStack() {
+    if (!this.inventory) return;
+    const left = this.inventory.returnCursor();
+    if (left && !this.isCreative()) this.throwStack(left);
   };
 
   P.canCraft = function canCraft(recipe) {
@@ -147,6 +220,10 @@ export function installPlay(Game) {
     const feet = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.1), Math.floor(p.pos[2]));
     const waist = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.8), Math.floor(p.pos[2]));
     me.inLava = feet === BLOCK.LAVA || waist === BLOCK.LAVA;
+    me.inFire = feet === BLOCK.FIRE || waist === BLOCK.FIRE;
+    me.onMagma = p.onGround && this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] - 0.2), Math.floor(p.pos[2])) === BLOCK.MAGMA_BLOCK;
+    me.sneaking = p.sneaking;
+    me.armor = this.inventory.armorValues();
     me.mode = this.mode;
   };
 
@@ -164,8 +241,11 @@ export function installPlay(Game) {
     if (this.hurtFlash > 0) { this.hurtFlash = Math.max(0, this.hurtFlash - dt * 2.2); this.ui.setHurt(this.hurtFlash); }
     // vitals change slowly: refresh a few times a second
     this.vitalsTimer = (this.vitalsTimer || 0) - dt;
-    if (this.vitalsTimer <= 0) { this.vitalsTimer = 0.1; if (me) this.ui.setVitals(this.isCreative() ? null : { health: me.health, max: MAX_HEALTH, air: me.air, maxAir: MAX_AIR, underwater: this.player.headInWater }); }
+    if (this.vitalsTimer <= 0) { this.vitalsTimer = 0.1; if (me) this.ui.setVitals(this.vitals(me)); }
     if (playing) this.ambientCreatures(dt);
+    this.updateSleep(dt);
+    this.updateBlocks(dt);
+    this.updateEnd(dt);
     // a warning as the sun goes down, once a day
     if (!this.isCreative() && this.difficulty !== 'peaceful' && playing) {
       const dusk = this.dayTime > 0.455 && this.dayTime < 0.5;
@@ -189,6 +269,12 @@ export function installPlay(Game) {
     for (const e of this.sim.drainEvents()) {
       if (this.mp) this.forwardSimEvent(e);
       switch (e.type) {
+        case 'pearlLand': case 'eyeTrail': case 'eyeDone': case 'igniteAt': case 'armorHit':
+          this.handleUseEvent(e);
+          break;
+        case 'crystalDeath': case 'bossDeath': case 'dragonGone':
+          this.handleEndEvent(e);
+          break;
         case 'sound': {
           const [v, pan] = spatial(e.pos);
           const name = e.name.endsWith('Attack') ? 'hit' : e.name;
@@ -280,13 +366,16 @@ export function installPlay(Game) {
     this.audio.sfx('playerDeath', 1, 0);
     // everything carried spills on the ground
     const p = this.player.pos;
-    this.inventory.slots.forEach((s, i) => {
-      if (!s) return;
+    if (this.sleeping) this.wakeUp();
+    const spill = (s) => {
       const v = [(Math.random() - 0.5) * 4, 3 + Math.random() * 2, (Math.random() - 0.5) * 4];
       this.sim.dropItem(s.id, s.count, p[0], p[1] + 1, p[2], v, s.wear);
-      this.inventory.slots[i] = null;
-    });
-    this.inventory.changed();
+    };
+    const inv = this.inventory;
+    inv.slots.forEach((s, i) => { if (s) { spill(s); inv.slots[i] = null; } });
+    inv.armor.forEach((s, i) => { if (s) { spill(s); inv.armor[i] = null; } });
+    if (inv.cursor) { spill(inv.cursor); inv.cursor = null; }
+    inv.changed();
     this.input.exitLock();
     this.state = 'dead';
     this.input.enabled = false;
@@ -300,6 +389,23 @@ export function installPlay(Game) {
   };
 
   P.respawn = function respawn() {
+    if (this.dimension !== 0) {
+      // back to the overworld: the bed, or the world's spawn
+      this.travelTo(0, 'home');
+      this.sim.respawnPlayer('local', this.player.pos);
+      this.player.flying = false;
+      this.deathShown = false;
+      this.deathCause = null;
+      this.hurtFlash = 0;
+      this.ui.setHurt(0);
+      this.play();
+      return;
+    }
+    // a bed that has been broken no longer works
+    if (this.spawnPoint && this.world.isChunkReady(this.spawnPoint[0], this.spawnPoint[2])) {
+      const [bx, by, bz] = this.spawnPoint.map(Math.floor);
+      if (!IS_BED[this.world.getBlock(bx, by, bz)]) { this.spawnPoint = null; this.ui.toast(t('bed.missing'), 3000); }
+    }
     const spawn = this.spawnPoint || this.world.generator.findSpawn();
     const spot = this.findStandingSpot(Math.floor(spawn[0]), Math.floor(spawn[2]));
     this.player.pos = [spot[0] + 0.5, spot[1] + 0.02, spot[2] + 0.5];
@@ -359,8 +465,15 @@ export function installPlay(Game) {
       if (attackPressed && this.attackCooldown <= 0) { this.swing = 1; this.attackCooldown = 0.25; this.audio.sfx('swing', 0.5, 0); }
     }
 
-    // ---- use: bow, food, placing
-    if (def && def.kind === 'bow') {
+    // ---- use: things done to a block first (sleeping, tilling, planting, fire, eyes, beds),
+    // then bows, food, thrown things and placing blocks
+    if (usePressed && hit && !aimMob && this.useOnBlock(hit, def)) {
+      tc.tap = false;
+      this.placeTimer = 0.24;
+    } else if (def && (def.kind === 'pearl' || def.kind === 'eye')) {
+      if (usePressed && this.useCooldown <= 0) { this.useCooldown = 0.45; this.throwHeld(def); }
+      tc.tap = false;
+    } else if (def && def.kind === 'bow') {
       const canShoot = creative || this.inventory.has(ITEM.ARROW);
       if (useHeld && canShoot) this.bowDraw = Math.min(1, this.bowDraw + dt / 0.9);
       else if (this.bowDraw > 0.1 || (tc.tap && canShoot)) {
@@ -464,6 +577,7 @@ export function installPlay(Game) {
     const { x, y, z, block } = hit;
     if (block === BLOCK.BEDROCK && y <= 0) return;
     if (!this.world.setBlock(x, y, z, 0)) return;
+    if (IS_BED[block]) this.breakBed(x, y, z, block, drops);
     const above = this.world.getBlock(x, y + 1, z);
     const plantAbove = SHAPE_OF[above] === SHAPE.CROSS || SHAPE_OF[above] === SHAPE.TORCH;
     if (plantAbove) this.world.setBlock(x, y + 1, z, 0);
@@ -521,7 +635,7 @@ export function installPlay(Game) {
 
   P.handState = function handState() {
     const held = this.heldSlot();
-    if (!held || this.state !== 'playing' || this.hudHidden) return null;
+    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping) return null;
     const id = held.id;
     const p = this.player;
     const bob = this.settings.viewBobbing ? p.bobAmount : 0;

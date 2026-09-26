@@ -1,7 +1,7 @@
 // Items: every block is an item (id < 256); tools, weapons, food and materials follow from 256.
 // Pure data, shared by the game, the simulation and (later) the multiplayer server.
 
-import { BLOCK, BLOCKS } from '../world/blocks.js';
+import { BLOCK, BLOCKS, DYES, BED_BLOCKS } from '../world/blocks.js';
 
 export const ITEM_BASE = 256;
 const defs = [];
@@ -65,6 +65,68 @@ item('cooked_chicken', { zh: '熟鸡肉', kind: 'food', heal: 6 });
 item('cooked_mutton', { zh: '熟羊肉', kind: 'food', heal: 6 });
 item('rotten_flesh', { zh: '腐肉', kind: 'food', heal: 1 });
 
+// ---- appended (item ids are saved): the rest of the tool sets, armour, beds, the Nether and the End
+// tool materials. tier = mining level (gold digs fast but only what wood can); dmg = bonus damage
+export const TOOL_MATERIALS = {
+  wooden: { zh: '木', tier: 1, speed: 2, durability: 60, dmg: 0 },
+  stone: { zh: '石', tier: 2, speed: 4, durability: 132, dmg: 1 },
+  iron: { zh: '铁', tier: 3, speed: 6, durability: 251, dmg: 2 },
+  golden: { zh: '金', tier: 1, speed: 12, durability: 33, dmg: 0 },
+  diamond: { zh: '钻石', tier: 4, speed: 8, durability: 1562, dmg: 3 },
+  netherite: { zh: '下界合金', tier: 5, speed: 9, durability: 2032, dmg: 4 },
+};
+const TOOL_KINDS = {
+  sword: { zh: '剑', base: 4 }, pickaxe: { zh: '镐', base: 2 }, axe: { zh: '斧', base: 3 }, shovel: { zh: '锹', base: 2 }, hoe: { zh: '锄', base: 1 },
+};
+function tool(mat, kind) {
+  const m = TOOL_MATERIALS[mat], k = TOOL_KINDS[kind];
+  const damage = kind === 'shovel' ? k.base + Math.floor(m.dmg / 2) : kind === 'hoe' ? 1 : k.base + m.dmg;
+  item(mat + '_' + kind, {
+    zh: m.zh + k.zh, kind, stack: 1, damage, durability: m.durability, tier: m.tier, material: mat,
+    ...(kind === 'sword' ? {} : { speed: m.speed }),
+  });
+}
+for (const kind of ['hoe']) for (const mat of ['wooden', 'stone', 'iron']) tool(mat, kind);
+for (const kind of ['axe', 'shovel', 'hoe']) tool('diamond', kind);
+for (const mat of ['golden', 'netherite']) for (const kind of ['sword', 'pickaxe', 'axe', 'shovel', 'hoe']) tool(mat, kind);
+
+// armour: points per piece (head, chest, legs, feet), toughness, and durability = base x multiplier
+export const ARMOR_MATERIALS = {
+  leather: { zh: '皮革', points: [1, 3, 2, 1], toughness: 0, mult: 5, names: ['帽子', '外套', '裤子', '靴子'] },
+  chainmail: { zh: '锁链', points: [2, 5, 4, 1], toughness: 0, mult: 15 },
+  iron: { zh: '铁', points: [2, 6, 5, 2], toughness: 0, mult: 15 },
+  golden: { zh: '金', points: [2, 5, 3, 1], toughness: 0, mult: 7 },
+  diamond: { zh: '钻石', points: [3, 8, 6, 3], toughness: 2, mult: 33 },
+  netherite: { zh: '下界合金', points: [3, 8, 6, 3], toughness: 3, mult: 37 },
+};
+export const ARMOR_PIECES = ['helmet', 'chestplate', 'leggings', 'boots'];
+const ARMOR_BASE = [11, 16, 15, 13];
+const ARMOR_ZH = ['头盔', '胸甲', '护腿', '靴子'];
+for (const [mat, m] of Object.entries(ARMOR_MATERIALS)) {
+  ARMOR_PIECES.forEach((piece, slot) => {
+    item(mat + '_' + piece, {
+      zh: m.zh + (m.names ? m.names[slot] : ARMOR_ZH[slot]), kind: 'armor', stack: 1, slot, material: mat,
+      armor: m.points[slot], toughness: m.toughness, durability: ARMOR_BASE[slot] * m.mult,
+    });
+  });
+}
+item('flint_and_steel', { zh: '打火石', kind: 'igniter', stack: 1, durability: 65 });
+item('netherite_scrap', { zh: '下界合金碎片' });
+item('netherite_ingot', { zh: '下界合金锭' });
+item('quartz', { name: 'Nether Quartz', zh: '下界石英' });
+item('blaze_rod', { zh: '烈焰棒' });
+item('blaze_powder', { zh: '烈焰粉' });
+item('gold_nugget', { zh: '金粒' });
+item('ender_pearl', { zh: '末影珍珠', kind: 'pearl', stack: 16 });
+item('eye_of_ender', { name: 'Eye of Ender', zh: '末影之眼', kind: 'eye' });
+export const BED_ITEMS = {};
+for (const [c, zh] of DYES) {
+  const [foot, head] = BED_BLOCKS[c];
+  BED_ITEMS[c] = item(c + '_bed', { zh: zh + '床', kind: 'bed', stack: 1, foot, head, color: c });
+}
+// the tools made before the tables above existed learn their material too
+for (const d of defs) if (!d.material && /^(wooden|stone|iron|diamond)_(sword|pickaxe|axe|shovel)$/.test(d.key)) d.material = d.key.split('_')[0];
+
 export const ITEMS = defs;
 
 const blockItem = new Map();
@@ -102,7 +164,16 @@ export function blockDrops(block, rnd = Math.random) {
     case BLOCK.GLOWSTONE: return [[BLOCK.GLOWSTONE, 1]];
     case BLOCK.BOOKSHELF: return [[BLOCK.OAK_PLANKS, 3]];
     case BLOCK.BEDROCK: case BLOCK.WATER: case BLOCK.LAVA: return [];
-    default: return block ? [[block, 1]] : [];
+    case BLOCK.NETHER_QUARTZ_ORE: return [[ITEM.QUARTZ, 1]];
+    case BLOCK.FARMLAND: return [[BLOCK.DIRT, 1]];
+    case BLOCK.WHEAT_0: case BLOCK.WHEAT_1: case BLOCK.WHEAT_2: return [[ITEM.WHEAT_SEEDS, 1]];
+    case BLOCK.WHEAT_3: return [[ITEM.WHEAT, 1], [ITEM.WHEAT_SEEDS, 1 + Math.floor(rnd() * 3)]];
+    case BLOCK.FIRE: case BLOCK.NETHER_PORTAL_X: case BLOCK.NETHER_PORTAL_Z: case BLOCK.END_PORTAL: return [];
+    case BLOCK.END_PORTAL_FRAME: case BLOCK.END_PORTAL_FRAME_EYE: return [];
+    case BLOCK.CRACKED_STONE_BRICKS: return [[BLOCK.CRACKED_STONE_BRICKS, 1]];
+    default:
+      if (BLOCKS[block] && BLOCKS[block].bed) return []; // the bed item drops once, see bedAt()
+      return block ? [[block, 1]] : [];
   }
 }
 
@@ -121,6 +192,16 @@ setHard(['oak_leaves', 'birch_leaves', 'spruce_leaves'], 0.3, 'none');
 setHard(['glass', 'ice', 'glowstone', 'sea_lantern'], 0.45, 'none');
 setHard(['tall_grass', 'fern', 'poppy', 'dandelion', 'cornflower', 'dead_bush', 'torch'], 0.0, 'none');
 setHard(['cactus'], 0.6, 'none');
+setHard(['farmland', 'soul_sand'], 0.6, 'shovel');
+setHard(['netherrack'], 0.6, 'pickaxe', 1);
+setHard(['nether_quartz_ore', 'nether_bricks', 'mossy_stone_bricks', 'cracked_stone_bricks'], 3.0, 'pickaxe', 1);
+setHard(['magma_block'], 0.9, 'pickaxe', 1);
+setHard(['end_stone', 'end_stone_bricks'], 4.0, 'pickaxe', 1);
+setHard(['ancient_debris'], 24, 'pickaxe', 4);
+setHard(['netherite_block'], 40, 'pickaxe', 4);
+setHard(['dragon_egg'], 3.0, 'none');
+setHard(['wheat_0', 'wheat_1', 'wheat_2', 'wheat_3', 'fire'], 0.0, 'none');
+for (const b of BLOCKS) if (b.bed) HARD[b.id] = { t: 0.3, tool: 'none', tier: 0 };
 
 export function breakInfo(block, heldId) {
   const h = HARD[block] || { t: 0.8, tool: 'none', tier: 0 };
@@ -133,7 +214,7 @@ export function breakInfo(block, heldId) {
     else time *= 1.6;
     if (!ok) drops = false;
   } else if (h.tool !== 'none' && held && held.kind === h.tool) time /= held.speed;
-  if (block === BLOCK.BEDROCK) time = Infinity;
+  if (block === BLOCK.BEDROCK || block === BLOCK.END_PORTAL_FRAME || block === BLOCK.END_PORTAL_FRAME_EYE) time = Infinity;
   return { time, drops };
 }
 
@@ -180,4 +261,39 @@ export const RECIPES = [
   [BLOCK.IRON_BLOCK, 1, [[ITEM.IRON_INGOT, 9]]],
   [BLOCK.DIAMOND_BLOCK, 1, [[ITEM.DIAMOND, 9]]],
 ];
+{
+  // every tool of every material: [material item, how many] + sticks
+  const MAT_ITEM = { wooden: 'planks', stone: BLOCK.COBBLESTONE, iron: ITEM.IRON_INGOT, golden: ITEM.GOLD_INGOT, diamond: ITEM.DIAMOND };
+  const SHAPES = { sword: [2, 1], pickaxe: [3, 2], axe: [3, 2], shovel: [1, 2], hoe: [2, 2] };
+  const have = new Set(RECIPES.map((r) => r[0]));
+  for (const [mat, src] of Object.entries(MAT_ITEM)) {
+    for (const [kind, [n, sticks]] of Object.entries(SHAPES)) {
+      const id = ITEM[(mat + '_' + kind).toUpperCase()];
+      if (id && !have.has(id)) RECIPES.push([id, 1, [[src, n], [ITEM.STICK, sticks]]]);
+    }
+  }
+  // armour: 5 for a helmet, 8 for a chestplate, 7 for leggings, 4 for boots
+  const ARMOR_SRC = { leather: ITEM.LEATHER, iron: ITEM.IRON_INGOT, golden: ITEM.GOLD_INGOT, diamond: ITEM.DIAMOND };
+  for (const [mat, src] of Object.entries(ARMOR_SRC)) {
+    ARMOR_PIECES.forEach((piece, i) => RECIPES.push([ITEM[(mat + '_' + piece).toUpperCase()], 1, [[src, [5, 8, 7, 4][i]]]]));
+  }
+  // chainmail from iron and string (there is no chain item)
+  ARMOR_PIECES.forEach((piece, i) => RECIPES.push([ITEM[('chainmail_' + piece).toUpperCase()], 1, [[ITEM.IRON_INGOT, [2, 4, 3, 2][i]], [ITEM.STRING, [3, 4, 4, 2][i]]]]));
+  // netherite: smelt debris into scrap, alloy it with gold, then upgrade diamond gear with an ingot
+  RECIPES.push([ITEM.NETHERITE_SCRAP, 1, [[BLOCK.ANCIENT_DEBRIS, 1], [ITEM.COAL, 1]]]);
+  RECIPES.push([ITEM.NETHERITE_INGOT, 1, [[ITEM.NETHERITE_SCRAP, 4], [ITEM.GOLD_INGOT, 4]]]);
+  for (const kind of ['sword', 'pickaxe', 'axe', 'shovel', 'hoe']) RECIPES.push([ITEM['NETHERITE_' + kind.toUpperCase()], 1, [[ITEM['DIAMOND_' + kind.toUpperCase()], 1], [ITEM.NETHERITE_INGOT, 1]]]);
+  for (const piece of ARMOR_PIECES) RECIPES.push([ITEM['NETHERITE_' + piece.toUpperCase()], 1, [[ITEM['DIAMOND_' + piece.toUpperCase()], 1], [ITEM.NETHERITE_INGOT, 1]]]);
+  RECIPES.push([BLOCK.NETHERITE_BLOCK, 1, [[ITEM.NETHERITE_INGOT, 9]]]);
+  // beds: three wool of one colour and three planks
+  for (const [c] of DYES) RECIPES.push([BED_ITEMS[c], 1, [[BLOCK[(c + '_wool').toUpperCase()], 3], ['planks', 3]]]);
+  RECIPES.push([ITEM.FLINT_AND_STEEL, 1, [[ITEM.IRON_INGOT, 1], [ITEM.FLINT, 1]]]);
+  RECIPES.push([ITEM.BLAZE_POWDER, 2, [[ITEM.BLAZE_ROD, 1]]]);
+  RECIPES.push([ITEM.EYE_OF_ENDER, 1, [[ITEM.ENDER_PEARL, 1], [ITEM.BLAZE_POWDER, 1]]]);
+  RECIPES.push([ITEM.GOLD_INGOT, 1, [[ITEM.GOLD_NUGGET, 9]]]);
+  RECIPES.push([BLOCK.NETHER_BRICKS, 2, [[BLOCK.NETHERRACK, 2], [ITEM.COAL, 1]]]);
+  RECIPES.push([BLOCK.QUARTZ_BLOCK, 1, [[ITEM.QUARTZ, 4]]]);
+  RECIPES.push([BLOCK.END_STONE_BRICKS, 4, [[BLOCK.END_STONE, 4]]]);
+  RECIPES.push([BLOCK.LIGHT_GRAY_WOOL, 1, [[BLOCK.GRAY_WOOL, 1], [BLOCK.WHITE_WOOL, 1]]]);
+}
 export const PLANKS = P;

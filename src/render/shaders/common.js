@@ -37,6 +37,8 @@ layout(std140) uniform Frame {
   vec4 uMoonDir;       // xyz direction to the moon, w night factor
   vec4 uQuality;       // x shadows on, y pcf samples, z volumetric steps, w cloud steps
   vec4 uWeather;       // x precipitation, y surface wetness, z lightning flash, w snow (0/1)
+  vec4 uDim;           // x dimension (0 overworld, 1 the nether, 2 the end), yzw light everywhere
+  vec4 uDimFog;        // rgb haze and sky colour of the nether and the end
 };
 vec3 reconstructRel(vec2 uv, float depth) {
   vec4 p = uInvViewProj * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);

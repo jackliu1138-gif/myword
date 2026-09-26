@@ -16,6 +16,8 @@ import { buildIcons, buildItemIcons } from '../ui/icons.js';
 import { BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
 import { installPlay } from './play.js';
+import { installUse } from './useitems.js';
+import { installTravel } from './travel.js';
 import { installMultiplayer, loadMultiplayerPrefs } from '../net/multiplayer.js';
 import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
 import { Gamepads, PAD } from './gamepad.js';
@@ -182,10 +184,16 @@ export class Game {
       for (const c of this.world.chunks.values()) this.renderer.freeChunk(c);
       this.world.dispose();
     }
-    const edits = data ? World.deserializeEdits(data.edits) : null;
-    const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
-    this.world = new World(seed, { renderDistance: this.settings.renderDistance, workers, edits, meshOptions: { fancyLeaves: this.settings.fancyLeaves !== false } });
-    this.world.onChunkUnload = (c) => this.renderer.freeChunk(c);
+    // each dimension keeps its own block edits; the save holds the overworld's in `edits`
+    const de = (data && data.dimEdits) || {};
+    this.dimEdits = {
+      0: data ? World.deserializeEdits(data.edits) : new Map(),
+      1: World.deserializeEdits(de[1]),
+      2: World.deserializeEdits(de[2]),
+    };
+    this.dimItems = {};
+    this.dimension = data && (data.dimension === 1 || data.dimension === 2) ? data.dimension : 0;
+    this.world = this.createWorld(seed, this.dimension, this.dimEdits[this.dimension]);
     this.player = new Player(this.world);
     this.particles = new Particles(this.world);
     if (data && data.player) {
@@ -221,9 +229,15 @@ export class Game {
     if (!this.world || !this.player || this.state === 'boot') return;
     if (this.mp) { this.mp.net.send({ t: 'save', s: this.mpSaveState() }); return; } // kept on the server
     const me = this.me();
+    const edits = (dim) => {
+      const m = dim === this.dimension ? this.world.edits : this.dimEdits[dim];
+      return m ? World.serializeEditMap(m) : {};
+    };
     const data = {
       version: SAVE_VERSION,
       seed: this.world.seed,
+      dimension: this.dimension || 0,
+      endState: this.endState,
       player: {
         pos: this.player.pos, yaw: this.player.yaw, pitch: this.player.pitch, flying: this.player.flying,
         health: me ? me.health : undefined, air: me ? me.air : undefined,
@@ -232,7 +246,8 @@ export class Game {
       dayCount: this.dayCount || 0,
       selected: this.selected,
       ...this.serializePlay(),
-      edits: this.world.serializeEdits(),
+      edits: edits(0),
+      dimEdits: { 1: edits(1), 2: edits(2) },
       savedAt: Date.now(),
     };
     this.world.dirtyEdits = false;
@@ -307,8 +322,14 @@ export class Game {
         this.refreshInventoryUI();
       }
     });
-    ui.on('invSlot', (i) => this.clickInventorySlot(i));
+    ui.on('invClick', (ref, button) => this.inventoryClick(ref, button));
+    ui.on('invQuick', (ref) => this.inventoryQuick(ref));
+    ui.on('invSwap', (ref, hot) => this.inventorySwap(ref, hot));
+    ui.on('invOutside', () => this.inventoryOutside());
+    ui.on('invTrash', () => this.inventoryTrash());
+    ui.on('palettePick', (id, button, shift) => this.palettePick(id, button, shift));
     ui.on('craft', (i) => this.craft(i));
+    ui.on('wake', () => this.wakeUp());
     ui.on('respawn', () => this.respawn());
     ui.on('setLanguage', (lang) => this.changeSetting('language', lang));
     ui.on('screen', (name) => this.nav.setRoot(name ? document.getElementById(name) : null));
@@ -404,6 +425,7 @@ export class Game {
   // was nothing to go back from (the title screen), so the platform can handle it.
   handleBack() {
     if (this.state === 'chat') { this.closeChat(''); return true; }
+    if (this.sleeping && this.state === 'playing') { this.wakeUp(); return true; }
     if (this.state === 'dead' && this.ui.current === 'death') return true;
     if (this.state === 'inventory') { this.closeInventory(); return true; }
     if (this.state === 'playing') { this.pause(); return true; }
@@ -503,6 +525,7 @@ export class Game {
   }
 
   closeInventory() {
+    this.returnCursorStack();
     this.ui.show(null);
     this.state = 'playing';
     this.input.enabled = true;
@@ -578,7 +601,13 @@ export class Game {
       if (frameInput.wheel) this.selectSlot((this.selected + frameInput.wheel + 9) % 9);
       if (pad.connected && this.state === 'playing') this.applyPadControls(pad, ctl, dt);
       if (!this.isCreative()) { ctl.toggleFly = false; if (this.player.flying) this.player.flying = false; }
+      if (this.sleeping) {
+        if (ctl.jump || ctl.sneak || ctl.forward || ctl.strafe) this.wakeUp();
+        ctl = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, toggleFly: false, autoJump: false };
+      }
     }
+    // arriving in another dimension: portals and platforms appear once the chunks are there
+    this.updateTravel(dt);
 
     // hold on terrain until the spawn chunk exists
     const ready = this.world.isChunkReady(this.player.pos[0], this.player.pos[2]);
@@ -588,7 +617,7 @@ export class Game {
       this.titleAnchor = this.player.pos.slice();
       this.spawnPending = false;
     }
-    if (playing && ready && !this.spawnPending) {
+    if (playing && ready && !this.spawnPending && !this.arrival && !this.sleeping) {
       // fixed sub-steps keep movement identical at any frame rate
       let rem = dt;
       while (rem > 1e-6) {
@@ -614,7 +643,7 @@ export class Game {
     }
 
     // weather
-    if (this.state !== 'paused') {
+    if (this.state !== 'paused' && !this.dimension) {
       this.weather.update(dt, this.settings.weather, (distance) => this.audio.play('thunder', 'stone', 1.2 - distance * 0.7));
     }
 
@@ -630,7 +659,7 @@ export class Game {
 
     // interaction
     this.selection = null;
-    if (playing && !this.spawnPending) this.interact(dt);
+    if (playing && !this.spawnPending && !this.arrival && !this.sleeping) this.interact(dt);
     this.spawnLeaves(dt, cam);
     this.particles.update(dt, [1.2 + this.weather.storm * 2.5, 0.4 + this.weather.storm], performance.now() / 1000);
     this.swing = Math.max(0, this.swing - dt * 4);
@@ -642,8 +671,8 @@ export class Game {
     this.eyeBlock = (this.eyeBlock || 0) + (bl / 15 - (this.eyeBlock || 0)) * (1 - Math.exp(-dt * 1.5));
     const sunY = Math.sin(this.dayTime * Math.PI * 2);
     this.audio.update({
-      skyLight: this.eyeSky, day: sunY > 0 ? 1 : 0, underwater: this.player.headInWater && playing, altitude: eye[1],
-      rain: this.precip.type === 'rain' ? this.precip.amount : 0, storm: this.weather.storm,
+      skyLight: this.eyeSky, day: sunY > 0 ? 1 : 0, underwater: this.player.headInWater && playing, altitude: eye[1], dimension: this.dimension || 0,
+      rain: this.precip.type === 'rain' ? this.precip.amount : 0, storm: this.dimension ? 0 : this.weather.storm,
     });
 
     // autosave
@@ -736,6 +765,13 @@ export class Game {
       if (pad.pressed(PAD.Y)) this.closeInventory();
       if (pad.pressed(PAD.LB)) this.selectSlot((this.selected + 8) % 9, true);
       if (pad.pressed(PAD.RB)) this.selectSlot((this.selected + 1) % 9, true);
+      // X sends the focused stack across (shift-click); the triggers flip through the palette tabs
+      if (pad.pressed(PAD.X)) {
+        const el = document.activeElement;
+        if (el && el.dataset && el.dataset.ref !== undefined && el.dataset.ref !== 'trash') this.inventoryQuick(Number(el.dataset.ref));
+      }
+      if (this.isCreative() && pad.pressed(PAD.LT)) this.ui.switchPaletteTab(-1);
+      if (this.isCreative() && pad.pressed(PAD.RT)) this.ui.switchPaletteTab(1);
     } else if (this.ui.current === 'settings') {
       if (pad.pressed(PAD.LB)) this.ui.switchSettingsTab(-1);
       if (pad.pressed(PAD.RB)) this.ui.switchSettingsTab(1);
@@ -804,6 +840,7 @@ export class Game {
   // What falls from the sky here (none in deserts, snow in the cold and on high peaks)
   // and a top-down map of the columns around the camera so roofs keep it off.
   updatePrecipitation(dt, cam) {
+    if (this.dimension) { this.precip.amount = 0; this.precipType = 'none'; return; }
     this.biomeTimer -= dt;
     if (this.biomeTimer <= 0) {
       this.biomeTimer = 1;
@@ -851,6 +888,13 @@ export class Game {
       f[1] += 0.12;
       const l2 = Math.hypot(...f);
       return { pos, forward: f.map((v) => v / l2), fov: (70 * Math.PI) / 180 };
+    }
+    if (this.sleeping) {
+      const s = this.sleeping;
+      const d = [s.foot[0] - s.head[0], s.foot[2] - s.head[2]];
+      const f = [d[0] * 0.35, 0.94, d[1] * 0.35];
+      const l = Math.hypot(...f);
+      return { pos: [s.head[0] + 0.5, s.head[1] + 0.85, s.head[2] + 0.5], forward: f.map((v) => v / l), fov: (this.settings.fov * Math.PI) / 180 };
     }
     const eye = p.eye;
     const fwd = p.forward();
@@ -914,8 +958,9 @@ export class Game {
     const sunY = Math.sin(this.dayTime * Math.PI * 2);
     // morning mist near sunrise, clearer at noon
     const morning = Math.exp(-Math.pow((this.dayTime - 0.02) / 0.06, 2)) + Math.exp(-Math.pow((this.dayTime - 0.98) / 0.05, 2));
-    const rain = this.weather ? this.weather.rain : 0;
-    const fog = {
+    const dim = this.dimension || 0;
+    const rain = this.weather && !dim ? this.weather.rain : 0;
+    const fog = dim === 1 ? { density: 0.011, falloff: 0.0005 } : dim === 2 ? { density: 0.0035, falloff: 0.0005 } : {
       density: (0.0011 + morning * 0.0045 + (sunY < 0 ? 0.001 : 0)) * (1 + rain * 3.5) + rain * 0.002,
       falloff: 0.03 * (1 - rain * 0.5),
     };
@@ -935,13 +980,14 @@ export class Game {
       cloudCoverage: this.settings.cloudCoverage,
       cloudOffset: this.cloudOffset,
       brightness: this.settings.brightness,
-      weather: {
+      weather: dim ? { rain: 0, storm: 0, wetness: 0, flash: 0, snow: false } : {
         rain: this.weather.rain,
         storm: this.weather.storm,
         wetness: this.precipType === 'none' ? 0 : this.weather.wetness,
         flash: this.weather.flash,
         snow: this.precip.type === 'snow',
       },
+      dimension: dim,
       precip: this.precip,
       selection: this.hudHidden ? null : this.selection,
       particles: this.particles,
@@ -1012,4 +1058,6 @@ export class Game {
 }
 
 installPlay(Game);
+installUse(Game);
+installTravel(Game);
 installMultiplayer(Game);

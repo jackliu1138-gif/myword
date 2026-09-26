@@ -2,9 +2,11 @@
 // health. Runs at 20 ticks per second on the game's thread in single player; written without
 // DOM or WebGL so the multiplayer server can run the same code.
 
-import { Mob, ItemDrop, Arrow, MOBS, HOSTILE_TYPES, ANIMAL_TYPES, TICK } from './entities.js';
+import { Mob, ItemDrop, Arrow, Thrown, EyeOfEnder, Fireball, MOBS, HOSTILE_TYPES, ANIMAL_TYPES, TICK } from './entities.js';
+import { EnderDragon } from './dragon.js';
 import { rayHitsBox } from './physics.js';
 import { blockDrops, ITEM } from './items.js';
+import { armorReduce } from './inventory.js';
 import { BLOCK, IS_SOLID, IS_LIQUID } from '../world/blocks.js';
 
 const DIFFICULTY = {
@@ -16,6 +18,8 @@ const DIFFICULTY = {
 
 export const MAX_HEALTH = 20;
 export const MAX_AIR = 10;
+// damage that armour does nothing against
+const ARMOR_BYPASS = new Set(['fall', 'drown', 'void', 'pearl']);
 
 export class Simulation {
   constructor(world, opts = {}) {
@@ -27,6 +31,8 @@ export class Simulation {
     this.acc = 0;
     this.ticks = 0;
     this.difficulty = opts.difficulty || 'normal';
+    this.dimension = opts.dimension || 0; // which creatures spawn: 0 overworld, 1 nether, 2 end
+    this.fortressesNear = null; // (x, z) => [{ x, z }] in the nether: where blazes live
     this.spawnMobs = opts.spawnMobs !== false;
     this.pathBudget = 0;
     this.day = true;
@@ -81,6 +87,10 @@ export class Simulation {
       this.emit({ type: 'remoteHurt', id, amount, source, from });
       return true;
     }
+    if (p.armor && p.armor.points > 0 && !ARMOR_BYPASS.has(source)) {
+      this.emit({ type: 'armorHit', id, amount }); // the armour wears down with the blow it takes
+      amount = armorReduce(amount, p.armor.points, p.armor.toughness);
+    }
     p.health = Math.max(0, p.health - amount);
     p.hurtTime = 0.5;
     p.lastDamage = 0;
@@ -118,6 +128,8 @@ export class Simulation {
       } else p.air = Math.min(MAX_AIR, p.air + TICK * 4);
       // lava, fire, cactus, the void
       if (p.inLava) { p.fire = 8; if (this.ticks % 10 === 0) this.damagePlayer(p.id, 4, 'lava'); }
+      if (p.inFire) { p.fire = Math.max(p.fire, 3); if (this.ticks % 10 === 0) this.damagePlayer(p.id, 1, 'fire'); }
+      if (p.onMagma && !p.sneaking && this.ticks % 20 === 0) this.damagePlayer(p.id, 1, 'magma');
       if (p.inWater) p.fire = 0;
       if (p.fire > 0) {
         p.fire -= TICK;
@@ -182,6 +194,70 @@ export class Simulation {
     return a;
   }
 
+  throwPearl(owner, pos, dir) {
+    const v = 24;
+    const e = this.add(new Thrown(this, this.nextId++, owner, ITEM.ENDER_PEARL, pos[0], pos[1], pos[2], dir[0] * v, dir[1] * v + 2, dir[2] * v));
+    this.emit({ type: 'sound', name: 'throw', pos });
+    return e;
+  }
+
+  throwEye(owner, pos, target) {
+    const e = this.add(new EyeOfEnder(this, this.nextId++, owner, pos[0], pos[1], pos[2], target));
+    this.emit({ type: 'sound', name: 'throw', pos });
+    return e;
+  }
+
+  mobFireball(mob, target, small) {
+    if (!target) return;
+    const e = mob.eyePos;
+    const dx = target.pos[0] - e[0], dy = target.pos[1] + 1.2 - e[1], dz = target.pos[2] - e[2];
+    const l = Math.hypot(dx, dy, dz) || 1;
+    const spread = small ? 0.08 : 0.02;
+    const dir = [dx / l + (Math.random() - 0.5) * spread, dy / l + (Math.random() - 0.5) * spread, dz / l + (Math.random() - 0.5) * spread];
+    const k = mob.def.hw + 0.6;
+    this.add(new Fireball(this, this.nextId++, mob.id, e[0] + dir[0] * k, e[1] + dir[1] * k, e[2] + dir[2] * k, dir, small));
+    this.emit({ type: 'sound', name: small ? 'blazeShoot' : 'ghastShoot', pos: e.slice() });
+  }
+
+  // First creature a small projectile touches on its way to `next` (not its owner).
+  projectileHitsMob(proj, next) {
+    const a = proj.body.pos;
+    const d = [next[0] - a[0], next[1] - a[1], next[2] - a[2]];
+    const len = Math.hypot(d[0], d[1], d[2]) || 1e-6;
+    const dir = [d[0] / len, d[1] / len, d[2] / len];
+    for (const e of this.entities.values()) {
+      if (e.kind !== 'mob' || e.id === proj.owner || e.deathTime > 0) continue;
+      const b = e.body;
+      const box = [b.pos[0] - b.hw, b.pos[1], b.pos[2] - b.hw, b.pos[0] + b.hw, b.pos[1] + b.h, b.pos[2] + b.hw];
+      if (rayHitsBox(a, dir, box, len) !== null) return e;
+    }
+    return null;
+  }
+
+  projectileHitsPlayer(proj, next) {
+    const a = proj.body.pos;
+    const d = [next[0] - a[0], next[1] - a[1], next[2] - a[2]];
+    const len = Math.hypot(d[0], d[1], d[2]) || 1e-6;
+    const dir = [d[0] / len, d[1] / len, d[2] / len];
+    for (const p of this.players.values()) {
+      if (p.dead || p.id === proj.owner) continue;
+      const box = [p.pos[0] - p.hw, p.pos[1], p.pos[2] - p.hw, p.pos[0] + p.hw, p.pos[1] + p.h, p.pos[2] + p.hw];
+      if (rayHitsBox(a, dir, box, len) !== null) return p;
+    }
+    return null;
+  }
+
+  spawnDragon(x, y, z, health = 0) {
+    return this.add(new EnderDragon(this, this.nextId++, x, y, z, health));
+  }
+
+  spawnCrystal(x, y, z, index) {
+    const c = this.spawnMob('end_crystal', x, y, z);
+    c.variant = index;
+    c.yaw = 0;
+    return c;
+  }
+
   mobAttack(mob, target) {
     const dmg = (mob.def.damage || 2) * this.diff.damage;
     if (this.damagePlayer(target.id, dmg, mob.type, mob.body.pos)) {
@@ -216,8 +292,10 @@ export class Simulation {
       const box = [b.pos[0] - b.hw, b.pos[1], b.pos[2] - b.hw, b.pos[0] + b.hw, b.pos[1] + b.h, b.pos[2] + b.hw];
       if (rayHitsBox(a, dir, box, len) !== null) {
         const dmg = arrow.damage;
+        if (typeof arrow.owner === 'string') e.lastAttacker = arrow.owner;
         e.hurt(dmg, a, 0.5);
         this.emit({ type: 'hurt', entity: e, pos: b.pos.slice() });
+        this.anger(e, this.players.get(arrow.owner));
         return true;
       }
     }
@@ -257,9 +335,21 @@ export class Simulation {
     if (!entity.hurt(damage * (crit ? 1.5 : 1), from, 1)) return false;
     entity.lastAttacker = playerId;
     this.emit({ type: 'hurt', entity, pos: entity.body.pos.slice(), crit });
-    // hostile creatures turn on whoever hurt them
+    // hostile creatures turn on whoever hurt them; neutral ones too, with their friends nearby
     if (entity.hostile) entity.target = p;
+    this.anger(entity, p);
     return true;
+  }
+
+  anger(entity, p) {
+    if (!entity.def || !entity.def.neutral || !p) return;
+    entity.angryAt = p;
+    for (const e of this.entities.values()) {
+      if (e.type === entity.type && e !== entity && !e.ghost && e.kind === 'mob') {
+        const b = e.body.pos, q = entity.body.pos;
+        if ((b[0] - q[0]) ** 2 + (b[2] - q[2]) ** 2 < 20 * 20) e.angryAt = p;
+      }
+    }
   }
 
   // Another player's hit on one of our creatures.
@@ -272,12 +362,20 @@ export class Simulation {
     this.emit({ type: 'hurt', entity: e, pos: e.body.pos.slice() });
     const p = this.players.get(playerId);
     if (e.hostile && p) e.target = p;
+    this.anger(e, p);
     return true;
   }
 
   onMobDeath(mob) {
     const p = mob.body.pos;
     this.emit({ type: 'death', entity: mob, pos: p.slice() });
+    if (mob.type === 'end_crystal') {
+      mob.removed = true;
+      this.emit({ type: 'crystalDeath', index: mob.variant, pos: p.slice() });
+      this.explode(p[0], p[1] + 1, p[2], 3, mob);
+      return;
+    }
+    if (mob.def.boss) this.emit({ type: 'bossDeath', entity: mob, pos: p.slice(), killer: mob.lastAttacker });
     const loot = [];
     for (const [item, lo, hi] of mob.def.drops || []) {
       let n = lo + Math.floor(Math.random() * (hi - lo + 1));
@@ -344,6 +442,7 @@ export class Simulation {
     if (y < 2 || y > 125) return false;
     if (IS_SOLID[w.getBlock(x, y, z)] || IS_LIQUID[w.getBlock(x, y, z)]) return false;
     if (h > 1 && (IS_SOLID[w.getBlock(x, y + 1, z)] || IS_LIQUID[w.getBlock(x, y + 1, z)])) return false;
+    if (h > 2 && (IS_SOLID[w.getBlock(x, y + 2, z)] || IS_LIQUID[w.getBlock(x, y + 2, z)])) return false;
     const below = w.getBlock(x, y - 1, z);
     return IS_SOLID[below] && below !== BLOCK.CACTUS && below !== BLOCK.BEDROCK;
   }
@@ -372,10 +471,62 @@ export class Simulation {
     return true;
   }
 
+  // A standable spot at a random height near (x, z) between y0 and y1 (caverns, islands).
+  findFloor(x, z, y0, y1, h) {
+    let y = Math.floor(y0 + Math.random() * (y1 - y0));
+    for (let k = 0; k < 24; k++, y--) if (this.standable(x, y, z, h)) return y;
+    return null;
+  }
+
+  pickWeighted(weights) {
+    const total = Object.values(weights).reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    for (const [k, v] of Object.entries(weights)) { r -= v; if (r <= 0) return k; }
+    return Object.keys(weights)[0];
+  }
+
+  // The nether: zombified piglins everywhere, ghasts in big caverns, blazes by the fortresses.
+  // The end: endermen on the islands.
+  trySpawnOther(p) {
+    const w = this.world;
+    const cap = this.dimension === 1 ? Math.max(6, this.diff.hostileCap) : 10;
+    const others = (e) => e.hostile || e.def.neutral;
+    if (this.countNear(others, p.pos, 72) >= cap) return;
+    for (let i = 0; i < 4; i++) {
+      const a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 36;
+      const x = Math.floor(p.pos[0] + Math.cos(a) * r), z = Math.floor(p.pos[2] + Math.sin(a) * r);
+      if (!w.isChunkReady(x, z) || !this.farFromPlayers(x, z, 18)) continue;
+      let type;
+      if (this.dimension === 2) type = 'enderman';
+      else {
+        const forts = this.fortressesNear ? this.fortressesNear(x, z) : [];
+        const weights = { zombified_piglin: 6, ghast: this.diff.hostileCap ? 1.2 : 0, blaze: forts.length && this.diff.hostileCap ? 5 : 0 };
+        type = this.pickWeighted(weights);
+      }
+      const def = MOBS[type];
+      if (type === 'ghast') {
+        // open air, several blocks from any rock
+        const y = Math.floor(40 + Math.random() * 60);
+        let open = true;
+        for (let dy = -2; dy <= 5 && open; dy += 2) for (let dx = -3; dx <= 3 && open; dx += 3) for (let dz = -3; dz <= 3 && open; dz += 3) {
+          if (w.getBlock(x + dx, y + dy, z + dz) !== 0) open = false;
+        }
+        if (open) { this.spawnMob(type, x + 0.5, y, z + 0.5); return; }
+        continue;
+      }
+      const y = this.dimension === 2 ? this.findFloor(x, z, 40, 70, 3) : this.findFloor(x, z, Math.max(20, p.pos[1] - 20), Math.min(122, p.pos[1] + 24), def.h > 2 ? 3 : 2);
+      if (y === null) continue;
+      const n = type === 'zombified_piglin' ? 1 + Math.floor(Math.random() * 3) : 1;
+      for (let k = 0; k < n; k++) this.spawnMob(type, x + 0.5 + k * 0.7, y, z + 0.5);
+      return;
+    }
+  }
+
   trySpawn() {
     const w = this.world;
     for (const p of this.players.values()) {
       if (p.dead || p.remote) continue; // remote players spawn their own
+      if (this.dimension !== 0) { if (this.spawnMobs) this.trySpawnOther(p); continue; }
       // monsters in the dark
       const cap = this.diff.hostileCap;
       if (this.spawnMobs && cap > 0 && this.countNear((e) => e.hostile, p.pos, 72) < cap) {
@@ -386,10 +537,11 @@ export class Simulation {
           // surface at night, or a cave near the player's height
           let y = Math.random() < 0.5 ? w.surfaceHeight(x, z) + 1 : Math.floor(p.pos[1] - 18 + Math.random() * 30);
           let found = false;
-          for (let k = 0; k < 10; k++, y--) if (this.standable(x, y, z, 2)) { found = true; break; }
+          for (let k = 0; k < 10; k++, y--) if (this.standable(x, y, z, 3)) { found = true; break; }
           if (!found || this.lightAt(x, y, z) > 7) continue;
           let types = HOSTILE_TYPES.filter((tp) => !MOBS[tp].nightOnly || !this.day);
-          const weights = { zombie: 4, skeleton: 3, creeper: 3, spider: 2 };
+          if (!this.day) types = types.concat(['enderman']);
+          const weights = { zombie: 4, skeleton: 3, creeper: 3, spider: 2, enderman: 0.6 };
           const total = types.reduce((s, tp) => s + weights[tp], 0);
           let pick = Math.random() * total, type = types[0];
           for (const tp of types) { pick -= weights[tp]; if (pick <= 0) { type = tp; break; } }
@@ -418,6 +570,7 @@ export class Simulation {
   }
 
   despawn(e) {
+    if (e.def && (e.def.boss || e.def.fixed)) return false; // the dragon and its crystals stay
     let near = Infinity;
     for (const p of this.players.values()) {
       const dx = p.pos[0] - e.body.pos[0], dz = p.pos[2] - e.body.pos[2];
@@ -453,7 +606,8 @@ export class Simulation {
     for (const e of this.entities.values()) {
       if (e.removed) { this.entities.delete(e.id); continue; }
       const p = e.body.pos;
-      if (!w.isChunkReady(p[0], p[2])) continue; // frozen until its chunk loads
+      // frozen until its chunk loads (but the dragon never touches the ground, and flies on)
+      if (!w.isChunkReady(p[0], p[2]) && !(e.def && e.def.boss)) continue;
       if (e.kind === 'mob' && !e.ghost && this.ticks % 40 === e.id % 40 && this.despawn(e)) { this.entities.delete(e.id); continue; }
       e.update(this);
       if (e.kind === 'mob' && !e.ghost) mobs.push(e);

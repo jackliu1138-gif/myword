@@ -75,10 +75,16 @@ New worlds start in **survival** (choose creative or a difficulty when you creat
 - **Health and air**: ten hearts; falling, drowning, lava, fire, cacti and monsters hurt you. Health comes back slowly, faster by eating (right-click / LT / tap while holding food).
 - **Monsters come out in the dark**: zombies (burn in sunlight), creepers (hiss, then explode), skeletons (keep their distance and shoot), spiders (climb walls, leap). They find their way to you with A* path finding. Peaceful difficulty has none.
 - **Animals** graze on grass in daylight: cows, pigs, sheep (in several wool colours) and chickens. They drop food and materials.
-- **Mining and tools**: hold to break; cracks show progress. Stone and ores need a pickaxe to drop anything; the right tool (pickaxe, axe, shovel) is faster. Tools and weapons wear out.
+- **Mining and tools**: hold to break; cracks show progress. Stone and ores need a pickaxe to drop anything; the right tool (pickaxe, axe, shovel) is faster. Tools and weapons wear out. Swords, pickaxes, axes, shovels and hoes come in wood, stone, iron, gold (fast but fragile), diamond and netherite (diamond gear plus a netherite ingot, from ancient debris deep in the Nether).
+- **Armour**: leather, chainmail, iron, gold, diamond and netherite helmets, chestplates, leggings and boots. Worn armour (shown above the hearts, and on your model for other players) soaks up damage from monsters, arrows, fire and explosions, and wears down as it does.
 - **Combat**: swords hit harder, jumping hits are critical, hits knock creatures back. The bow charges while held and needs arrows.
-- **Crafting**: open the inventory (E / Y / bag button). Every recipe you can make with what you carry is listed; tap one to craft it (planks, sticks, torches, tools, swords, bow and arrows, bread, cooked meat, glass, bricks...).
-- **Dying** drops everything you carried where you fell; you respawn at the world spawn.
+- **Inventory**: a 36-slot bag, the 9-slot hotbar and 4 armour slots. Click a stack to pick it up (right click: half), click or drag it anywhere to put it down (right click: one), shift-click to send it between bag and hotbar or onto your body, 1–9 over a slot to swap it with the hotbar. Creative mode adds the full palette with category tabs, search and a bin.
+- **Crafting**: every recipe you can make with what you carry is listed; tap one to craft it (tools and armour of every material, beds, bows and arrows, flint and steel, eyes of ender, bread, cooked meat, glass, bricks...).
+- **Farming**: till grass or dirt with a hoe, plant wheat seeds (from tall grass), and harvest the ripe wheat for bread. Crops grow on the world clock, so all players see the same field.
+- **Beds** in all 16 colours: sleep through the night (in multiplayer once everyone in the overworld is in bed) and respawn beside your bed. They explode in the Nether and the End.
+- **The Nether**: build a 4 × 5 obsidian frame and light it with flint and steel. Netherrack caverns over a lava sea, glowstone, quartz, soul sand, ancient debris, and nether brick fortresses; zombified piglins (they fight back if you hit one), ghasts (fireballs) and blazes (blaze rods). Each block there is 8 in the overworld.
+- **The End**: eyes of ender (ender pearl + blaze powder) fly towards the nearest stronghold; fill its portal room's 12 frames and jump in. On the End's island ten obsidian pillars hold end crystals that heal the Ender Dragon; destroy them, defeat the dragon (boss bar at the top) and the exit portal home opens, with the dragon egg. Endermen drop ender pearls, which you can throw to teleport.
+- **Dying** drops everything you carried where you fell; you respawn at your bed (if it's still there) or the world spawn.
 
 The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or WebGL, so the multiplayer server can run the same code.
 
@@ -86,7 +92,7 @@ The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or 
 
 Run `node server/server.mjs` on a server (Node 18+, no packages) and friends open its address in a browser to share one world. The Chinese deployment guide in [server/README.zh-CN.md](server/README.zh-CN.md) covers systemd, https with Caddy and a TURN relay (coturn) for voice.
 
-- **Shared world**: block edits and the time of day are kept on the server (`server/data/world.json`); each player's inventory, health and position are saved by name.
+- **Shared world**: block edits in all three dimensions, the End's dragon fight and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
 - **Creatures** live on the machine of the player they spawned near and are sent to nearby players as snapshots; hits, damage, knockback and loot travel as messages, so everyone can fight the same zombie.
 - **Chat** with Enter. **Voice** is a WebRTC mesh signalled through the server, played through Web Audio with distance falloff and stereo placement ("Nearby"), or at equal volume ("Everyone"). Devices without a microphone still hear everyone.
 - Settings: `PORT`, `PASSWORD`, `SERVER_NAME`, `MAX_PLAYERS`, `SEED`, `GAME_MODE`, `DIFFICULTY`, `DAY_LENGTH`, `TURN_URLS`, `TURN_SECRET` (environment or `server/config.json`).

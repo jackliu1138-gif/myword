@@ -26,7 +26,16 @@ vec3 skyLut(vec3 dir) {
   return texture(uSkyLut, skyLutUV(dir)).rgb;
 }
 
+// The nether has only its red haze; the end a dark void with faint drifting blotches.
+vec3 dimSky(vec3 dir) {
+  if (uDim.x < 1.5) return uDimFog.rgb;
+  vec2 p = dir.xz / (abs(dir.y) + 0.35) * 5.0;
+  float n = vnoise2(p + uCamPos.w * 0.01) * 0.6 + vnoise2(p * 2.7 - 3.1) * 0.4;
+  return uDimFog.rgb * (0.55 + 0.9 * n * n);
+}
+
 vec3 fogSky(vec3 dir) {
+  if (uDim.x > 0.5) return uDimFog.rgb;
   return skyLut(normalize(vec3(dir.x, max(dir.y, 0.015), dir.z)));
 }
 
@@ -87,6 +96,7 @@ vec3 sunDisk(vec3 dir) {
 }
 
 vec3 renderSky(vec3 dir, bool disks) {
+  if (uDim.x > 0.5) return dimSky(dir);
   // below the horizon the LUT holds ground-hitting rays; show the horizon haze instead
   vec3 col = dir.y > 0.012 ? skyLut(dir) : fogSky(dir);
   if (disks) {
@@ -111,7 +121,7 @@ vec3 applyFog(vec3 col, vec3 rel, vec3 dir, float dist) {
   float fogInt = dens * exp(-fall * y0) * dist;
   if (abs(dy) > 0.01) fogInt *= (1.0 - exp(-fall * dy)) / (fall * dy);
   float T = exp(-fogInt);
-  float cave = uParams2.w;
+  float cave = uDim.x > 0.5 ? 1.0 : uParams2.w;
   vec3 fogCol = fogSky(dir) * (0.04 + 0.96 * cave * cave);
   vec3 ins = fogCol * (1.0 - T);
   if (uVolumetricOn < 0.5) {
@@ -417,6 +427,8 @@ void main() {
   // --- indirect: sky light from the light map, torches, minimum cave light
   float skyAmb = skyL * skyL * (0.35 + 0.65 * skyL);
   vec3 skyIrr = N.y >= 0.0 ? mix(uHorizonColor.rgb, uSkyColor.rgb, N.y) : mix(uHorizonColor.rgb, uGroundColor.rgb, -N.y);
+  // the nether and the end: a dim light everywhere, even where no sky reaches
+  vec3 dimAmb = uDim.yzw * (0.75 + 0.25 * N.y) * ao * ssao;
   // bounce from sunlit ground and walls
   vec3 bounce = uLightColor.rgb * max(uLightDir.y, 0.0) * 0.045 * (0.6 - 0.4 * N.y);
   vec3 ambient = (skyIrr + bounce + vec3(0.75, 0.8, 1.0) * uWeather.z * 4.0) * skyAmb * ao * ssao;
@@ -424,7 +436,7 @@ void main() {
   float flick = 0.92 + 0.08 * sin(uCamPos.w * 9.0 + world.x * 0.7) * sin(uCamPos.w * 13.7 + world.z * 0.9);
   vec3 torch = vec3(1.0, 0.58, 0.26) * (bl * bl * 1.3 + pow(bl, 8.0) * 2.3) * flick * mix(1.0, ao * ssao, 0.75);
   vec3 floorLight = vec3(0.0022, 0.0026, 0.0036) * ao;
-  vec3 diffuse = albedo * (ambient + torch + floorLight) * (1.0 - metal * 0.85);
+  vec3 diffuse = albedo * (ambient + torch + floorLight + dimAmb) * (1.0 - metal * 0.85);
 
   // environment reflection for smooth surfaces (sky, occluded by the light map)
   vec3 R = reflect(-V, N);
