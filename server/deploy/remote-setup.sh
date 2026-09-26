@@ -37,16 +37,23 @@ fi
 node -v
 
 echo "==> fetching Lumencraft (branch $BRANCH)"
-mkdir -p "$(dirname "$APP_DIR")"
-if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch origin "$BRANCH" >>"$LOG" 2>&1
-  git -C "$APP_DIR" checkout "$BRANCH" >>"$LOG" 2>&1
-  git -C "$APP_DIR" reset --hard "origin/$BRANCH" >>"$LOG" 2>&1
+# GitHub's git-over-HTTPS protocol (the github.com host) is sometimes unreachable from mainland
+# China networks even when the rest of GitHub works, so this downloads a plain tarball from
+# codeload.github.com first (no git protocol involved) and only falls back to `git clone` if that
+# fails too. Either way $APP_DIR ends up holding exactly this branch's current tree — no .git
+# metadata to go stale, so it's just wiped and refetched fresh on every run.
+REPO_SLUG="$(echo "$REPO" | sed -E 's#^(https?://)?github\.com/##; s#\.git$##')"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR"
+if curl -fsSL "https://codeload.github.com/$REPO_SLUG/tar.gz/refs/heads/$BRANCH" 2>>"$LOG" | tar -xz -C "$APP_DIR" --strip-components=1 2>>"$LOG"; then
+  echo "    fetched via codeload.github.com (tarball, $(du -sh "$APP_DIR" | cut -f1))"
 else
-  git clone --branch "$BRANCH" "$REPO" "$APP_DIR" >>"$LOG" 2>&1
+  echo "    codeload didn't work either, falling back to a plain git clone" | tee -a "$LOG"
+  rm -rf "$APP_DIR"
+  git clone --branch "$BRANCH" --depth 1 "$REPO" "$APP_DIR" >>"$LOG" 2>&1
+  echo "    $(git -C "$APP_DIR" log -1 --format='%h %s')"
 fi
 chown -R "$SERVICE_USER" "$APP_DIR"
-echo "    $(git -C "$APP_DIR" log -1 --format='%h %s')"
 
 echo "==> building (npm install + build; a minute or two)"
 # esbuild (needed to build) is the project's only dependency, and it's listed as a devDependency
