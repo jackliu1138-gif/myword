@@ -8,38 +8,46 @@
 #
 set -euo pipefail
 
-PORT="${1:-8080}"
-BRANCH="${2:-claude/browser-minecraft-shaders-qznbst}"
-REPO="${3:-https://github.com/jackliu1138-gif/myword.git}"
+PORT="${1:-${LUMENCRAFT_PORT:-8080}}"
+BRANCH="${2:-${LUMENCRAFT_BRANCH:-claude/browser-minecraft-shaders-qznbst}}"
+REPO="${3:-${LUMENCRAFT_REPO:-https://github.com/jackliu1138-gif/myword.git}}"
 APP_DIR="/opt/games/lumencraft"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 CARD_MARKER="lumencraft-card"
+LOG="/var/log/lumencraft-deploy.log"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run this with sudo: sudo bash remote-setup.sh $PORT $BRANCH" >&2
   exit 1
 fi
 
+: > "$LOG"
+echo "full output of every command below is also kept in $LOG"
+
 echo "==> Node.js"
 if ! command -v node >/dev/null || [ "$(node -v | sed 's/^v//;s/\..*//')" -lt 18 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >>"$LOG" 2>&1
+  apt-get install -y nodejs >>"$LOG" 2>&1
 fi
 node -v
 
 echo "==> fetching Lumencraft (branch $BRANCH)"
 mkdir -p "$(dirname "$APP_DIR")"
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch origin "$BRANCH"
-  git -C "$APP_DIR" checkout "$BRANCH"
-  git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  git -C "$APP_DIR" fetch origin "$BRANCH" >>"$LOG" 2>&1
+  git -C "$APP_DIR" checkout "$BRANCH" >>"$LOG" 2>&1
+  git -C "$APP_DIR" reset --hard "origin/$BRANCH" >>"$LOG" 2>&1
 else
-  git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
+  git clone --branch "$BRANCH" "$REPO" "$APP_DIR" >>"$LOG" 2>&1
 fi
 chown -R "$SERVICE_USER" "$APP_DIR"
+echo "    $(git -C "$APP_DIR" log -1 --format='%h %s')"
 
-echo "==> building"
-sudo -u "$SERVICE_USER" bash -c "cd '$APP_DIR' && npm install --omit=dev --no-audit --no-fund && npm run build"
+echo "==> building (npm install + build; a minute or two)"
+# esbuild (needed to build) is the project's only dependency, and it's listed as a devDependency
+# (the built game itself has none at runtime) — so this must NOT use --omit=dev.
+sudo -u "$SERVICE_USER" bash -c "cd '$APP_DIR' && npm install --no-audit --no-fund && npm run build" >>"$LOG" 2>&1
+tail -3 "$LOG"
 
 echo "==> systemd service (port $PORT)"
 cat > /etc/systemd/system/lumencraft.service <<EOF
