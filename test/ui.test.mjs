@@ -59,8 +59,8 @@ test('name tags project onto the screen where the player stands', async () => {
 
 test('server addresses become WebSocket URLs', async () => {
   const { serverUrl } = await import('../src/net/net.js');
-  const http = { protocol: 'http:', host: '1.2.3.4:8080' };
-  const https = { protocol: 'https:', host: 'game.example.com' };
+  const http = { protocol: 'http:', host: '1.2.3.4:8080', pathname: '/' };
+  const https = { protocol: 'https:', host: 'game.example.com', pathname: '/' };
   assert.equal(serverUrl('', http), 'ws://1.2.3.4:8080/ws');
   assert.equal(serverUrl('', https), 'wss://game.example.com/ws');
   assert.equal(serverUrl('game.example.com', http), 'wss://game.example.com/ws');
@@ -68,4 +68,10 @@ test('server addresses become WebSocket URLs', async () => {
   assert.equal(serverUrl('1.2.3.4:8080', https), 'wss://1.2.3.4:8080/ws');
   assert.equal(serverUrl('http://10.0.0.5:8080', https), 'ws://10.0.0.5:8080/ws');
   assert.equal(serverUrl('wss://x.example.com/ws', http), 'wss://x.example.com/ws');
+  // an empty address means "this same server", at this same page's own directory — so the game
+  // still works when a hub reverse-proxies it under a subpath alongside other games
+  const hub = { protocol: 'http:', host: '1.2.3.4:1777', pathname: '/games/lumencraft/' };
+  assert.equal(serverUrl('', hub), 'ws://1.2.3.4:1777/games/lumencraft/ws');
+  const hubFile = { protocol: 'http:', host: '1.2.3.4:1777', pathname: '/games/lumencraft/index.html' };
+  assert.equal(serverUrl('', hubFile), 'ws://1.2.3.4:1777/games/lumencraft/ws');
 });

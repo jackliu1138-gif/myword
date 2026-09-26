@@ -57,7 +57,9 @@ export function installMultiplayer(Game) {
   P.detectHostServer = async function detectHostServer() {
     if (typeof location === 'undefined' || !/^https?:$/.test(location.protocol)) return null;
     try {
-      const r = await fetch('/lumen-server.json', { cache: 'no-store' });
+      // relative, not "/lumen-server.json": the game may be served from a subpath (e.g. behind a
+      // hub's reverse proxy at /games/lumencraft/), where only that path space is ours
+      const r = await fetch('./lumen-server.json', { cache: 'no-store' });
       if (!r.ok) return null;
       const info = await r.json();
       this.hostServer = info && info.lumencraft ? info : null;

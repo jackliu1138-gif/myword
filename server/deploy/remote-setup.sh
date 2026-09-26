@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Sets up (or updates) Lumencraft on this server: installs Node.js if it's missing, fetches the
-# game, builds the single-file bundle, installs it as a systemd service, and (best effort) adds a
-# card for it to an existing static "game hub" nginx site if one is found. Meant to be copied to
-# the server and run there (server/deploy/deploy.sh does that over SSH); can also be run by hand:
+# game, builds the single-file bundle, installs it as a systemd service, and — when an nginx site
+# matching our "game hub" convention is found — serves it from there too, at ./games/lumencraft/
+# alongside the hub's other games on the SAME port, with only /ws and /lumen-server.json proxied
+# back to this game's own process. No hub found: falls back to serving directly on its own port.
+# Meant to be copied to the server and run there (server/deploy/deploy.sh does that over SSH); can
+# also be run by hand:
 #
 #   sudo bash remote-setup.sh [port] [branch] [repo-url]
 #
@@ -14,6 +17,8 @@ REPO="${3:-${LUMENCRAFT_REPO:-https://github.com/jackliu1138-gif/myword.git}}"
 APP_DIR="/opt/games/lumencraft"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 CARD_MARKER="lumencraft-card"
+WS_MARKER="games/lumencraft/ws"
+GAME_PATH="games/lumencraft"
 LOG="/var/log/lumencraft-deploy.log"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -49,8 +54,12 @@ echo "==> building (npm install + build; a minute or two)"
 sudo -u "$SERVICE_USER" bash -c "cd '$APP_DIR' && npm install --no-audit --no-fund && npm run build" >>"$LOG" 2>&1
 tail -3 "$LOG"
 
-echo "==> systemd service (port $PORT)"
-cat > /etc/systemd/system/lumencraft.service <<EOF
+# ---------------------------------------------------------------- the game's own service
+# Starts bound to every interface first, so the game is reachable on its own port right away
+# regardless of what the hub-integration step below finds; if that step fully succeeds, it tightens
+# this to loopback-only at the end (nginx becomes the only way in, on the hub's existing port).
+write_service() {
+  cat > /etc/systemd/system/lumencraft.service <<EOF
 [Unit]
 Description=Lumencraft multiplayer server
 After=network.target
@@ -63,12 +72,17 @@ ExecStart=$(command -v node) server/server.mjs
 Restart=on-failure
 RestartSec=3
 Environment=PORT=$PORT
+Environment=HOST=$1
 Environment=SERVER_NAME=Lumencraft
 
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
+  systemctl daemon-reload
+}
+
+echo "==> systemd service (port $PORT)"
+write_service 0.0.0.0
 systemctl enable --now lumencraft
 sleep 1
 systemctl --no-pager status lumencraft | head -8
@@ -79,26 +93,105 @@ fi
 
 IP="$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
 
-# ---------------------------------------------------------------- game hub card (best effort)
-# Looks for an nginx site whose index.html has a "gameGrid" of game cards (our own convention,
-# matched loosely) and, if found, inserts a card linking to this game. Never fatal: the service
-# above is already up regardless of whether this succeeds.
-HUB_ADDED=0
-HUB_ROOT=""
+# ---------------------------------------------------------------- game hub integration (best effort)
+# Looks for an nginx site listening on 1777 whose index.html has a "gameGrid" of game cards (our
+# own convention, matched loosely) and, if found: copies the built game into its games/lumencraft/
+# folder, proxies just its two dynamic endpoints back to this service, and adds a card for it.
+# Never fatal and always leaves a working nginx config: every edit is validated with `nginx -t`
+# before it's kept, and reverted otherwise — the systemd service above is already reachable on its
+# own port either way.
+HUB_DONE=0
+HUB_CONF=""
 if command -v nginx >/dev/null; then
-  HUB_ROOT="$(nginx -T 2>/dev/null | awk '
-    /server[ \t]*\{/ { in_server=1; root="" }
-    in_server && /listen[ \t]+[^;]*:?1777/ { listens=1 }
-    in_server && /root[ \t]+/ { gsub(";", ""); root=$2 }
-    in_server && /\}/ { if (listens && root) { print root; exit } in_server=0; listens=0 }
-  ')"
+  for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+    [ -f "$f" ] || continue
+    if grep -Eq 'listen[ \t]+([^;]*:)?1777([ \t]|;)' "$f"; then HUB_CONF="$f"; break; fi
+  done
 fi
-if [ -n "$HUB_ROOT" ] && [ -f "$HUB_ROOT/index.html" ] && grep -q 'gameGrid' "$HUB_ROOT/index.html" 2>/dev/null; then
-  if grep -q "$CARD_MARKER" "$HUB_ROOT/index.html"; then
-    echo "==> the game hub at $HUB_ROOT already has a Lumencraft card, leaving it alone"
-    HUB_ADDED=1
+if [ -n "$HUB_CONF" ]; then
+  HUB_ROOT="$(grep -m1 -E '^\s*root[ \t]' "$HUB_CONF" | awk '{gsub(";", "", $2); print $2}')"
+fi
+if [ -n "${HUB_ROOT:-}" ] && [ -f "$HUB_ROOT/index.html" ] && grep -q 'gameGrid' "$HUB_ROOT/index.html" 2>/dev/null; then
+  echo "==> found a game hub at $HUB_ROOT (nginx site: $HUB_CONF)"
+
+  echo "    copying the built game to $HUB_ROOT/$GAME_PATH/"
+  mkdir -p "$HUB_ROOT/$GAME_PATH"
+  cp -r "$APP_DIR/dist/." "$HUB_ROOT/$GAME_PATH/"
+
+  if grep -q "$WS_MARKER" "$HUB_CONF"; then
+    echo "    the nginx site already proxies this game's endpoints, leaving it alone"
+    NGINX_OK=1
   else
-    echo "==> found a game hub at $HUB_ROOT, adding a card for Lumencraft"
+    NGINX_OK=0
+    NGINX_BAK="$HUB_CONF.bak-$(date +%s)"
+    cp "$HUB_CONF" "$NGINX_BAK"
+    LOCS="$(mktemp)"
+    trap 'rm -f "$LOCS"' EXIT
+    cat > "$LOCS" <<EOF
+    location = /$GAME_PATH/ {
+        try_files /$GAME_PATH/index.html =404;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+    }
+
+    location = /$GAME_PATH/index.html {
+        try_files \$uri =404;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+    }
+
+    location = /$GAME_PATH/ws {
+        proxy_pass http://127.0.0.1:$PORT/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
+    }
+
+    location = /$GAME_PATH/lumen-server.json {
+        proxy_pass http://127.0.0.1:$PORT/lumen-server.json;
+        proxy_set_header Host \$host;
+    }
+EOF
+    # inserted just before the closing brace of the specific server{} block that listens on 1777,
+    # tracking brace depth so it lands in the right place regardless of what else is in the file
+    awk -v addfile="$LOCS" '
+      BEGIN { depth = 0; sawListen = 0; done = 0 }
+      {
+        o = gsub(/\{/, "{", $0); c = gsub(/\}/, "}", $0)
+        newDepth = depth + o - c
+        if ($0 ~ /listen[ \t]+([^;]*:)?1777([ \t]|;)/ && depth >= 1) sawListen = 1
+        if (newDepth == 0 && depth >= 1 && sawListen && !done) {
+          while ((getline line < addfile) > 0) print line
+          close(addfile)
+          done = 1
+        }
+        print $0
+        depth = newDepth
+      }
+    ' "$HUB_CONF" > "$HUB_CONF.new"
+    cp "$HUB_CONF.new" "$HUB_CONF"
+    rm -f "$HUB_CONF.new"
+    if nginx -t >>"$LOG" 2>&1; then
+      systemctl reload nginx
+      echo "    added /$GAME_PATH/ws and /$GAME_PATH/lumen-server.json to $HUB_CONF (backup: $NGINX_BAK)"
+      NGINX_OK=1
+    else
+      echo "    the edited nginx config didn't pass 'nginx -t'; restoring the original (see $LOG)"
+      cp "$NGINX_BAK" "$HUB_CONF"
+      nginx -t >>"$LOG" 2>&1 && systemctl reload nginx || true
+    fi
+  fi
+
+  if [ "$NGINX_OK" = 1 ]; then
+    HUB_DONE=1
+    echo "    switching the service to listen on 127.0.0.1 only (nginx is now the only way in)"
+    write_service 127.0.0.1
+    systemctl restart lumencraft
+    sleep 1
+  fi
+
+  if [ "$HUB_DONE" = 1 ]; then
+    echo "    adding a card for it to the hub (replacing any earlier one first, so re-running this always leaves the current version)"
     cp "$HUB_ROOT/index.html" "$HUB_ROOT/index.html.bak-$(date +%s)"
     if [ -d "$HUB_ROOT/assets/hub" ]; then
       cat > "$HUB_ROOT/assets/hub/lumencraft.svg" <<'SVG'
@@ -152,8 +245,9 @@ SVG
     fi
     IMG_TAG="<img class=\"gameThumb\" src=\"./assets/hub/lumencraft.svg\" alt=\"光影方块世界\">"
     [ -f "$HUB_ROOT/assets/hub/lumencraft.svg" ] || IMG_TAG=""
-    CARD=$(cat <<CARDEOF
-        <a class="gameCard" href="http://$IP:$PORT/" target="_blank" rel="noopener"><!-- $CARD_MARKER -->
+    CARD="$(mktemp)"
+    cat > "$CARD" <<CARDEOF
+        <a class="gameCard" href="./$GAME_PATH/"><!-- $CARD_MARKER -->
           <span class="preview">
             $IMG_TAG
           </span>
@@ -164,26 +258,34 @@ SVG
           <span class="play">进入</span>
         </a>
 CARDEOF
-    )
-    awk -v card="$CARD" '
+    awk -v addfile="$CARD" -v marker="$CARD_MARKER" '
+      BEGIN { skip = 0 }
+      index($0, marker) { skip = 1; next }
+      skip && /<\/a>/ { skip = 0; next }
+      skip { next }
       /class="gameGrid"/ { ingrid=1 }
-      ingrid && /<\/section>/ && !done { print card; done=1 }
+      ingrid && /<\/section>/ && !done { while ((getline line < addfile) > 0) print line; close(addfile); done=1 }
       { print }
-    ' "$HUB_ROOT/index.html" > "$HUB_ROOT/index.html.new" && mv "$HUB_ROOT/index.html.new" "$HUB_ROOT/index.html"
-    if grep -q "$CARD_MARKER" "$HUB_ROOT/index.html"; then
-      HUB_ADDED=1
-      echo "    card added (a .bak copy of the old index.html sits next to it)"
+    ' "$HUB_ROOT/index.html" > "$HUB_ROOT/index.html.new"
+    rm -f "$CARD"
+    if grep -q "$CARD_MARKER" "$HUB_ROOT/index.html.new"; then
+      mv "$HUB_ROOT/index.html.new" "$HUB_ROOT/index.html"
+      echo "    card added (a .bak copy of the previous index.html sits next to it)"
     else
+      rm -f "$HUB_ROOT/index.html.new"
       echo "    could not find where to insert the card automatically; left index.html untouched"
-      mv "$HUB_ROOT"/index.html.bak-* "$HUB_ROOT/index.html" 2>/dev/null || true
     fi
   fi
+elif command -v nginx >/dev/null; then
+  echo "==> no local game hub matching our convention was found; running Lumencraft on its own port"
 else
-  echo "==> no local game hub matching our convention was found; skipping that step"
-  echo "    (this is fine — the game still runs on its own at the address below)"
+  echo "==> nginx isn't installed here; running Lumencraft on its own port"
 fi
 
 echo
-echo "==> Lumencraft is running: http://$IP:$PORT/"
-[ "$HUB_ADDED" = 1 ] && echo "    and a card for it was added to the game hub"
-echo "    (open TCP port $PORT in the cloud console's security group if it's not reachable)"
+if [ "$HUB_DONE" = 1 ]; then
+  echo "==> Lumencraft is running at http://$IP:1777/$GAME_PATH/ (added to the game hub there)"
+else
+  echo "==> Lumencraft is running: http://$IP:$PORT/"
+  echo "    (open TCP port $PORT in the cloud console's security group if it's not reachable)"
+fi

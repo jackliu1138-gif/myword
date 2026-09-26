@@ -5,13 +5,15 @@
 export const PROTOCOL = 1;
 
 // "game.example.com", "1.2.3.4:8080", "https://game.example.com", "wss://..." -> WebSocket URL.
-// Empty: the server this page came from.
+// Empty: the server this page came from, at the same path (the game can be reverse-proxied under
+// a subpath, e.g. a hub serving it at /games/lumencraft/ alongside other games on one origin).
 export function serverUrl(input, loc = typeof location !== 'undefined' ? location : null) {
   let s = String(input || '').trim();
   const pageSecure = loc && loc.protocol === 'https:';
   if (!s) {
     if (!loc || !/^https?:$/.test(loc.protocol)) return null;
-    return `${pageSecure ? 'wss' : 'ws'}://${loc.host}/ws`;
+    const base = loc.pathname.replace(/[^/]*$/, ''); // this page's own directory
+    return `${pageSecure ? 'wss' : 'ws'}://${loc.host}${base}ws`;
   }
   if (/^https?:\/\//i.test(s)) s = s.replace(/^http/i, 'ws');
   if (!/^wss?:\/\//i.test(s)) {
