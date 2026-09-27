@@ -1,7 +1,7 @@
 // Builds the triangles for every creature, dropped item and arrow each frame, interpolating
 // between simulation ticks so movement stays smooth at any frame rate.
 
-import { emitModel, emitBlockCube, emitSprite, emitArrow, modelVertexCount, ENTITY_FLOATS, GEAR_VERTICES } from './models.js';
+import { emitModel, emitBlockCube, emitSprite, emitArrow, emitSignText, modelVertexCount, ENTITY_FLOATS, GEAR_VERTICES } from './models.js';
 import { isBlockItem } from '../sim/items.js';
 import { BLOCK } from '../world/blocks.js';
 
@@ -25,10 +25,15 @@ export class EntityMesh {
     this.data = d;
   }
 
-  // extras: other players in multiplayer ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... })
-  build(sim, cam, alpha, world, t, maxDist = 96, extras = null) {
+  // extras: other players in multiplayer ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... });
+  // signs: the words on signs in view ({ layer, center, nrm, light }, see Game.visibleSigns)
+  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null) {
     let o = 0;
     const p = [0, 0, 0];
+    if (signs) {
+      this.ensure(o + signs.length * 6 * ENTITY_FLOATS);
+      for (const s of signs) o = emitSignText(this.data, o, s.layer, s.center, s.nrm, cam, s.light);
+    }
     if (extras) {
       for (const e of extras) {
         const q = e.pos;
@@ -62,6 +67,7 @@ export class EntityMesh {
         const gear = held || e.armor ? { held, armor: e.armor, sprites: this.sprites } : null;
         o = emitModel(this.data, o, e, e.type, p, yaw, cam, light, this.skins, t, tint, skin, gear);
       } else if (e.kind === 'item') {
+        if (e.pending) continue; // being picked up (waiting for the server)
         this.ensure(o + 36 * ENTITY_FLOATS);
         const bob = Math.sin(e.age * 2.4) * 0.05 + 0.12;
         const q = [p[0], p[1] + bob, p[2]];

@@ -18,6 +18,7 @@ import { mat4 } from '../engine/math.js';
 import { installPlay } from './play.js';
 import { installUse } from './useitems.js';
 import { installTravel } from './travel.js';
+import { installBuilding } from './building.js';
 import { installMultiplayer, loadMultiplayerPrefs } from '../net/multiplayer.js';
 import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
 import { Gamepads, PAD } from './gamepad.js';
@@ -157,10 +158,17 @@ export class Game {
     this.bindUi();
     this.detectHostServer().then((info) => this.ui.setHostServer(info));
 
-    const data = this.opts.freshWorld ? null : await store.loadWorld();
+    // the world played last (older saves come in as the first world of the list)
+    const worlds = await store.listWorlds();
+    this.worldId = store.currentWorldId();
+    if (!worlds.some((w) => w.id === this.worldId) && worlds.length) this.worldId = worlds[0].id;
+    const entry = worlds.find((w) => w.id === this.worldId);
+    this.worldName = entry ? entry.name : '';
+    const data = this.opts.freshWorld ? null : await store.loadWorld(this.worldId);
     const usable = data && SAVE_VERSIONS.includes(data.version);
     const seed = this.opts.seed !== undefined ? this.opts.seed : usable ? data.seed : seedFromString('');
     if (this.opts.mode) this.newWorldMode = this.opts.mode;
+    if (this.opts.freshWorld) { this.worldId = store.newWorldId(); this.worldName = ''; }
     this.loadWorld(seed, usable && data.seed === seed ? data : null);
     this.enterTitle();
     const loop = (t) => {
@@ -173,9 +181,12 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ world lifecycle
-  async loadSinglePlayer() {
-    const data = await store.loadWorld();
+  async loadSinglePlayer(id = this.worldId || store.currentWorldId()) {
+    const data = await store.loadWorld(id);
     const usable = data && SAVE_VERSIONS.includes(data.version);
+    this.worldId = id;
+    const entry = (await store.listWorlds()).find((w) => w.id === id);
+    this.worldName = entry ? entry.name : '';
     this.loadWorld(usable ? data.seed : seedFromString(''), usable ? data : null);
   }
 
@@ -213,7 +224,7 @@ export class Game {
     this.titleAnchor = this.player.pos.slice();
     this.loadingDone = false;
     this.setupWorldPlay(data);
-    this.ui.setTitleMeta({ seed, saved: !!data });
+    this.ui.setTitleMeta({ seed, saved: !!data, name: this.mp ? '' : this.worldName });
     this.ui.setPlayLabel(data ? 'title.continue' : 'title.play');
     this.player.onStep = (b) => this.audio.play('step', b < 0 ? 'water' : materialOf(BLOCKS[b]), 0.8);
     this.player.onLand = (speed, b) => {
@@ -251,7 +262,10 @@ export class Game {
       savedAt: Date.now(),
     };
     this.world.dirtyEdits = false;
-    await store.saveWorld(data);
+    const id = this.worldId || 'default';
+    await store.saveWorld(data, id);
+    store.noteWorld({ id, name: this.worldName || '', mode: this.mode, seed: this.world.seed, savedAt: data.savedAt });
+    store.setCurrentWorldId(id);
   }
 
   // ------------------------------------------------------------------ UI wiring
@@ -274,11 +288,13 @@ export class Game {
         ui.showDevice(collectDeviceInfo(this));
       }, 1000);
     });
-    ui.on('openNewWorld', () => {
+    ui.on('openNewWorld', async () => {
       document.getElementById('seed-input').value = '';
+      const n = (await store.listWorlds()).length + 1;
+      document.getElementById('name-input').value = t('worlds.defaultName', { n });
       ui.syncNewWorld();
       ui.push('newworld');
-      setTimeout(() => document.getElementById('seed-input').focus(), 40);
+      setTimeout(() => document.getElementById('name-input').focus(), 40);
     });
     ui.on('back', () => ui.pop());
     ui.on('toTitle', async () => {
@@ -307,12 +323,56 @@ export class Game {
     ui.on('chatSubmit', (text) => this.closeChat(text));
     ui.on('chatCancel', () => this.closeChat(''));
     ui.on('createWorld', async (seedText, opts = {}) => {
+      // the world we were in is kept: a new one goes beside it in the list
+      await this.save();
       this.newWorldMode = opts.mode || 'survival';
       this.newWorldDifficulty = opts.difficulty || 'normal';
-      await store.deleteWorld();
+      const worlds = await store.listWorlds();
+      this.worldId = store.newWorldId();
+      this.worldName = String(opts.name || '').trim().slice(0, 32) || t('worlds.defaultName', { n: worlds.length + 1 });
       this.loadWorld(seedFromString(seedText), null);
-      this.enterTitle();
+      this.state = 'title';
+      await this.save();
       this.ui.toast(t('toast.newWorld'));
+      this.play();
+    });
+    ui.on('openWorlds', async () => {
+      await this.save();
+      ui.renderWorldList(await store.listWorlds(), this.worldId);
+      ui.push('worlds');
+    });
+    ui.on('worldPlay', async (id) => {
+      if (id !== this.worldId) {
+        await this.save();
+        await this.loadSinglePlayer(id);
+        store.setCurrentWorldId(id);
+        this.ui.toast(t('worlds.loaded', { name: this.worldName || t('worlds.defaultName', { n: 1 }) }), 2000);
+      }
+      this.play();
+    });
+    ui.on('worldRename', async (id, name) => {
+      const clean = String(name || '').trim().slice(0, 32);
+      store.noteWorld({ id, name: clean });
+      if (id === this.worldId) { this.worldName = clean; this.ui.setTitleMeta({ seed: this.world.seed, saved: true, name: clean }); }
+      ui.renderWorldList(await store.listWorlds(), this.worldId);
+    });
+    ui.on('worldDelete', async (id) => {
+      await store.deleteWorld(id);
+      store.forgetWorld(id);
+      const left = await store.listWorlds();
+      if (id === this.worldId) {
+        // the open world went: open the next one, or a fresh world
+        if (left.length) await this.loadSinglePlayer(left[0].id);
+        else {
+          this.worldId = store.newWorldId();
+          this.worldName = t('worlds.defaultName', { n: 1 });
+          this.newWorldMode = 'survival';
+          this.loadWorld(seedFromString(''), null);
+        }
+        store.setCurrentWorldId(this.worldId);
+      }
+      this.ui.toast(t('worlds.deleted'), 1800);
+      ui.renderWorldList(await store.listWorlds(), this.worldId);
     });
     ui.on('pickBlock', (id) => this.pickItem(id));
     ui.on('selectSlot', (i) => {
@@ -330,6 +390,7 @@ export class Game {
     ui.on('palettePick', (id, button, shift) => this.palettePick(id, button, shift));
     ui.on('craft', (i) => this.craft(i));
     ui.on('wake', () => this.wakeUp());
+    ui.on('signDone', (lines) => this.finishSign(lines));
     ui.on('respawn', () => this.respawn());
     ui.on('setLanguage', (lang) => this.changeSetting('language', lang));
     ui.on('screen', (name) => this.nav.setRoot(name ? document.getElementById(name) : null));
@@ -425,17 +486,18 @@ export class Game {
   // was nothing to go back from (the title screen), so the platform can handle it.
   handleBack() {
     if (this.state === 'chat') { this.closeChat(''); return true; }
+    if (this.state === 'sign') { this.finishSign(this.ui.signLines()); return true; }
     if (this.sleeping && this.state === 'playing') { this.wakeUp(); return true; }
     if (this.state === 'dead' && this.ui.current === 'death') return true;
     if (this.state === 'inventory') { this.closeInventory(); return true; }
     if (this.state === 'playing') { this.pause(); return true; }
-    if (['settings', 'help', 'newworld', 'device', 'multiplayer'].includes(this.ui.current)) { this.ui.pop(); return true; }
+    if (['settings', 'help', 'newworld', 'device', 'multiplayer', 'worlds'].includes(this.ui.current)) { this.ui.pop(); return true; }
     if (this.state === 'paused') { this.play(); return true; }
     return false;
   }
 
   menuOpen() {
-    return this.state === 'inventory' || this.state === 'dead' || (this.state !== 'playing' && this.ui.current !== null);
+    return this.state === 'inventory' || this.state === 'dead' || this.state === 'sign' || (this.state !== 'playing' && this.ui.current !== null);
   }
 
   // Arrow keys and OK / Enter in menus (TV remotes send these).
@@ -526,6 +588,7 @@ export class Game {
 
   closeInventory() {
     this.returnCursorStack();
+    this.closeContainer();
     this.ui.show(null);
     this.state = 'playing';
     this.input.enabled = true;
@@ -652,8 +715,9 @@ export class Game {
     this.camera = cam;
     this.updatePrecipitation(dt, cam);
 
-    // streaming and mesh uploads
+    // streaming and mesh uploads; liquids flow
     this.world.update(cam.pos[0], cam.pos[2], cam.forward[0], cam.forward[2]);
+    if (this.state !== 'paused' || this.mp) this.world.updateFluids(dt);
     this.uploadMeshes();
     this.updateLoading();
 
@@ -904,7 +968,7 @@ export class Game {
       bobX = Math.cos(p.bobPhase) * 0.03 * p.bobAmount;
     }
     const right = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
-    const pos = [eye[0] + right[0] * bobX, eye[1] + bobY, eye[2] + right[2] * bobX];
+    const pos = [eye[0] + right[0] * bobX, eye[1] + bobY + (p.stepSmooth || 0), eye[2] + right[2] * bobX];
     if (this.shake > 0) {
       const k = this.shake * this.shake * 0.09, tm = performance.now() / 1000;
       pos[0] += Math.sin(tm * 53) * k; pos[1] += Math.sin(tm * 61 + 1) * k; pos[2] += Math.sin(tm * 47 + 2) * k;
@@ -1060,4 +1124,5 @@ export class Game {
 installPlay(Game);
 installUse(Game);
 installTravel(Game);
+installBuilding(Game);
 installMultiplayer(Game);

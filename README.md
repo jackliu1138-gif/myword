@@ -23,7 +23,7 @@ npm run build    # writes dist/index.html (about 250 KB)
 
 `dist/index.html` runs straight from disk (double-click it) or from any static host. Served over HTTP(S) it is also an installable web app (manifest and icons are copied next to it), so phones and tablets can add it to the home screen and run it full screen.
 
-`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather and the translations, without a browser.
+`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather, flowing liquids, shaped blocks, furnaces and chests, the multiplayer server and the translations, without a browser.
 
 ### Controls
 
@@ -36,9 +36,10 @@ npm run build    # writes dist/index.html (about 250 KB)
 | `Shift` | Sneak (won't walk off edges), fly down |
 | `W` twice or `R` | Sprint |
 | Left click (hold) | Break blocks |
-| Right click | Place the selected block |
+| Right click | Place the selected block; open doors, gates, chests and furnaces; use buckets |
 | Middle click | Pick the block you're looking at |
 | `1`–`9`, mouse wheel | Choose hotbar slot |
+| `Q` (`Ctrl`+`Q`: the stack) | Drop the held item |
 | `E` | Open all blocks |
 | `T` (hold) | Fast-forward the time of day |
 | `F3` or `` ` `` | Debug overlay |
@@ -79,12 +80,18 @@ New worlds start in **survival** (choose creative or a difficulty when you creat
 - **Armour**: leather, chainmail, iron, gold, diamond and netherite helmets, chestplates, leggings and boots. Worn armour (shown above the hearts, and on your model for other players) soaks up damage from monsters, arrows, fire and explosions, and wears down as it does.
 - **Combat**: swords hit harder, jumping hits are critical, hits knock creatures back. The bow charges while held and needs arrows.
 - **Inventory**: a 36-slot bag, the 9-slot hotbar and 4 armour slots. Click a stack to pick it up (right click: half), click or drag it anywhere to put it down (right click: one), shift-click to send it between bag and hotbar or onto your body, 1–9 over a slot to swap it with the hotbar. Creative mode adds the full palette with category tabs, search and a bin.
-- **Crafting**: every recipe you can make with what you carry is listed; tap one to craft it (tools and armour of every material, beds, bows and arrows, flint and steel, eyes of ender, bread, cooked meat, glass, bricks...).
+- **Crafting**: every recipe you can make with what you carry is listed; tap one to craft it (tools and armour of every material, beds, bows and arrows, flint and steel, eyes of ender, bread, chests, furnaces, doors, fences, stairs, slabs, buckets...).
+- **Chests and furnaces**: a chest holds 27 stacks that stay in the world (shift-click moves stacks across). A furnace smelts and cooks: raw iron and raw gold (what those ores drop now) into ingots, sand into glass, cobblestone into stone, clay into bricks, logs into charcoal, meat into food. It burns coal, charcoal, wood or a bucket of lava, keeps cooking while you are away, and glows while lit.
+- **Building blocks**: slabs and stairs in ten materials (walked up without jumping; two slabs make a full block), doors that open (and pair up into double doors), fences that join up and are too tall to jump over, fence gates, trapdoors, ladders to climb, glass panes, iron bars, and signs you can write on (in any language).
+- **Water and lava flow**: liquids spread from their source (water seven blocks, lava three, or seven in the Nether), fall down holes and dry up when the source goes. Water between two sources becomes a source itself; lava meeting water hardens into obsidian or cobblestone. Buckets pick liquids up and pour them out; milk a cow with one.
+- **Trees grow back**: leaves sometimes drop saplings; planted on grass or dirt they grow into oaks, birches and spruces. Bone meal (from bones) speeds up saplings and crops and makes flowers sprout.
+- **Dropped items** (thrown with `Q` or out of the inventory, spilled on death, broken from blocks) lie on the ground until someone walks up to them; in multiplayer everyone sees them and whoever gets there first picks them up.
 - **Farming**: till grass or dirt with a hoe, plant wheat seeds (from tall grass), and harvest the ripe wheat for bread. Crops grow on the world clock, so all players see the same field.
 - **Beds** in all 16 colours: sleep through the night (in multiplayer once everyone in the overworld is in bed) and respawn beside your bed. They explode in the Nether and the End.
 - **The Nether**: build a 4 × 5 obsidian frame and light it with flint and steel. Netherrack caverns over a lava sea, glowstone, quartz, soul sand, ancient debris, and nether brick fortresses; zombified piglins (they fight back if you hit one), ghasts (fireballs) and blazes (blaze rods). Each block there is 8 in the overworld.
 - **The End**: eyes of ender (ender pearl + blaze powder) fly towards the nearest stronghold; fill its portal room's 12 frames and jump in. On the End's island ten obsidian pillars hold end crystals that heal the Ender Dragon; destroy them, defeat the dragon (boss bar at the top) and the exit portal home opens, with the dragon egg. Endermen drop ender pearls, which you can throw to teleport.
 - **Dying** drops everything you carried where you fell; you respawn at your bed (if it's still there) or the world spawn.
+- **Several worlds**: the title screen's world list keeps as many single-player worlds as you like, each with its own name, mode, buildings, inventory and time; open, rename or delete them there.
 
 The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or WebGL, so the multiplayer server can run the same code.
 
@@ -92,7 +99,8 @@ The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or 
 
 Run `node server/server.mjs` on a server (Node 18+, no packages) and friends open its address in a browser to share one world. The Chinese deployment guide in [server/README.zh-CN.md](server/README.zh-CN.md) covers systemd, https with Caddy and a TURN relay (coturn) for voice.
 
-- **Shared world**: block edits in all three dimensions, the End's dragon fight and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
+- **Shared world**: block edits in all three dimensions, the End's dragon fight, chests, furnaces, signs and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
+- **Shared things**: dropped items are seen by everyone and go to whoever reaches them first. A chest or furnace is open to one player at a time (others are told who is using it); furnaces keep cooking on the server; breaking a chest spills what it held for everyone.
 - **Creatures** live on the machine of the player they spawned near and are sent to nearby players as snapshots; hits, damage, knockback and loot travel as messages, so everyone can fight the same zombie.
 - **Chat** with Enter. **Voice** is a WebRTC mesh signalled through the server, played through Web Audio with distance falloff and stereo placement ("Nearby"), or at equal volume ("Everyone"). Devices without a microphone still hear everyone.
 - Settings: `PORT`, `PASSWORD`, `SERVER_NAME`, `MAX_PLAYERS`, `SEED`, `GAME_MODE`, `DIFFICULTY`, `DAY_LENGTH`, `TURN_URLS`, `TURN_SECRET` (environment or `server/config.json`).
@@ -127,10 +135,10 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 - Ten biomes: plains, forest, birch forest, taiga, snowy taiga, desert, beach, ocean, river and mountains.
 - Spaghetti and cheese caves with lava lakes, plus coal, iron, gold and diamond ores.
 - Oak, big oak, birch and spruce trees, cacti, grass, ferns and flowers.
-- 65 placeable blocks, including glass, bricks, metal blocks, wool in 15 colours, torches and light-emitting blocks.
+- Over 150 placeable blocks, including glass, bricks, metal blocks, wool in 16 colours, torches and light-emitting blocks, and blocks with a state (which way they face, open or shut, a liquid's level) such as stairs, doors and flowing water.
 - Terrain generation, light propagation and meshing run in a pool of Web Workers. Meshing uses face culling, per-vertex ambient occlusion and smooth lighting. If workers are unavailable, it falls back to the main thread.
 - Physics covers gravity and axis-separated AABB collision, sprinting, sneaking with edge protection, swimming, flying and optional auto-jump.
-- Water fills gaps next to it, and procedural WebAudio provides material-specific break, place and step sounds plus wind, birds, crickets and cave drips.
+- Water and lava flow (see above), and procedural WebAudio provides material-specific break, place and step sounds plus wind, birds, crickets and cave drips.
 
 ## Project layout
 

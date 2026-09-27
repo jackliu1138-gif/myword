@@ -1,8 +1,9 @@
 // Chunk storage, streaming around the player, and the generation/meshing worker pool.
 
-import { CHUNK_SIZE, WORLD_HEIGHT, BLOCK, IS_SOLID, IS_LIQUID, BLOCKS } from './blocks.js';
+import { CHUNK_SIZE, WORLD_HEIGHT, BLOCK, IS_SOLID, IS_LIQUID, BLOCKS, COLLIDE_KIND, TALL_COLLIDE, collisionBoxes } from './blocks.js';
 import { ChunkMesher } from './mesher.js';
 import { createGenerator } from './dimensions.js';
+import { Fluids } from './fluids.js';
 
 const CS = CHUNK_SIZE;
 const H = WORLD_HEIGHT;
@@ -86,7 +87,7 @@ class WorkerPool {
       if (msg.type === 'gen') {
         this.onResult({ id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, blocks: this.fallback.gen.generateChunk(msg.cx, msg.cz) });
       } else if (msg.type === 'mesh') {
-        const m = this.fallback.mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options);
+        const m = this.fallback.mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options, msg.states);
         m.type = 'mesh';
         m.version = msg.version;
         this.onResult(m);
@@ -105,6 +106,7 @@ class Chunk {
     this.cz = cz;
     this.key = chunkKey(cx, cz);
     this.blocks = null;
+    this.states = null; // block states (facing, open, liquid level...), made when the first one is set
     this.genRequested = false;
     this.version = 0; // bumps on every block change
     this.meshedVersion = -1;
@@ -122,7 +124,8 @@ export class World {
     this.meshOptions = meshOptions || { fancyLeaves: true };
     this.generator = createGenerator(seed, dimension);
     this.chunks = new Map();
-    this.edits = edits || new Map(); // chunkKey -> Map(index -> id)
+    // chunkKey -> Map(index -> id | state << 8): every block changed since generation
+    this.edits = edits || new Map();
     this.renderDistance = renderDistance;
     this.meshQueue = []; // results waiting for upload
     this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r), dimension);
@@ -130,11 +133,11 @@ export class World {
     this.lastCx = null;
     this.lastCz = null;
     this.onChunkUnload = null;
-    this.onEdit = null; // (x, y, z, id) for edits made here (multiplayer sends them on)
-    this.onBlockChanged = null; // (x, y, z, id) for every change, here or from another player
+    this.onEdit = null; // (x, y, z, id | state << 8) for edits made here (multiplayer sends them on)
+    this.onBlockChanged = null; // (x, y, z, id, state) for every change, here or from another player
     this.stats = { generated: 0, meshed: 0 };
     this._last = null;
-    this.pendingFluids = [];
+    this.fluids = new Fluids(this);
   }
 
   getChunk(cx, cz) {
@@ -152,6 +155,20 @@ export class World {
     }
     if (!c.blocks) return 0;
     return c.blocks[(y << 8) | ((z - cz * CS) << 4) | (x - cx * CS)];
+  }
+
+  // The state byte of a block (0 for most).
+  getState(x, y, z) {
+    if (y < 0 || y >= H) return 0;
+    const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
+    let c = this._last;
+    if (!c || c.cx !== cx || c.cz !== cz) {
+      c = this.chunks.get(chunkKey(cx, cz));
+      if (!c) return 0;
+      this._last = c;
+    }
+    if (!c.states) return 0;
+    return c.states[(y << 8) | ((z - cz * CS) << 4) | (x - cx * CS)];
   }
 
   // Sky light (0..15) and block light (0..15) at a position, from the last mesh of that chunk.
@@ -175,24 +192,63 @@ export class World {
     return IS_SOLID[c.blocks[(y << 8) | ((z - cz * CS) << 4) | (x - cx * CS)]] === 1;
   }
 
+  // Does a box (world units) overlap anything creatures can't walk through? Unloaded chunks are
+  // solid. Slabs, stairs, fences, doors and the like use their own boxes.
+  boxCollides(x0, y0, z0, x1, y1, z1) {
+    const bx0 = Math.floor(x0), bx1 = Math.floor(x1), bz0 = Math.floor(z0), bz1 = Math.floor(z1);
+    const by0 = Math.floor(y0), by1 = Math.floor(y1);
+    for (let y = by0 - 1; y <= by1; y++) {
+      for (let z = bz0; z <= bz1; z++) {
+        for (let x = bx0; x <= bx1; x++) {
+          if (y < 0) { if (y >= by0) return true; continue; }
+          if (y >= H) continue;
+          const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
+          let c = this._last;
+          if (!c || c.cx !== cx || c.cz !== cz) {
+            c = this.chunks.get(chunkKey(cx, cz));
+            if (c) this._last = c;
+          }
+          if (!c || !c.blocks) { if (y >= by0) return true; continue; }
+          const i = (y << 8) | ((z - cz * CS) << 4) | (x - cx * CS);
+          const b = c.blocks[i];
+          const kind = COLLIDE_KIND[b];
+          if (kind === 0) continue;
+          if (y < by0 && !TALL_COLLIDE[b]) continue; // only fences reach up into the next cell
+          if (kind === 1) return true;
+          const s = c.states ? c.states[i] : 0;
+          const boxes = collisionBoxes(b, s, (dx, dy, dz) => this.getBlock(x + dx, y + dy, z + dz), (dx, dy, dz) => this.getState(x + dx, y + dy, z + dz));
+          for (const bb of boxes) {
+            if (x + bb[0] < x1 && x + bb[3] > x0 && y + bb[1] < y1 && y + bb[4] > y0 && z + bb[2] < z1 && z + bb[5] > z0) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   isChunkReady(x, z) {
     const c = this.getChunk(Math.floor(x / CS), Math.floor(z / CS));
     return !!(c && c.blocks && c.gpu);
   }
 
-  setBlock(x, y, z, id, { record = true, remote = false } = {}) {
+  // state: the block's state byte (facing, open, liquid level...; 0 for most blocks).
+  setBlock(x, y, z, id, { state = 0, record = true, remote = false } = {}) {
     if (y < 0 || y >= H) return false;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     const c = this.getChunk(cx, cz);
     if (!c || !c.blocks) return false;
     const lx = x - cx * CS, lz = z - cz * CS;
     const i = (y << 8) | (lz << 4) | lx;
-    if (c.blocks[i] === id) return false;
+    state &= 255;
+    const oldState = c.states ? c.states[i] : 0;
+    if (c.blocks[i] === id && oldState === state) return false;
     c.blocks[i] = id;
+    if (state && !c.states) c.states = new Uint8Array(CS * CS * H);
+    if (c.states) c.states[i] = state;
     if (record) {
       let e = this.edits.get(c.key);
       if (!e) { e = new Map(); this.edits.set(c.key, e); }
-      e.set(i, id);
+      e.set(i, id | (state << 8));
       this.dirtyEdits = true;
     }
     // Remesh this chunk urgently; neighbours too (light and face culling cross borders).
@@ -211,47 +267,25 @@ export class World {
       }
     }
     if (!remote) {
-      if (id === 0) this.scheduleFluid(x, y, z);
-      if (this.onEdit) this.onEdit(x, y, z, id);
+      // liquids around a change made here flow (another player's game runs the flow of theirs)
+      this.fluids.changed(x, y, z);
+      if (this.onEdit) this.onEdit(x, y, z, id | (state << 8));
     }
-    if (this.onBlockChanged) this.onBlockChanged(x, y, z, id);
+    if (this.onBlockChanged) this.onBlockChanged(x, y, z, id, state);
     return true;
   }
 
-  // An edit made by another player: recorded for chunks that are not loaded yet, applied now to
-  // those that are.
-  applyRemoteEdit(x, y, z, id) {
+  // An edit made by another player (value = id | state << 8): recorded for chunks that are not
+  // loaded yet, applied now to those that are.
+  applyRemoteEdit(x, y, z, value) {
     if (y < 0 || y >= H) return;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     const key = chunkKey(cx, cz);
     let e = this.edits.get(key);
     if (!e) { e = new Map(); this.edits.set(key, e); }
-    e.set((y << 8) | ((z - cz * CS) << 4) | (x - cx * CS), id);
+    e.set((y << 8) | ((z - cz * CS) << 4) | (x - cx * CS), value);
     const c = this.chunks.get(key);
-    if (c && c.blocks) this.setBlock(x, y, z, id, { record: false, remote: true });
-  }
-
-  // When a block next to water is removed, water flows into the gap (one step, bounded).
-  scheduleFluid(x, y, z) {
-    const n = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]];
-    for (const [dx, dy, dz] of n) {
-      const b = this.getBlock(x + dx, y + dy, z + dz);
-      if (IS_LIQUID[b]) {
-        this.pendingFluids.push({ x, y, z, id: b, t: performance.now() + 250 });
-        return;
-      }
-    }
-  }
-
-  updateFluids() {
-    if (!this.pendingFluids.length) return;
-    const now = performance.now();
-    const keep = [];
-    for (const f of this.pendingFluids) {
-      if (f.t > now) { keep.push(f); continue; }
-      if (this.getBlock(f.x, f.y, f.z) === 0) this.setBlock(f.x, f.y, f.z, f.id);
-    }
-    this.pendingFluids = keep;
+    if (c && c.blocks) this.setBlock(x, y, z, value & 255, { state: value >> 8, record: false, remote: true });
   }
 
   onResult(r) {
@@ -260,7 +294,15 @@ export class World {
       if (!c) return; // unloaded meanwhile
       c.blocks = r.blocks;
       const e = this.edits.get(c.key);
-      if (e) for (const [i, id] of e) c.blocks[i] = id;
+      if (e) {
+        for (const [i, v] of e) {
+          c.blocks[i] = v & 255;
+          if (v > 255) {
+            if (!c.states) c.states = new Uint8Array(CS * CS * H);
+            c.states[i] = v >> 8;
+          } else if (c.states) c.states[i] = 0;
+        }
+      }
       this.stats.generated++;
     } else if (r.type === 'mesh') {
       const c = this.getChunk(r.cx, r.cz);
@@ -291,12 +333,19 @@ export class World {
 
   requestMesh(c) {
     const chunks = [];
+    const states = [];
     for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) chunks.push(this.getChunk(c.cx + dx, c.cz + dz).blocks.slice());
+      for (let dx = -1; dx <= 1; dx++) {
+        const n = this.getChunk(c.cx + dx, c.cz + dz);
+        chunks.push(n.blocks.slice());
+        states.push(n.states ? n.states.slice() : null);
+      }
     }
     c.meshInFlight = true;
     c.urgent = false;
-    this.pool.submit({ type: 'mesh', id: ++this.jobId, cx: c.cx, cz: c.cz, version: c.version, chunks, options: this.meshOptions }, chunks.map((a) => a.buffer));
+    const transfer = chunks.map((a) => a.buffer);
+    for (const s of states) if (s) transfer.push(s.buffer);
+    this.pool.submit({ type: 'mesh', id: ++this.jobId, cx: c.cx, cz: c.cz, version: c.version, chunks, states, options: this.meshOptions }, transfer);
   }
 
   // Stream chunks around (px, pz). viewDir is used to prioritise what's in front.
@@ -386,7 +435,11 @@ export class World {
       }
     }
     this.pool.pump(8);
-    this.updateFluids();
+  }
+
+  // Flowing liquids: called once per frame with the frame time.
+  updateFluids(dt) {
+    this.fluids.update(dt);
   }
 
   // Serialisable edits for saving
@@ -414,6 +467,11 @@ export class World {
 
   dispose() {
     this.pool.terminate();
+  }
+
+  // Is there a ladder (or something else to climb) in the cell?
+  climbableAt(x, y, z) {
+    return BLOCKS[this.getBlock(Math.floor(x), Math.floor(y), Math.floor(z))].climbable === true;
   }
 
   // The top of the first solid block at or below (x, y, z), within 40 blocks (or y - 40).

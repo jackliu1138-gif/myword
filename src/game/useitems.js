@@ -4,6 +4,7 @@
 // putting eyes into end portal frames. Installed as methods on Game.prototype.
 
 import { BLOCK, BLOCKS, IS_BED, BED_PARTNER, IS_SOLID, IS_LIQUID } from '../world/blocks.js';
+import { SAPLINGS } from './building.js';
 import { ITEM, itemDef, BED_ITEMS } from '../sim/items.js';
 import { ARMOR_REF } from '../sim/inventory.js';
 import { hash3 } from '../world/noise.js';
@@ -22,7 +23,12 @@ export function installUse(Game) {
     const w = this.world, b = hit.block;
     const { x, y, z } = hit;
     if (IS_BED[b] && !this.player.sneaking) { this.useBed(x, y, z, b); return true; }
+    // doors, gates and trapdoors open, chests and furnaces open up, signs can be rewritten
+    if (!this.player.sneaking && this.useBlock(hit)) return true;
     if (!def) return false;
+    if (def.kind === 'door') return this.placeDoor(hit, def);
+    if (def.kind === 'sign') return this.placeSign(hit);
+    if (def.kind === 'fertilizer') return this.useBoneMeal(hit);
     if (def.kind === 'eye' && b === BLOCK.END_PORTAL_FRAME) return this.insertEye(x, y, z);
     if (def.kind === 'hoe' && (b === BLOCK.GRASS || b === BLOCK.DIRT || b === BLOCK.SNOWY_GRASS) && hit.normal[1] >= 0) {
       const above = w.getBlock(x, y + 1, z);
@@ -276,7 +282,8 @@ export function installUse(Game) {
   // Every changed block passes through here (ours and other players').
   P.onBlockChanged = function onBlockChanged(x, y, z, id) {
     const key = x + ',' + y + ',' + z;
-    if (id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) this.crops.set(key, [x, y, z]); else this.crops.delete(key);
+    if ((id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) || SAPLINGS.has(id)) this.crops.set(key, [x, y, z]); else this.crops.delete(key);
+    this.blockEntityChanged(x, y, z, id);
     if (id === BLOCK.FIRE) this.fires.set(key, { x, y, z, until: performance.now() + 4000 + Math.random() * 5000 });
     else this.fires.delete(key);
     // a changed block can break a nether portal's frame
@@ -290,8 +297,9 @@ export function installUse(Game) {
     this.fires = this.fires || new Map();
     for (const [key, m] of this.world.edits) {
       const cx = Math.floor(key / 65536) - 32768, cz = (key % 65536) - 32768;
-      for (const [i, id] of m) {
-        if ((id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) || id === BLOCK.FIRE) {
+      for (const [i, v] of m) {
+        const id = v & 255;
+        if ((id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) || id === BLOCK.FIRE || SAPLINGS.has(id)) {
           const x = cx * 16 + (i & 15), z = cz * 16 + ((i >> 4) & 15), y = i >> 8;
           const k = x + ',' + y + ',' + z;
           if (id === BLOCK.FIRE) { if (!this.fires.has(k)) this.fires.set(k, { x, y, z, until: performance.now() + 3000 }); }
@@ -315,10 +323,12 @@ export function installUse(Game) {
         for (const [key, [x, y, z]] of this.crops) {
           if (!w.isChunkReady(x, z)) continue;
           const b = w.getBlock(x, y, z);
-          if (b < BLOCK.WHEAT_0 || b >= BLOCK.WHEAT_3) { this.crops.delete(key); continue; }
+          const sapling = SAPLINGS.has(b);
+          if (!sapling && (b < BLOCK.WHEAT_0 || b >= BLOCK.WHEAT_3)) { this.crops.delete(key); continue; }
           const [sl, bl] = w.getLight(x, y + 1, z);
           if (Math.max(sl, bl) < 9) continue;
-          if (hash3(x, y, z, tick) < 0.42) w.setBlock(x, y, z, b + 1);
+          if (sapling) this.saplingTick(x, y, z, b, tick);
+          else if (hash3(x, y, z, tick) < 0.42) w.setBlock(x, y, z, b + 1);
         }
       }
     }

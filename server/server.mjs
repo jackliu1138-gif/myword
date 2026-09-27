@@ -16,8 +16,16 @@ import { gzipSync } from 'node:zlib';
 import { extname, join, normalize, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { acceptUpgrade } from './ws.mjs';
+// the game's own rules for items, chests and furnaces (plain data modules, no browser needed)
+import { BLOCKS } from '../src/world/blocks.js';
+import { itemDef } from '../src/sim/items.js';
+import { loadEntity, serializeEntity, serializeEntities, loadEntities, newEntity, tickFurnace, furnaceLit, contentsOf, parseKey } from '../src/sim/containers.js';
 
-export const PROTOCOL = 2; // 2: beds, armour, the nether and the end (new block and item ids)
+// 2: beds, armour, the nether and the end (new block and item ids); 3: block states in edits
+// (id | state << 8), shared dropped items, chests, furnaces and signs
+export const PROTOCOL = 3;
+const ITEM_LIFE = 5 * 60 * 1000; // dropped items vanish after five minutes, as they do in the game
+const MAX_ITEMS = 3000;
 const here = dirname(fileURLToPath(import.meta.url));
 
 function loadConfig(overrides = {}) {
@@ -79,8 +87,13 @@ export function startServer(overrides = {}) {
   const cfg = loadConfig(overrides);
   const log = (...a) => { if (!cfg.quiet) console.log(new Date().toISOString().slice(0, 19).replace('T', ' '), ...a); };
   const worldFile = join(cfg.dataDir, 'world.json');
-  // edits: the overworld's; dimEdits: the nether's (1) and the end's (2)
-  const world = { seed: 0, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {} };
+  // edits: the overworld's; dimEdits: the nether's (1) and the end's (2); bents: chests, furnaces
+  // and signs per dimension ("x,y,z" -> entity); items: dropped items everyone sees (not saved)
+  const world = {
+    seed: 0, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {},
+    bents: { 0: new Map(), 1: new Map(), 2: new Map() }, items: new Map(),
+  };
+  const locks = new Map(); // "d:x,y,z" -> client holding that chest or furnace open
   let dirty = false;
   let nextId = 1;
   const clients = new Map();
@@ -105,6 +118,8 @@ export function startServer(overrides = {}) {
       readEdits(d.dimEdits && d.dimEdits[1], world.dimEdits[1]);
       readEdits(d.dimEdits && d.dimEdits[2], world.dimEdits[2]);
       world.endState = d.endState && typeof d.endState === 'object' ? d.endState : null;
+      const be = d.bents && typeof d.bents === 'object' ? d.bents : {};
+      for (const dim of [0, 1, 2]) world.bents[dim] = loadEntities(be[dim]);
       log(`world loaded: seed ${world.seed}, ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players`);
     } catch (e) {
       world.seed = seedFromString(cfg.seed);
@@ -129,6 +144,7 @@ export function startServer(overrides = {}) {
       const body = JSON.stringify({
         version: 1, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(),
         dimEdits: serializeDimEdits(), endState: world.endState, players: world.players,
+        bents: { 0: serializeEntities(world.bents[0]), 1: serializeEntities(world.bents[1]), 2: serializeEntities(world.bents[2]) },
       });
       const tmp = worldFile + '.tmp';
       await writeFile(tmp, body);
@@ -138,6 +154,7 @@ export function startServer(overrides = {}) {
     try { await job; } catch (e) { dirty = true; console.error('saving the world failed:', e.message); } finally { if (saving === job) saving = null; }
   }
 
+  // b: id | state << 8
   function applyEdit(x, y, z, b, d = 0) {
     const edits = d === 1 || d === 2 ? world.dimEdits[d] : world.edits;
     const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
@@ -146,6 +163,45 @@ export function startServer(overrides = {}) {
     if (!m) { m = new Map(); edits.set(k, m); }
     m.set((y << 8) | ((z - cz * 16) << 4) | (x - cx * 16), b);
     dirty = true;
+    blockChanged(x, y, z, b & 255, d);
+  }
+
+  // The edited value at a block (id | state << 8), or null if it was never edited.
+  function editAt(x, y, z, d) {
+    const edits = d === 1 || d === 2 ? world.dimEdits[d] : world.edits;
+    const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+    const m = edits.get(chunkKey(cx, cz));
+    const v = m && m.get((y << 8) | ((z - cz * 16) << 4) | (x - cx * 16));
+    return v === undefined ? null : v;
+  }
+
+  // ------------------------------------------------------------------ chests, furnaces, signs
+  const kindOf = (id) => { const bd = BLOCKS[id]; return bd ? bd.container || (bd.sign ? 'sign' : null) : null; };
+  const lockKey = (d, k) => d + ':' + k;
+
+  // A block changed: a chest or furnace whose block is gone spills what it held, for everyone.
+  function blockChanged(x, y, z, id, d) {
+    const k = x + ',' + y + ',' + z;
+    const e = world.bents[d].get(k);
+    if (!e || kindOf(id) === e.kind) return;
+    world.bents[d].delete(k);
+    const holder = locks.get(lockKey(d, k));
+    if (holder) { locks.delete(lockKey(d, k)); send(holder, { t: 'cgone', k, d }); }
+    if (e.kind === 'sign') broadcast({ t: 'bent', k, d, e: null });
+    let n = 0;
+    for (const [it, count, wear] of contentsOf(e)) {
+      spawnItem({ i: 's.' + Date.now().toString(36) + '.' + (n++) + '.' + Math.floor(Math.random() * 1e6), it, n: count, w: wear, dl: 0.5, p: [x + 0.5, y + 0.5, z + 0.5], v: [(Math.random() - 0.5) * 3, 3, (Math.random() - 0.5) * 3], d });
+    }
+  }
+
+  // ------------------------------------------------------------------ dropped items
+  // an item as players see it (without the server's own timestamp)
+  const itemInfo = (it) => ({ i: it.i, it: it.it, n: it.n, w: it.w, dl: it.dl, p: it.p, v: it.v, d: it.d });
+  function spawnItem(it, from = null) {
+    it.at = Date.now();
+    world.items.set(it.i, it);
+    if (world.items.size > MAX_ITEMS) world.items.delete(world.items.keys().next().value);
+    broadcast({ t: 'drop', ...itemInfo(it) }, from);
   }
 
   // ------------------------------------------------------------------ voice: ICE servers
@@ -218,6 +274,9 @@ export function startServer(overrides = {}) {
       t: 'welcome', v: PROTOCOL, id: c.id, name: cfg.name, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount,
       dayLength: cfg.dayLength, mode: cfg.mode, difficulty: cfg.difficulty, edits: serializeEdits(), dimEdits: serializeDimEdits(),
       endState: world.endState, endHost, me: saved,
+      // signs everyone can read (what chests and furnaces hold is sent when one is opened)
+      bents: Object.fromEntries([0, 1, 2].map((d) => [d, Object.fromEntries([...world.bents[d]].filter(([, e]) => e.kind === 'sign').map(([k, e]) => [k, serializeEntity(e)]))])),
+      items: [...world.items.values()].map(itemInfo),
       players: [...clients.values()].filter((o) => o.ready && o !== c).map((o) => ({ id: o.id, n: o.name, st: o.state, voice: o.voice })),
       ice: iceServersFor(c.id),
     };
@@ -294,12 +353,74 @@ export function startServer(overrides = {}) {
           if (!Array.isArray(e) || c.editCount >= 4000) break;
           const [x, y, z, b] = e;
           if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z) || !Number.isInteger(b)) continue;
-          if (y < 0 || y > 127 || b < 0 || b > 255 || Math.abs(x) > 5e5 || Math.abs(z) > 5e5) continue;
+          if (y < 0 || y > 127 || b < 0 || b > 65535 || !BLOCKS[b & 255] || Math.abs(x) > 5e5 || Math.abs(z) > 5e5) continue;
           applyEdit(x, y, z, b, dim);
           out.push([x, y, z, b]);
           c.editCount++;
         }
         if (out.length) broadcast(dim ? { t: 'b', id: c.id, l: out, d: dim } : { t: 'b', id: c.id, l: out }, c);
+        break;
+      }
+      case 'drop': { // an item dropped in someone's game: everyone sees it, one player gets it
+        const i = typeof m.i === 'string' ? m.i.slice(0, 48) : '';
+        const it = int(m.it);
+        if (!i || !i.startsWith(c.id + '.') || world.items.has(i) || !it || !itemDef(it)) return;
+        const now = Date.now();
+        if (now - c.dropWindow > 1000) { c.dropWindow = now; c.dropCount = 0; }
+        if (++c.dropCount > 80) return;
+        const vec = (a) => (Array.isArray(a) ? a.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : [0, 0, 0]);
+        spawnItem({ i, it, n: Math.max(1, Math.min(64, int(m.n) || 1)), w: Math.max(0, int(m.w) || 0), dl: num(m.dl, 0, 5, 0.5), p: vec(m.p), v: vec(m.v).map((v) => Math.max(-30, Math.min(30, v))), d: m.d === 1 || m.d === 2 ? m.d : 0 }, c);
+        break;
+      }
+      case 'take': { // first come, first served
+        const i = String(m.i || '');
+        if (world.items.has(i)) {
+          world.items.delete(i);
+          send(c, { t: 'took', i, by: c.id });
+          broadcast({ t: 'gone', i }, c);
+        } else send(c, { t: 'gone', i });
+        break;
+      }
+      case 'open': { // a chest or furnace: lent to one player at a time
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const k = String(m.k || '');
+        if (!/^-?\d+,-?\d+,-?\d+$/.test(k)) return;
+        const lk = lockKey(d, k);
+        const holder = locks.get(lk);
+        if (holder && holder !== c && clients.get(holder.id) === holder) { send(c, { t: 'cont', k, busy: holder.name }); return; }
+        const [x, y, z] = parseKey(k);
+        const v = editAt(x, y, z, d);
+        const kind = v === null ? null : kindOf(v & 255);
+        if (kind !== 'chest' && kind !== 'furnace') { send(c, { t: 'cont', k, c: null }); return; }
+        let e = world.bents[d].get(k);
+        if (!e || e.kind !== kind) { e = newEntity(kind); world.bents[d].set(k, e); }
+        locks.set(lk, c);
+        send(c, { t: 'cont', k, c: serializeEntity(e) });
+        break;
+      }
+      case 'cput': case 'close': { // what the player holding it open has done with it
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const k = String(m.k || '');
+        const lk = lockKey(d, k);
+        if (locks.get(lk) !== c) return;
+        const old = world.bents[d].get(k);
+        const e = loadEntity(m.c);
+        if (old && e && e.kind === old.kind) { world.bents[d].set(k, e); dirty = true; }
+        if (m.t === 'close') locks.delete(lk);
+        break;
+      }
+      case 'bent': { // a sign's words
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const k = String(m.k || '');
+        if (!/^-?\d+,-?\d+,-?\d+$/.test(k)) return;
+        const e = loadEntity(m.e);
+        if (!e || e.kind !== 'sign') return;
+        const [x, y, z] = parseKey(k);
+        const v = editAt(x, y, z, d);
+        if (v === null || kindOf(v & 255) !== 'sign') return;
+        world.bents[d].set(k, e);
+        dirty = true;
+        broadcast({ t: 'bent', k, d, e: serializeEntity(e) }, c);
         break;
       }
       case 'm': // creature snapshots from the client that simulates them
@@ -351,6 +472,7 @@ export function startServer(overrides = {}) {
 
   function onClose(c) {
     clients.delete(c.id);
+    for (const [lk, holder] of locks) if (holder === c) locks.delete(lk);
     if (!c.ready) return;
     broadcast({ t: 'leave', id: c.id });
     checkEndHost();
@@ -398,7 +520,7 @@ export function startServer(overrides = {}) {
     if (!req.url.startsWith('/ws')) { socket.destroy(); return; }
     const ws = acceptUpgrade(req, socket, { maxMessage: 1 << 20 });
     if (!ws) return;
-    const c = { id: String(nextId++), ws, ready: false, name: '', key: '', state: null, voice: { on: false, muted: false }, lastSeen: Date.now(), chatTimes: [], editWindow: 0, editCount: 0 };
+    const c = { id: String(nextId++), ws, ready: false, name: '', key: '', state: null, voice: { on: false, muted: false }, lastSeen: Date.now(), chatTimes: [], editWindow: 0, editCount: 0, dropWindow: 0, dropCount: 0 };
     clients.set(c.id, c);
     ws.on('message', (data, binary) => { if (!binary) onMessage(c, data); });
     ws.on('close', () => onClose(c));
@@ -422,6 +544,27 @@ export function startServer(overrides = {}) {
       if (now - c.lastSeen > 60000) c.ws.close(4001);
       else if (now - c.lastSeen > 20000) c.ws.ping();
     }
+    // furnaces nobody has open cook here (the one a player has open runs in their game)
+    if (online.length) {
+      for (const d of [0, 1, 2]) {
+        for (const [k, e] of world.bents[d]) {
+          if (e.kind !== 'furnace' || locks.has(lockKey(d, k)) || (!e.burn && !e.slots[0])) continue;
+          const wasLit = furnaceLit(e);
+          if (tickFurnace(e, dt)) dirty = true;
+          const lit = furnaceLit(e);
+          if (lit === wasLit) continue;
+          const [x, y, z] = parseKey(k);
+          const v = editAt(x, y, z, d);
+          if (v === null || kindOf(v & 255) !== 'furnace') continue;
+          const id = BLOCKS.find((bd) => bd.key === (lit ? 'lit_furnace' : 'furnace')).id;
+          const nv = id | (v & 0xff00);
+          applyEdit(x, y, z, nv, d);
+          broadcast(d ? { t: 'b', id: 'server', l: [[x, y, z, nv]], d } : { t: 'b', id: 'server', l: [[x, y, z, nv]] });
+        }
+      }
+    }
+    // dropped items vanish after a while
+    for (const [i, it] of world.items) if (now - it.at > ITEM_LIFE) world.items.delete(i);
   }, 1000);
   const autosave = setInterval(() => { if (dirty) saveWorld(); }, 30000);
 

@@ -5,6 +5,7 @@
 import {
   CHUNK_SIZE, WORLD_HEIGHT, SHAPE, LAYER, BLOCKS, BLOCK, WAVE,
   IS_OPAQUE, LIGHT_OPACITY, EMISSION, SHAPE_OF, LAYER_OF, CULL_SELF, FACE_TEX, BOX_SHAPES, IS_BED, BED_PARTNER,
+  HAS_FRONT, FACING_FACE, NEIGHBOUR_LIGHT, blockBoxes, liquidHeight,
 } from './blocks.js';
 import { hash2 } from './noise.js';
 
@@ -107,6 +108,7 @@ export class ChunkMesher {
   constructor(generator) {
     this.gen = generator;
     this.blocks = new Uint8Array(REGION);
+    this.states = new Uint8Array(REGION);
     this.sky = new Uint8Array(REGION);
     this.blk = new Uint8Array(REGION);
     this.queue = new Int32Array(1 << 19);
@@ -117,12 +119,23 @@ export class ChunkMesher {
     this.options = { fancyLeaves: true };
   }
 
-  // chunks: array of 9 Uint8Arrays, index (dz+1)*3 + (dx+1)
-  loadRegion(chunks) {
-    const R = this.blocks;
+  // chunks: array of 9 Uint8Arrays, index (dz+1)*3 + (dx+1); states: the same for block states
+  // (null entries, or no array at all, for chunks without any)
+  loadRegion(chunks, states = null) {
+    const R = this.blocks, S = this.states;
+    S.fill(0);
     for (let n = 0; n < 9; n++) {
       const src = chunks[n];
       const ox = (n % 3) * CS, oz = Math.floor(n / 3) * CS;
+      const st = states && states[n];
+      if (st) {
+        for (let y = 0; y < H; y++) {
+          for (let z = 0; z < CS; z++) {
+            const s = (y << 8) | (z << 4);
+            S.set(st.subarray(s, s + CS), ox + (oz + z) * RSZ + y * RSY);
+          }
+        }
+      }
       if (!src) {
         // missing neighbour: treat as solid below sea level, air above, so borders look sane
         for (let y = 0; y < H; y++) {
@@ -191,6 +204,23 @@ export class ChunkMesher {
       if (e) { blk[i] = e; q[tail] = i; tail = (tail + 1) & QM; }
     }
     if (tail) this.flood(blk, head, tail);
+
+    // slabs and stairs stop light but show the light around them (and creatures standing in
+    // them are lit like their surroundings)
+    for (let i = RSY; i < REGION - RSY; i++) {
+      if (!NEIGHBOUR_LIGHT[R[i]]) continue;
+      const x = i % RW;
+      const z = ((i - x) / RW) % RW;
+      if (x === 0 || x === RW - 1 || z === 0 || z === RW - 1) continue;
+      let s = 0, k = 0;
+      for (const j of [i + 1, i - 1, i + RSZ, i - RSZ, i + RSY, i - RSY]) {
+        if (LIGHT_OPACITY[R[j]] >= 15 && !NEIGHBOUR_LIGHT[R[j]]) continue;
+        if (sky[j] > s) s = sky[j];
+        if (blk[j] > k) k = blk[j];
+      }
+      sky[i] = Math.max(0, s - 1);
+      blk[i] = Math.max(0, k - 1);
+    }
   }
 
   flood(L, head, tail) {
@@ -235,9 +265,9 @@ export class ChunkMesher {
 
   // Build meshes for the centre chunk. Returns transferable buffers.
   // options.fancyLeaves adds leaf cards that break up the cube outline of tree canopies.
-  mesh(cx, cz, chunks, options) {
+  mesh(cx, cz, chunks, options, states = null) {
     if (options) this.options = { ...this.options, ...options };
-    this.loadRegion(chunks);
+    this.loadRegion(chunks, states);
     this.computeLight();
     this.computeClimate(cx, cz);
     const R = this.blocks;
@@ -272,6 +302,9 @@ export class ChunkMesher {
             emitted = true;
           } else if (shape === SHAPE.BED) {
             this.bed(ri, b, x, y, z, temp, hum);
+            emitted = true;
+          } else if (shape === SHAPE.MODEL) {
+            this.model(ri, b, x, y, z, temp, hum);
             emitted = true;
           }
           if (emitted) {
@@ -321,7 +354,7 @@ export class ChunkMesher {
       if (isCactus && (f === 2 || f === 3) && n === b) continue;
       any = true;
       const face = FACES[f];
-      const tex = FACE_TEX[b * 4 + face.tex];
+      const tex = HAS_FRONT[b] && f === FACING_FACE[this.states[ri] & 3] ? FACE_TEX[b * 4 + 3] : FACE_TEX[b * 4 + face.tex];
       buf.ensure(4);
       const ao = [0, 0, 0, 0];
       const sl = [0, 0, 0, 0];
@@ -413,13 +446,27 @@ export class ChunkMesher {
     }
   }
 
+  // Water and lava: the surface of each corner is the average of the cells that share it, so
+  // flowing liquid slopes down smoothly from its source (levels are in the block state).
   liquid(ri, b, x, y, z, temp, hum) {
-    const R = this.blocks, sky = this.sky, blk = this.blk;
+    const R = this.blocks, S = this.states, sky = this.sky, blk = this.blk;
     const layer = LAYER_OF[b];
     const buf = this.buffers[layer];
-    const above = y < H - 1 ? R[ri + RSY] : 0;
-    const topH = above === b ? 16 : 14;
     const wave = WAVE_OF[b], tint = TINT_OF[b], mat = MAT_OF[b];
+    const corner = (cxo, czo) => {
+      let sum = 0, n = 0;
+      for (let j = 0; j < 2; j++) {
+        for (let i = 0; i < 2; i++) {
+          const o = ri + (cxo - 1 + i) + (czo - 1 + j) * RSZ;
+          if (R[o] !== b) continue;
+          if (y < H - 1 && R[o + RSY] === b) return 16;
+          sum += liquidHeight(S[o], false);
+          n++;
+        }
+      }
+      return n ? sum / n : 14;
+    };
+    const heights = [corner(0, 0), corner(1, 0), corner(0, 1), corner(1, 1)]; // by cx + cz * 2
     let any = false;
     for (let f = 0; f < 6; f++) {
       if (f === 3 && y === 0) continue;
@@ -438,13 +485,24 @@ export class ChunkMesher {
         const c = face.corners[v];
         const uv = face.uv[v];
         const top = c[1] === 1;
-        const py = y * 16 + (top ? topH : 0);
-        const tv = f === 2 || f === 3 ? uv[1] * 16 : top ? 16 - topH : 16;
+        const h = top ? Math.round(heights[c[0] + c[2] * 2]) : 0;
+        const py = y * 16 + h;
+        const tv = f === 2 || f === 3 ? uv[1] * 16 : top ? 16 - h : 16;
         buf.push((x + c[0]) * 16, py, (z + c[2]) * 16, uv[0] * 16, tv, tex,
-          faceFlags, 3 | (top && topH < 16 ? 4 : 0) | (mat << 3), s, k, temp, hum);
+          faceFlags, 3 | (top && h < 16 ? 4 : 0) | (mat << 3), s, k, temp, hum);
       }
     }
     return any;
+  }
+
+  // Slabs, stairs, doors, fences, panes, ladders, signs, chests: boxes from the block's state and
+  // its neighbours (see blockBoxes in blocks.js).
+  model(ri, b, x, y, z, temp, hum) {
+    const R = this.blocks, S = this.states;
+    const nb = (dx, dy, dz) => R[ri + dx + dz * RSZ + dy * RSY] || 0;
+    const ns = (dx, dy, dz) => S[ri + dx + dz * RSZ + dy * RSY] || 0;
+    const top = FACE_TEX[b * 4], bottom = FACE_TEX[b * 4 + 1], side = FACE_TEX[b * 4 + 2];
+    for (const bx of blockBoxes(b, S[ri], nb, ns, 'render')) this.box(ri, b, x, y, z, bx.b, top, bottom, side, bx.faces, false, temp, hum, bx.tex);
   }
 
   cross(ri, b, x, y, z, temp, hum) {
@@ -479,7 +537,7 @@ export class ChunkMesher {
   // One axis-aligned box inside the cell, bounds in 1/16 block units. Faces on the cell's boundary
   // are skipped against opaque neighbours (and against the same block when it culls itself, or the
   // other half of a bed for mattresses: joined).
-  box(ri, b, x, y, z, bb, texTop, texBottom, texSide, faces, joined, temp, hum) {
+  box(ri, b, x, y, z, bb, texTop, texBottom, texSide, faces, joined, temp, hum, texFaces = null) {
     const R = this.blocks, sky = this.sky, blk = this.blk;
     const buf = this.buffers[LAYER_OF[b]];
     const tint = TINT_OF[b], wave = WAVE_OF[b], mat = MAT_OF[b];
@@ -498,7 +556,7 @@ export class ChunkMesher {
         if (n === b && CULL_SELF[b]) continue;
         if (joined && IS_BED[n]) continue;
       }
-      const tex = f === 2 ? texTop : f === 3 ? texBottom : texSide;
+      const tex = texFaces ? texFaces[f] : f === 2 ? texTop : f === 3 ? texBottom : texSide;
       const s = Math.round(Math.max(sky[o], sky[ri]) * 17);
       const k = Math.round(Math.max(blk[o], blk[ri]) * 17);
       const faceFlags = f | (wave << 3) | (tint << 5);

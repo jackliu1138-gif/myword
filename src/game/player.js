@@ -1,6 +1,6 @@
 // First-person player: movement, collision against the voxel grid, swimming and flight.
 
-import { IS_SOLID, IS_LIQUID, BLOCKS, SHAPE } from '../world/blocks.js';
+import { IS_SOLID, IS_LIQUID, BLOCKS, SELECT_BOX, MODEL_OF, modelSelectBox } from '../world/blocks.js';
 
 const HALF_W = 0.3;
 const HEIGHT = 1.8;
@@ -9,6 +9,8 @@ const SNEAK_EYE = 1.32;
 const GRAVITY = 28;
 const JUMP_V = 8.6;
 const EPS = 1e-4;
+const STEP_UP = 0.6; // slabs and stairs are walked up without jumping
+const CLIMB_V = 2.4;
 
 export class Player {
   constructor(world) {
@@ -28,6 +30,8 @@ export class Player {
     this.bobAmount = 0;
     this.stepAccum = 0;
     this.fallStart = null;
+    this.stepSmooth = 0; // the camera eases up steps instead of jumping
+    this.onLadder = false;
     this.onStep = null; // callback(blockBelow)
     this.onLand = null;
     this.onSplash = null;
@@ -55,16 +59,9 @@ export class Player {
     return this.world.isSolidAt(Math.floor(x), Math.floor(y), Math.floor(z));
   }
 
-  // Returns true when the player box overlaps any solid block.
+  // Returns true when the player box overlaps anything solid (slabs, fences and doors by their shape).
   collides(px, py, pz) {
-    const x0 = Math.floor(px - HALF_W + EPS), x1 = Math.floor(px + HALF_W - EPS);
-    const y0 = Math.floor(py + EPS), y1 = Math.floor(py + HEIGHT - EPS);
-    const z0 = Math.floor(pz - HALF_W + EPS), z1 = Math.floor(pz + HALF_W - EPS);
-    for (let y = y0; y <= y1; y++)
-      for (let z = z0; z <= z1; z++)
-        for (let x = x0; x <= x1; x++)
-          if (this.world.isSolidAt(x, y, z)) return true;
-    return false;
+    return this.world.boxCollides(px - HALF_W + EPS, py + EPS, pz - HALF_W + EPS, px + HALF_W - EPS, py + HEIGHT - EPS, pz + HALF_W - EPS);
   }
 
   // Move along one axis, stopping flush against the first solid block. Returns true if blocked.
@@ -90,14 +87,26 @@ export class Player {
     return false;
   }
 
+  // Walking along one axis, stepping up onto slabs and stairs (anything up to STEP_UP high).
+  moveStep(axis, amount, canStep) {
+    const p = this.pos;
+    const start = p[axis], y = p[1];
+    const blocked = this.moveAxis(axis, amount);
+    if (!blocked || !canStep) return blocked;
+    const plain = p[axis];
+    p[axis] = start;
+    p[1] = y + STEP_UP;
+    if (this.collides(p[0], p[1], p[2])) { p[1] = y; p[axis] = plain; return blocked; }
+    const blocked2 = this.moveAxis(axis, amount);
+    if (Math.abs(p[axis] - start) <= Math.abs(plain - start) + 1e-3) { p[1] = y; p[axis] = plain; return blocked; }
+    this.moveAxis(1, -STEP_UP - EPS);
+    this.stepSmooth -= p[1] - y;
+    return blocked2;
+  }
+
   groundUnder(px, pz) {
-    const y = Math.floor(this.pos[1] - 0.05);
-    const x0 = Math.floor(px - HALF_W + EPS), x1 = Math.floor(px + HALF_W - EPS);
-    const z0 = Math.floor(pz - HALF_W + EPS), z1 = Math.floor(pz + HALF_W - EPS);
-    for (let z = z0; z <= z1; z++)
-      for (let x = x0; x <= x1; x++)
-        if (this.world.isSolidAt(x, y, z)) return true;
-    return false;
+    const y = this.pos[1];
+    return this.world.boxCollides(px - HALF_W + EPS, y - 0.08, pz - HALF_W + EPS, px + HALF_W - EPS, y - EPS, pz + HALF_W - EPS);
   }
 
   blockAt(x, y, z) {
@@ -125,6 +134,8 @@ export class Player {
     if (this.inWater && !wasInWater && this.vel[1] < -4 && this.onSplash) this.onSplash();
 
     this.sneaking = ctl.sneak && !this.flying;
+    // on a ladder: climb while pushing into it (or holding jump), hold on while sneaking, slide down slowly
+    this.onLadder = !this.flying && (this.world.climbableAt(this.pos[0], this.pos[1] + 0.05, this.pos[2]) || this.world.climbableAt(this.pos[0], this.pos[1] + 0.9, this.pos[2]));
     if (ctl.sprint && ctl.forward > 0 && !this.sneaking) this.sprinting = true;
     if (ctl.forward <= 0 || this.sneaking) this.sprinting = false;
 
@@ -158,6 +169,12 @@ export class Player {
       if (this.vel[1] < -5) this.vel[1] = -5;
       // hop out at the shore
       if (ctl.jump && this.touchingWall && !this.headInWater) this.vel[1] = Math.max(this.vel[1], 5.5);
+    } else if (this.onLadder) {
+      this.vel[1] -= GRAVITY * dt;
+      if (ctl.jump || (this.touchingWall && len > 0.1)) this.vel[1] = CLIMB_V;
+      else if (this.sneaking) this.vel[1] = Math.max(this.vel[1], 0);
+      else this.vel[1] = Math.max(this.vel[1], -3);
+      this.fallStart = null;
     } else {
       this.vel[1] -= GRAVITY * dt;
       if (this.vel[1] < -60) this.vel[1] = -60;
@@ -182,9 +199,10 @@ export class Player {
       this.onGround = false;
     }
     const sneakGuard = this.sneaking && wasGround;
-    const bx = this.moveAxis(0, this.vel[0] * dt);
+    const canStep = (this.onGround || wasGround) && !this.flying;
+    const bx = this.moveStep(0, this.vel[0] * dt, canStep);
     if (sneakGuard && !this.groundUnder(this.pos[0], this.pos[2])) { this.pos[0] = oldX; this.vel[0] = 0; }
-    const bz = this.moveAxis(2, this.vel[2] * dt);
+    const bz = this.moveStep(2, this.vel[2] * dt, canStep);
     if (sneakGuard && !this.groundUnder(this.pos[0], this.pos[2])) { this.pos[2] = oldZ; this.vel[2] = 0; }
     if (bx) this.vel[0] = 0;
     if (bz) this.vel[2] = 0;
@@ -205,6 +223,8 @@ export class Player {
       }
     }
 
+    this.stepSmooth *= Math.exp(-dt * 14);
+    if (Math.abs(this.stepSmooth) < 1e-3) this.stepSmooth = 0;
     // eye height (sneak lowers the camera smoothly)
     const targetEye = this.sneaking ? SNEAK_EYE : EYE;
     this.eyeHeight += (targetEye - this.eyeHeight) * (1 - Math.exp(-dt * 14));
@@ -234,14 +254,12 @@ export class Player {
   }
 }
 
-// Voxel ray traversal (Amanatides & Woo). Returns the first selectable block.
-const SELECT_BOX = {
-  [SHAPE.CROSS]: [0.15, 0, 0.15, 0.85, 0.85, 0.85],
-  [SHAPE.TORCH]: [0.375, 0, 0.375, 0.625, 0.65, 0.625],
-};
+// Voxel ray traversal (Amanatides & Woo). Returns the first selectable block (and, with
+// { liquids: true }, the first liquid source: buckets pick those up).
 
+// Ray against a box: [distance, normal of the face it enters through] or null.
 function rayBox(ox, oy, oz, dx, dy, dz, b) {
-  let t0 = -Infinity, t1 = Infinity;
+  let t0 = -Infinity, t1 = Infinity, axis = -1;
   const o = [ox, oy, oz], d = [dx, dy, dz];
   for (let i = 0; i < 3; i++) {
     if (Math.abs(d[i]) < 1e-9) {
@@ -249,14 +267,18 @@ function rayBox(ox, oy, oz, dx, dy, dz, b) {
     } else {
       let a = (b[i] - o[i]) / d[i], c = (b[i + 3] - o[i]) / d[i];
       if (a > c) { const t = a; a = c; c = t; }
-      t0 = Math.max(t0, a);
+      if (a > t0) { t0 = a; axis = i; }
       t1 = Math.min(t1, c);
     }
   }
-  return t1 >= Math.max(t0, 0) ? t0 : null;
+  if (t1 < Math.max(t0, 0)) return null;
+  const n = [0, 0, 0];
+  if (axis >= 0) n[axis] = d[axis] > 0 ? -1 : 1;
+  return [t0, n];
 }
 
-export function raycast(world, origin, dir, maxDist) {
+export function raycast(world, origin, dir, maxDist, opts = null) {
+  const liquids = !!(opts && opts.liquids);
   let [ox, oy, oz] = origin;
   const [dx, dy, dz] = dir;
   let x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz);
@@ -268,15 +290,24 @@ export function raycast(world, origin, dir, maxDist) {
   let nx = 0, ny = 0, nz = 0, t = 0;
   for (let i = 0; i < 64 && t <= maxDist; i++) {
     const b = world.getBlock(x, y, z);
+    if (liquids && IS_LIQUID[b] && world.getState(x, y, z) === 0) {
+      return { x, y, z, block: b, normal: [nx, ny, nz], t, box: [x, y, z, x + 1, y + 0.875, z + 1], liquid: true };
+    }
     if (b && BLOCKS[b].selectable) {
-      const shape = BLOCKS[b].shape;
-      const box = SELECT_BOX[shape];
+      const cx = x, cy = y, cz = z;
+      const box = MODEL_OF[b]
+        ? modelSelectBox(b, world.getState(x, y, z), (dx, dy, dz) => world.getBlock(cx + dx, cy + dy, cz + dz), (dx, dy, dz) => world.getState(cx + dx, cy + dy, cz + dz))
+        : SELECT_BOX[b];
       if (!box) {
-        return { x, y, z, block: b, normal: [nx, ny, nz], t, box: [x, y, z, x + 1, y + 1, z + 1] };
+        return { x, y, z, block: b, normal: [nx, ny, nz], t, box: [x, y, z, x + 1, y + 1, z + 1], point: [ox + dx * t, oy + dy * t, oz + dz * t] };
       }
       const bb = [x + box[0], y + box[1], z + box[2], x + box[3], y + box[4], z + box[5]];
-      const th = rayBox(ox, oy, oz, dx, dy, dz, bb);
-      if (th !== null && th <= maxDist) return { x, y, z, block: b, normal: [nx, ny, nz], t: th, box: bb };
+      const r = rayBox(ox, oy, oz, dx, dy, dz, bb);
+      if (r && r[0] <= maxDist) {
+        const th = Math.max(0, r[0]);
+        const inside = r[0] <= 0 || (r[1][0] === 0 && r[1][1] === 0 && r[1][2] === 0);
+        return { x, y, z, block: b, normal: inside ? [nx, ny, nz] : r[1], t: th, box: bb, point: [ox + dx * th, oy + dy * th, oz + dz * th] };
+      }
     }
     if (tmx < tmy && tmx < tmz) { x += sx; t = tmx; tmx += tdx; nx = -sx; ny = 0; nz = 0; }
     else if (tmy < tmz) { y += sy; t = tmy; tmy += tdy; nx = 0; ny = -sy; nz = 0; }

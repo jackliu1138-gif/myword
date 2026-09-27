@@ -10,7 +10,7 @@ import { materialOf } from './audio.js';
 import { EntityMesh } from '../render/entitymesh.js';
 import { buildSkins } from '../render/models.js';
 import { buildItemSprites } from '../world/itemsprites.js';
-import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_BED, TINT, MAT, WOOL_COLORS } from '../world/blocks.js';
+import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_BED, TINT, MAT, WOOL_COLORS, MODEL_OF, MODELS_BY_NAME, COLLIDE_KIND } from '../world/blocks.js';
 import { newEndState } from './travel.js';
 import { t, itemName } from '../ui/i18n.js';
 import { PAD } from './gamepad.js';
@@ -66,6 +66,7 @@ export function installPlay(Game) {
     this.dragon = null;
     this.crops = new Map();
     this.fires = new Map();
+    this.setupBlockEntities(data);
     this.scanWorldBlocks();
     this.sim.pickup = (id, itemId, count, wear) => this.pickupItem(itemId, count, wear);
     const me = this.sim.addPlayer('local', { mode: this.mode });
@@ -102,7 +103,6 @@ export function installPlay(Game) {
   };
 
   P.pickupItem = function pickupItem(itemId, count, wear) {
-    if (this.isCreative()) return count; // creative players just absorb what they walk over
     const left = this.inventory.add(itemId, count, wear);
     if (left === count) {
       const now = performance.now();
@@ -140,13 +140,13 @@ export function installPlay(Game) {
     this.audio.play('pop');
   };
 
-  // Let go of the held stack outside the window: thrown in front of the player (gone, in creative).
+  // Let go of the held stack outside the window: thrown in front of the player.
   P.inventoryOutside = function inventoryOutside() {
     const inv = this.inventory;
     const c = inv.cursor;
     if (!c) return;
     inv.cursor = null;
-    if (!this.isCreative()) this.throwStack(c);
+    this.throwStack(c);
     inv.changed();
   };
 
@@ -171,16 +171,17 @@ export function installPlay(Game) {
     this.audio.play('pop');
   };
 
+  // Thrown items fly a few blocks and wait two seconds before anyone (the thrower too) can pick them up.
   P.throwStack = function throwStack(s) {
     const p = this.player, e = p.eye, f = p.forward();
-    this.sim.dropItem(s.id, s.count, e[0] + f[0] * 0.5, e[1] - 0.3, e[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], s.wear);
+    this.sim.dropItem(s.id, s.count, e[0] + f[0] * 0.5, e[1] - 0.3, e[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], s.wear, { delay: 2 });
   };
 
   // Closing the screen: the held stack goes back into the inventory (what doesn't fit is dropped).
   P.returnCursorStack = function returnCursorStack() {
     if (!this.inventory) return;
     const left = this.inventory.returnCursor();
-    if (left && !this.isCreative()) this.throwStack(left);
+    if (left) this.throwStack(left);
   };
 
   P.canCraft = function canCraft(recipe) {
@@ -245,6 +246,7 @@ export function installPlay(Game) {
     if (playing) this.ambientCreatures(dt);
     this.updateSleep(dt);
     this.updateBlocks(dt);
+    this.updateFurnaces(dt);
     this.updateEnd(dt);
     // a warning as the sun goes down, once a day
     if (!this.isCreative() && this.difficulty !== 'peaceful' && playing) {
@@ -363,6 +365,8 @@ export function installPlay(Game) {
 
   P.onDeath = function onDeath() {
     this.deathShown = true;
+    if (this.state === 'inventory') { this.returnCursorStack(); this.closeContainer(); }
+    if (this.state === 'sign') this.finishSign(this.ui.signLines());
     this.audio.sfx('playerDeath', 1, 0);
     // everything carried spills on the ground
     const p = this.player.pos;
@@ -465,11 +469,19 @@ export function installPlay(Game) {
       if (attackPressed && this.attackCooldown <= 0) { this.swing = 1; this.attackCooldown = 0.25; this.audio.sfx('swing', 0.5, 0); }
     }
 
-    // ---- use: things done to a block first (sleeping, tilling, planting, fire, eyes, beds),
-    // then bows, food, thrown things and placing blocks
-    if (usePressed && hit && !aimMob && this.useOnBlock(hit, def)) {
+    // ---- use: creatures first (milking), buckets, then things done to a block (doors, chests,
+    // sleeping, tilling, planting, fire, eyes, beds), then bows, food, thrown things and placing blocks
+    if (usePressed && aimMob && this.useOnMob(aimMob, def)) {
+      tc.tap = false;
+    } else if (usePressed && def && def.kind === 'bucket' && !aimMob && this.useBucket(def)) {
       tc.tap = false;
       this.placeTimer = 0.24;
+    } else if (usePressed && hit && !aimMob && this.useOnBlock(hit, def)) {
+      tc.tap = false;
+      this.placeTimer = 0.24;
+    } else if (def && def.kind === 'milk') {
+      if (usePressed && this.useCooldown <= 0) { this.useCooldown = 0.9; this.drinkMilk(); }
+      tc.tap = false;
     } else if (def && (def.kind === 'pearl' || def.kind === 'eye')) {
       if (usePressed && this.useCooldown <= 0) { this.useCooldown = 0.45; this.throwHeld(def); }
       tc.tap = false;
@@ -506,11 +518,12 @@ export function installPlay(Game) {
 
     // ---- pick block (middle click / right stick)
     if ((input.clicked.has(1) || (pad.connected && pad.pressed(PAD.RS))) && hit) this.pickFromWorld(hit.block);
-    // drop the held item (Q)
-    if (input.wasPressed('KeyQ') && held && !creative) {
-      const f = p.forward();
-      this.sim.dropItem(held.id, 1, eye[0] + f[0] * 0.5, eye[1] - 0.3, eye[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], held.wear);
-      this.inventory.consume(this.selected);
+    // drop the held item (Q: one of it; Ctrl+Q: the whole stack)
+    if (input.wasPressed('KeyQ') && held) {
+      const all = input.down('ControlLeft') || input.down('ControlRight');
+      const n = all ? held.count : 1;
+      this.throwStack({ id: held.id, count: n, wear: held.wear });
+      this.inventory.consume(this.selected, n);
     }
   };
 
@@ -576,11 +589,11 @@ export function installPlay(Game) {
   P.breakBlock = function breakBlock(hit, drops) {
     const { x, y, z, block } = hit;
     if (block === BLOCK.BEDROCK && y <= 0) return;
-    if (!this.world.setBlock(x, y, z, 0)) return;
+    if (MODEL_OF[block] === MODELS_BY_NAME.door) this.breakDoor(x, y, z, block, drops);
+    else if (!this.world.setBlock(x, y, z, 0)) return;
     if (IS_BED[block]) this.breakBed(x, y, z, block, drops);
-    const above = this.world.getBlock(x, y + 1, z);
-    const plantAbove = SHAPE_OF[above] === SHAPE.CROSS || SHAPE_OF[above] === SHAPE.TORCH;
-    if (plantAbove) this.world.setBlock(x, y + 1, z, 0);
+    // what stood on it or hung from it comes off too
+    this.breakAttached(x, y, z, drops);
     const [sl, bl] = this.world.getLight(x + hit.normal[0], y + hit.normal[1], z + hit.normal[2]);
     this.particles.burst(x, y, z, block, sl / 15, bl / 15);
     this.audio.play('break', materialOf(BLOCKS[block]));
@@ -589,7 +602,6 @@ export function installPlay(Game) {
     if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0.25, 0.4, 60);
     if (!this.isCreative() && drops) {
       for (const [id, n] of blockDrops(block)) this.sim.dropItem(id, n, x + 0.5, y + 0.4, z + 0.5);
-      if (plantAbove) for (const [id, n] of blockDrops(above)) this.sim.dropItem(id, n, x + 0.5, y + 1.4, z + 0.5);
     }
   };
 
@@ -597,13 +609,22 @@ export function installPlay(Game) {
     const held = this.heldSlot();
     if (!held || !isBlockItem(held.id)) return;
     const id = held.id;
+    const placed = () => {
+      this.audio.play('place', materialOf(BLOCKS[id]));
+      this.swing = 1;
+      if (!this.isCreative()) this.inventory.consume(this.selected);
+      if (this.touch) this.touch.vibrate(8);
+      if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0, 0.3, 35);
+    };
+    // a slab on its kind of slab makes the full block
+    if (MODEL_OF[id] === MODELS_BY_NAME.slab && this.slabMerge(id, hit)) { placed(); return; }
     let x = hit.x, y = hit.y, z = hit.z;
     if (!BLOCKS[hit.block].replaceable) { x += hit.normal[0]; y += hit.normal[1]; z += hit.normal[2]; }
     const cur = this.world.getBlock(x, y, z);
     if (!BLOCKS[cur].replaceable || cur === id) return;
-    if (IS_SOLID[id] && this.player.intersectsBlock(x, y, z)) return;
+    if (COLLIDE_KIND[id] && this.player.intersectsBlock(x, y, z)) return;
     // no placing blocks inside creatures
-    if (IS_SOLID[id]) {
+    if (COLLIDE_KIND[id]) {
       for (const e of this.sim.entities.values()) {
         if (e.kind !== 'mob') continue;
         const b = e.body;
@@ -612,25 +633,24 @@ export function installPlay(Game) {
     }
     const shape = SHAPE_OF[id];
     if ((shape === SHAPE.CROSS || shape === SHAPE.TORCH || id === BLOCK.CACTUS) && !IS_SOLID[this.world.getBlock(x, y - 1, z)]) return;
-    if (this.world.setBlock(x, y, z, id)) {
-      this.audio.play('place', materialOf(BLOCKS[id]));
-      this.swing = 1;
-      if (!this.isCreative()) this.inventory.consume(this.selected);
-      if (this.touch) this.touch.vibrate(8);
-      if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0, 0.3, 35);
-    }
+    const place = this.placementFor(id, hit, x, y, z);
+    if (!place) return;
+    if (this.world.setBlock(x, y, z, place.id, { state: place.state })) placed();
   };
 
   P.pickFromWorld = function pickFromWorld(block) {
+    // the item a block comes from: doors and signs are placed from items, a lit furnace is a furnace
+    const item = { [BLOCK.OAK_DOOR]: ITEM.OAK_DOOR, [BLOCK.BIRCH_DOOR]: ITEM.BIRCH_DOOR, [BLOCK.SPRUCE_DOOR]: ITEM.SPRUCE_DOOR,
+      [BLOCK.OAK_SIGN]: ITEM.OAK_SIGN, [BLOCK.OAK_WALL_SIGN]: ITEM.OAK_SIGN, [BLOCK.LIT_FURNACE]: BLOCK.FURNACE }[block] ?? block;
     const inv = this.inventory;
-    for (let i = 0; i < 9; i++) if (inv.slots[i] && inv.slots[i].id === block) { this.selectSlot(i); return; }
-    if (this.isCreative() && BLOCKS[block].inventory) this.pickItem(block);
+    for (let i = 0; i < 9; i++) if (inv.slots[i] && inv.slots[i].id === item) { this.selectSlot(i); return; }
+    if (this.isCreative() && (item >= 256 || BLOCKS[item].inventory)) this.pickItem(item);
   };
 
   // ---------------------------------------------------------------- rendering
   P.buildEntities = function buildEntities() {
     if (!this.sim || !this.entityMesh) return null;
-    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, this.mp ? this.remotePlayerModels() : null);
+    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, this.mp ? this.remotePlayerModels() : null, this.visibleSigns(this.camera.pos));
   };
 
   P.handState = function handState() {
@@ -654,7 +674,7 @@ export function installPlay(Game) {
     }
     const d = BLOCKS[id];
     if (!d || !d.tex) return null;
-    const flat = d.shape === SHAPE.CROSS || d.shape === SHAPE.TORCH;
+    const flat = d.shape === SHAPE.CROSS || d.shape === SHAPE.TORCH || MODEL_OF[id] === MODELS_BY_NAME.ladder || MODEL_OF[id] === MODELS_BY_NAME.pane;
     const tx = 0.56 + bx - sw * 0.12, ty = -0.52 + by - sw * 0.18, tz = -0.95 + sw * 0.1;
     if (flat) mat4.fromTRS(this.handModel, tx, ty + 0.05, tz, -0.1 - sw * 0.6, -0.35, 0.1, 0.5, 0.5, 0.04);
     else mat4.fromTRS(this.handModel, tx, ty, tz, 0.3 - sw * 0.9, 0.78, 0.0, 0.36);
@@ -678,6 +698,7 @@ export function installPlay(Game) {
       difficulty: this.difficulty,
       inventory: this.inventory ? this.inventory.serialize() : [],
       spawn: this.spawnPoint,
+      blockEntities: this.serializeBlockEntities(),
     };
   };
 

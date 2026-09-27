@@ -221,6 +221,16 @@ export class Audio {
       case 'zombified_piglin': voice(t, 160 * r(), 110, 0.6, 520, 0.45, 6); break;
       case 'dragon': voice(t, 70, 45, 2.2, 280, 0.8, 4); noise(t, 1.8, 'lowpass', 600, 0.7, 0.4); break;
       case 'crystal': tone(t, 1600, 0.5, 0.12, 'sine', 2400); break;
+      case 'doorOpen': noise(t, 0.16, 'bandpass', 520 * r(), 1.2, 0.35); tone(t, 180 * r(), 0.12, 0.25, 'triangle', 120); tone(t + 0.1, 420, 0.1, 0.06, 'square', 300); break;
+      case 'doorClose': noise(t, 0.1, 'bandpass', 420 * r(), 1.1, 0.4); tone(t, 140 * r(), 0.14, 0.4, 'sine', 70); break;
+      case 'chestOpen': noise(t, 0.3, 'bandpass', 380 * r(), 1.4, 0.28); tone(t, 150, 0.3, 0.18, 'triangle', 220); break;
+      case 'chestClose': noise(t, 0.12, 'bandpass', 360 * r(), 1.2, 0.35); tone(t + 0.04, 120, 0.16, 0.35, 'sine', 70); break;
+      case 'fizz': { const n = this.noise(t, 0.6, 'highpass', 3000, 0.7, 0.35 * volume, out); n.f.frequency.linearRampToValueAtTime(6000, t + 0.6); break; }
+      case 'bucketFill': noise(t, 0.35, 'lowpass', 1400, 0.7, 0.35); tone(t, 300, 0.3, 0.12, 'sine', 520); break;
+      case 'bucketEmpty': noise(t, 0.45, 'lowpass', 1800, 0.7, 0.4); tone(t, 480, 0.35, 0.1, 'sine', 240); break;
+      case 'drink': for (let i = 0; i < 4; i++) tone(t + i * 0.14, 320 * r(), 0.1, 0.18, 'sine', 200); break;
+      case 'grow': for (let i = 0; i < 3; i++) tone(t + i * 0.06, 900 + i * 300, 0.12, 0.08, 'sine', 1400 + i * 300); break;
+      case 'furnace': noise(t, 0.5, 'lowpass', 500, 0.6, 0.25); break;
       default: break;
     }
   }

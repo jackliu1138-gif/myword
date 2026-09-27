@@ -5,8 +5,9 @@ export const WORLD_HEIGHT = 128;
 export const SEA_LEVEL = 50;
 
 // BOXES: a few axis-aligned boxes inside the cell (farmland, portal frames, the end portal, the
-// nether portal's pane, the dragon egg); BED: a bed half, turned to face its other half.
-export const SHAPE = { NONE: 0, CUBE: 1, CROSS: 2, LIQUID: 3, TORCH: 4, CACTUS: 5, BOXES: 6, BED: 7 };
+// nether portal's pane, the dragon egg); BED: a bed half, turned to face its other half; MODEL:
+// boxes that depend on the block's state and its neighbours (slabs, stairs, doors, fences...).
+export const SHAPE = { NONE: 0, CUBE: 1, CROSS: 2, LIQUID: 3, TORCH: 4, CACTUS: 5, BOXES: 6, BED: 7, MODEL: 8 };
 export const LAYER = { OPAQUE: 0, CUTOUT: 1, TRANSLUCENT: 2 };
 export const TINT = { NONE: 0, GRASS: 1, FOLIAGE: 2, BIRCH: 3, SPRUCE: 4, WATER: 5 };
 export const WAVE = { NONE: 0, LEAVES: 1, PLANT: 2, LIQUID: 3 };
@@ -50,6 +51,15 @@ const ZH_NAMES = {
   netherite_block: '下界合金块', fire: '火', end_stone: '末地石', end_stone_bricks: '末地石砖',
   end_portal_frame: '末地传送门框架', end_portal_frame_eye: '末地传送门框架', end_portal: '末地传送门', dragon_egg: '龙蛋',
   mossy_stone_bricks: '苔石砖', cracked_stone_bricks: '裂纹石砖',
+  chest: '箱子', furnace: '熔炉', lit_furnace: '熔炉', oak_sapling: '橡树树苗', birch_sapling: '白桦树苗', spruce_sapling: '云杉树苗',
+  oak_slab: '橡木台阶', birch_slab: '白桦木台阶', spruce_slab: '云杉木台阶', cobblestone_slab: '圆石台阶', stone_slab: '石台阶',
+  stone_brick_slab: '石砖台阶', brick_slab: '砖台阶', sandstone_slab: '砂岩台阶', smooth_stone_slab: '平滑石台阶', quartz_slab: '石英台阶',
+  oak_stairs: '橡木楼梯', birch_stairs: '白桦木楼梯', spruce_stairs: '云杉木楼梯', cobblestone_stairs: '圆石楼梯', stone_stairs: '石楼梯',
+  stone_brick_stairs: '石砖楼梯', brick_stairs: '砖楼梯', sandstone_stairs: '砂岩楼梯', quartz_stairs: '石英楼梯', nether_brick_stairs: '下界砖楼梯',
+  oak_door: '橡木门', birch_door: '白桦木门', spruce_door: '云杉木门',
+  oak_fence: '橡木栅栏', birch_fence: '白桦木栅栏', spruce_fence: '云杉木栅栏', nether_brick_fence: '下界砖栅栏',
+  oak_fence_gate: '橡木栅栏门', birch_fence_gate: '白桦木栅栏门', spruce_fence_gate: '云杉木栅栏门',
+  ladder: '梯子', glass_pane: '玻璃板', iron_bars: '铁栏杆', oak_sign: '橡木告示牌', oak_wall_sign: '橡木告示牌', oak_trapdoor: '橡木活板门',
 };
 
 // The sixteen dye colours in their usual order, with their Chinese names (beds and wool).
@@ -229,6 +239,59 @@ def('dragon_egg', {
 def('mossy_stone_bricks', { tex: 'mossy_stone_bricks' });
 def('cracked_stone_bricks', { tex: 'cracked_stone_bricks' });
 
+// ---- added with chests, furnaces and building blocks (appended: block ids are saved) ----
+// These keep a state byte beside their id (see world.js): which way they face, whether they are
+// open, the upper half of a door... `model` names the box builder in blockBoxes() below.
+const woodFx = { sound: 'wood' };
+def('chest', {
+  tex: { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, shape: SHAPE.MODEL, model: 'chest',
+  opaque: false, lightOpacity: 0, container: 'chest', facing: true, ...woodFx,
+});
+const furnaceTex = { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' };
+def('furnace', { tex: furnaceTex, container: 'furnace', facing: true });
+def('lit_furnace', { name: 'Furnace', tex: { ...furnaceTex, front: 'furnace_front_on' }, container: 'furnace', facing: true, emission: 13, inventory: false });
+for (const w of ['oak', 'birch', 'spruce']) def(w + '_sapling', { tex: w + '_sapling', ...plant, replaceable: false, sapling: w });
+// slabs: the bottom or top half of a block (state 1 = top); a second slab of the same kind makes
+// the full block
+const texOf = (key) => defs.find((d) => d.key === key).tex;
+const SLAB_KINDS = [
+  ['oak', 'oak_planks'], ['birch', 'birch_planks'], ['spruce', 'spruce_planks'], ['cobblestone', 'cobblestone'], ['stone', 'stone'],
+  ['stone_brick', 'stone_bricks'], ['brick', 'bricks'], ['sandstone', 'sandstone'], ['smooth_stone', 'smooth_stone'], ['quartz', 'quartz_block'],
+];
+const partial = { shape: SHAPE.MODEL, opaque: false, lightOpacity: 15, neighbourLight: true };
+for (const [k, base] of SLAB_KINDS) {
+  const b = defs.find((d) => d.key === base);
+  def(k + '_slab', { tex: texOf(base), ...partial, model: 'slab', full: b.id, sound: b.sound, mat: b.mat });
+}
+// stairs (straight): state bits 0-1 = the way up (0 north, 1 east, 2 south, 3 west), bit 2 = upside down
+const STAIR_KINDS = [
+  ['oak', 'oak_planks'], ['birch', 'birch_planks'], ['spruce', 'spruce_planks'], ['cobblestone', 'cobblestone'], ['stone', 'stone'],
+  ['stone_brick', 'stone_bricks'], ['brick', 'bricks'], ['sandstone', 'sandstone'], ['quartz', 'quartz_block'], ['nether_brick', 'nether_bricks'],
+];
+for (const [k, base] of STAIR_KINDS) {
+  const b = defs.find((d) => d.key === base);
+  def(k + '_stairs', { tex: texOf(base), ...partial, model: 'stairs', base: b.id, facing: true, sound: b.sound, mat: b.mat });
+}
+// doors: two blocks tall, each half with the full state: bits 0-1 facing, 2 open, 3 upper half, 4 hinge on the right
+const thin = { shape: SHAPE.MODEL, opaque: false, lightOpacity: 0, layer: LAYER.CUTOUT };
+for (const w of ['oak', 'birch', 'spruce']) {
+  def(w + '_door', { tex: { top: w + '_door_top', bottom: w + '_door_bottom', side: w + '_door_bottom' }, ...thin, model: 'door', facing: true, inventory: false, ...woodFx });
+}
+// fences join up with their own kind, fence gates and solid blocks; they are 1.5 blocks tall to jump over
+for (const [k, base] of [['oak', 'oak_planks'], ['birch', 'birch_planks'], ['spruce', 'spruce_planks'], ['nether_brick', 'nether_bricks']]) {
+  def(k + '_fence', { tex: texOf(base), ...thin, layer: LAYER.OPAQUE, model: 'fence', family: k === 'nether_brick' ? 2 : 1, sound: k === 'nether_brick' ? 'stone' : 'wood' });
+}
+for (const w of ['oak', 'birch', 'spruce']) def(w + '_fence_gate', { tex: texOf(w + '_planks'), ...thin, layer: LAYER.OPAQUE, model: 'gate', facing: true, ...woodFx });
+def('ladder', { tex: 'ladder', ...thin, model: 'ladder', facing: true, climbable: true, ...woodFx });
+def('glass_pane', { tex: 'glass', ...thin, model: 'pane', mat: MAT.GLOSSY, sound: 'glass', cullSelf: true });
+def('iron_bars', { tex: 'iron_bars', ...thin, model: 'pane', mat: MAT.METAL, sound: 'metal' });
+// signs: a board on a post (state = facing) or on a wall (state = the wall's side); the text is a
+// block entity, drawn by the entity renderer
+def('oak_sign', { tex: 'oak_sign', ...thin, layer: LAYER.OPAQUE, solid: false, model: 'sign', facing: true, inventory: false, sign: true, ...woodFx });
+def('oak_wall_sign', { tex: 'oak_sign', ...thin, layer: LAYER.OPAQUE, solid: false, model: 'wall_sign', facing: true, inventory: false, sign: true, ...woodFx });
+// trapdoors: state bits 0-1 facing, 2 open, 3 in the top half of the cell
+def('oak_trapdoor', { tex: 'oak_trapdoor', ...thin, model: 'trapdoor', facing: true, ...woodFx });
+
 // bed halves by colour: { color: [footId, headId] }
 export const BED_BLOCKS = {};
 for (const [c] of DYES) BED_BLOCKS[c] = [BLOCK[(c + '_bed_foot').toUpperCase()], BLOCK[(c + '_bed_head').toUpperCase()]];
@@ -252,6 +315,14 @@ export const SELECT_BOX = new Array(256).fill(null);
 export const IS_BED = new Uint8Array(256);
 // the other half of a bed: head id for a foot, foot id for a head
 export const BED_PARTNER = new Uint8Array(256);
+// state-shaped blocks (see blockBoxes): which box builder, and a few families
+export const MODEL_OF = new Uint8Array(256);
+export const MODELS_BY_NAME = { chest: 1, slab: 2, stairs: 3, door: 4, fence: 5, gate: 6, ladder: 7, pane: 8, sign: 9, wall_sign: 10, trapdoor: 11 };
+export const HAS_FRONT = new Uint8Array(256); // cubes with a front face that follows the state (furnaces)
+export const FENCE_FAMILY = new Uint8Array(256);
+export const IS_CLIMBABLE = new Uint8Array(256);
+// light for the cell itself taken from its neighbours (slabs and stairs block light but still show it)
+export const NEIGHBOUR_LIGHT = new Uint8Array(256);
 for (const d of defs) {
   IS_OPAQUE[d.id] = d.opaque ? 1 : 0;
   IS_SOLID[d.id] = d.solid ? 1 : 0;
@@ -275,6 +346,178 @@ for (const d of defs) {
     const [foot, head] = BED_BLOCKS[d.bed.color];
     BED_PARTNER[d.id] = d.bed.head ? foot : head;
   }
+  if (d.model) MODEL_OF[d.id] = MODELS_BY_NAME[d.model];
+  if (d.facing && d.shape === SHAPE.CUBE) HAS_FRONT[d.id] = 1;
+  if (d.family) FENCE_FAMILY[d.id] = d.family;
+  if (d.climbable) IS_CLIMBABLE[d.id] = 1;
+  if (d.neighbourLight) NEIGHBOUR_LIGHT[d.id] = 1;
+}
+
+// ---------------------------------------------------------------- block states
+// Horizontal directions used by facing states: 0 north (-Z), 1 east (+X), 2 south (+Z), 3 west (-X).
+export const FACING = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+// the mesher's face index (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z) looking out in each facing
+export const FACING_FACE = [5, 0, 4, 1];
+// A direction from a horizontal vector (the way something looks).
+export function facingOf(dx, dz) {
+  return Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 1 : 3) : dz > 0 ? 2 : 0;
+}
+export const opposite = (f) => (f + 2) & 3;
+
+// Liquids keep their level in the state: 0 a source, 1-7 flowing further from it, +8 falling.
+export const LIQUID_FALLING = 8;
+// Surface height of a liquid cell in 1/16 block units.
+export function liquidHeight(state, liquidAbove) {
+  if (liquidAbove || state & LIQUID_FALLING) return 16;
+  const level = state & 7;
+  return level === 0 ? 14 : Math.max(2, Math.round(((8 - level) / 9) * 16));
+}
+
+// ---------------------------------------------------------------- state-shaped blocks
+// The boxes of a MODEL block, in 1/16 block units inside its cell: [{ b: [x0,y0,z0,x1,y1,z1],
+// tex: optional [6 texture layers by face], faces: bit mask }]. `nb(dx, dy, dz)` and `ns(...)`
+// give a neighbour's id and state (fences and panes join up with the blocks around them).
+// purpose: 'render' (what is drawn), 'collide' (what stops creatures: fences are 1.5 tall, open
+// gates let them through) or 'select' (what the crosshair outlines).
+const ALL = 63;
+const rotBox = (bb, f) => {
+  // canonical boxes are built facing north (-Z); turn them to face f
+  const [x0, y0, z0, x1, y1, z1] = bb;
+  if (f === 1) return [16 - z1, y0, x0, 16 - z0, y1, x1];
+  if (f === 2) return [16 - x1, y0, 16 - z1, 16 - x0, y1, 16 - z0];
+  if (f === 3) return [z0, y0, 16 - x1, z1, y1, 16 - x0];
+  return [x0, y0, z0, x1, y1, z1];
+};
+// a thin panel against the cell's side f (0 north .. 3 west), `t` pixels thick
+const sidePanel = (f, t, y0 = 0, y1 = 16) => rotBox([0, y0, 0, 16, y1, t], f);
+const isFullSolid = (id) => IS_OPAQUE[id] === 1 && SHAPE_OF[id] === SHAPE.CUBE;
+
+export function blockBoxes(id, state, nb, ns, purpose = 'render') {
+  const m = MODEL_OF[id];
+  const out = [];
+  const add = (b, tex = null, faces = ALL) => out.push({ b, tex, faces });
+  switch (m) {
+    case 1: { // chest: a box a pixel in from the sides, its front the way it faces
+      const f = state & 3;
+      const tex = [0, 0, 0, 0, 0, 0].map((_, k) => FACE_TEX[id * 4 + (k === 2 || k === 3 ? (k === 2 ? 0 : 1) : k === FACING_FACE[f] ? 3 : 2)]);
+      add([1, 0, 1, 15, 14, 15], tex);
+      break;
+    }
+    case 2: // slab
+      add(state & 1 ? [0, 8, 0, 16, 16, 16] : [0, 0, 0, 16, 8, 16]);
+      break;
+    case 3: { // straight stairs: a half slab and a half-width step on the side they go up to
+      const f = state & 3, down = state & 4;
+      add(down ? [0, 8, 0, 16, 16, 16] : [0, 0, 0, 16, 8, 16]);
+      add(rotBox(down ? [0, 0, 0, 16, 8, 8] : [0, 8, 0, 16, 16, 8], f));
+      break;
+    }
+    case 4: { // door: a 3 pixel panel; closed on the side nearest whoever put it there, open against the hinge side
+      const f = state & 3, open = state & 4, upper = state & 8, right = state & 16;
+      const side = open ? (right ? (f + 1) & 3 : (f + 3) & 3) : opposite(f);
+      const layer = FACE_TEX[id * 4 + (upper ? 0 : 1)];
+      add(sidePanel(side, 3), [layer, layer, layer, layer, layer, layer]);
+      break;
+    }
+    case 5: { // fence: a post, and two rails towards each neighbour it joins
+      const tall = purpose === 'collide';
+      add([6, 0, 6, 10, tall ? 24 : 16, 10]);
+      for (let f = 0; f < 4; f++) {
+        const [dx, dz] = FACING[f];
+        const n = nb(dx, 0, dz);
+        const joins = (FENCE_FAMILY[n] && FENCE_FAMILY[n] === FENCE_FAMILY[id]) || isFullSolid(n) ||
+          (MODEL_OF[n] === 6 && FENCE_FAMILY[id] === 1 && ((ns(dx, 0, dz) & 1) !== (f & 1)));
+        if (!joins) continue;
+        if (tall) add(rotBox([6, 0, 0, 10, 24, 6], f));
+        else if (purpose === 'render') { add(rotBox([7, 12, 0, 9, 15, 6], f)); add(rotBox([7, 6, 0, 9, 9, 6], f)); }
+        else add(rotBox([6, 6, 0, 10, 15, 6], f));
+      }
+      break;
+    }
+    case 6: { // fence gate: spans across the way it faces; open, it lets things through
+      const f = state & 3, open = state & 4;
+      if (purpose === 'collide') { if (!open) add(rotBox([0, 0, 6, 16, 24, 10], f)); break; }
+      if (purpose === 'select') { add(rotBox([0, 5, 6, 16, 16, 10], f)); break; }
+      add(rotBox([0, 5, 7, 2, 16, 9], f));
+      add(rotBox([14, 5, 7, 16, 16, 9], f));
+      if (!open) {
+        add(rotBox([2, 6, 7, 14, 9, 9], f));
+        add(rotBox([2, 12, 7, 14, 15, 9], f));
+        add(rotBox([6, 9, 7, 10, 12, 9], f));
+      } else {
+        // the two leaves swung back towards the way it faces (towards -Z before turning)
+        add(rotBox([0, 6, 1, 2, 9, 7], f)); add(rotBox([0, 12, 1, 2, 15, 7], f));
+        add(rotBox([14, 6, 1, 16, 9, 7], f)); add(rotBox([14, 12, 1, 16, 15, 7], f));
+      }
+      break;
+    }
+    case 7: // ladder: against the wall on its facing side
+      add(sidePanel(state & 3, purpose === 'collide' ? 3 : 1));
+      break;
+    case 8: { // glass pane and iron bars: a thin post, and a pane towards each neighbour it joins
+      add([7, 0, 7, 9, 16, 9]);
+      for (let f = 0; f < 4; f++) {
+        const [dx, dz] = FACING[f];
+        const n = nb(dx, 0, dz);
+        if (MODEL_OF[n] === 8 || isFullSolid(n) || n === BLOCK.GLASS) add(rotBox([7, 0, 0, 9, 16, 7], f));
+      }
+      break;
+    }
+    case 9: // standing sign: a board on a post, turned to its facing
+      if (purpose === 'collide') break;
+      add(rotBox([7, 0, 7, 9, 8, 9], state & 3));
+      add(rotBox([0, 8, 7, 16, 16, 9], state & 3));
+      break;
+    case 10: // wall sign: a board on the wall behind it
+      if (purpose === 'collide') break;
+      add(rotBox([0, 4, 0, 16, 12, 2], state & 3));
+      break;
+    case 11: { // trapdoor: a lid along the floor or ceiling of the cell; open, up against its hinge side
+      const f = state & 3, open = state & 4, top = state & 8;
+      add(open ? sidePanel(opposite(f), 3) : top ? [0, 13, 0, 16, 16, 16] : [0, 0, 0, 16, 3, 16]);
+      break;
+    }
+    default:
+      add([0, 0, 0, 16, 16, 16]);
+  }
+  return out;
+}
+
+// Where the crosshair outlines a MODEL block: the bounds of its boxes, in block units.
+export function modelSelectBox(id, state, nb, ns) {
+  const boxes = blockBoxes(id, state, nb, ns, 'select');
+  if (!boxes.length) return null;
+  const bb = [16, 16, 16, 0, 0, 0];
+  for (const { b } of boxes) for (let k = 0; k < 3; k++) { bb[k] = Math.min(bb[k], b[k]); bb[k + 3] = Math.max(bb[k + 3], b[k + 3]); }
+  return bb.map((v) => v / 16);
+}
+
+// Collision: 0 nothing, 1 the whole cell, 2 the boxes of blockBoxes(.., 'collide') (or the
+// COLLIDE_H height for beds and other low blocks).
+export const COLLIDE_KIND = new Uint8Array(256);
+for (const d of defs) {
+  if (!d.solid) COLLIDE_KIND[d.id] = 0;
+  else if (d.shape === SHAPE.MODEL) COLLIDE_KIND[d.id] = 2;
+  else if (d.collideH && d.collideH < 1) COLLIDE_KIND[d.id] = 2;
+  else if (d.shape === SHAPE.BOXES && d.boxes.every((bx) => bx.b[4] < 16)) COLLIDE_KIND[d.id] = 2;
+  else COLLIDE_KIND[d.id] = 1;
+}
+// fences and closed gates reach half a block into the cell above
+export const TALL_COLLIDE = new Uint8Array(256);
+for (const d of defs) if (d.model === 'fence' || d.model === 'gate') TALL_COLLIDE[d.id] = 1;
+
+// Collision boxes of a block in block units (inside its cell; fences reach above it).
+export function collisionBoxes(id, state, nb, ns) {
+  const d = defs[id];
+  if (!d) return [];
+  if (d.shape === SHAPE.MODEL) return blockBoxes(id, state, nb, ns, 'collide').map(({ b }) => b.map((v) => v / 16));
+  if (d.collideH && d.collideH < 1) return [[0, 0, 0, 1, d.collideH, 1]];
+  if (d.shape === SHAPE.BOXES) {
+    let top = 0;
+    for (const bx of d.boxes) top = Math.max(top, bx.b[4]);
+    return [[0, 0, 0, 1, top / 16, 1]];
+  }
+  return [[0, 0, 0, 1, 1, 1]];
 }
 
 // Every texture name referenced by blocks, in a stable order. Index = texture array layer.

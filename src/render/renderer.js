@@ -171,6 +171,7 @@ export class Renderer {
     };
     this.texSkins = make(skins.size, skins.layers);
     this.texItems = make(sprites.size, sprites.layers);
+    this.initSignTextures();
     // dynamic triangles: pos3 normal3 uv2 info4 tint4
     this.entityVao = gl.createVertexArray();
     this.entityBuf = gl.createBuffer();
@@ -183,6 +184,54 @@ export class Renderer {
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, 32);
     gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 4, gl.FLOAT, false, stride, 48);
     gl.bindVertexArray(null);
+  }
+
+  // The words on signs: one layer per sign in view, drawn with a 2D canvas when it comes into
+  // view or its text changes (see Game.visibleSigns).
+  initSignTextures(layers = 24, w = 128, h = 64) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 4, gl.RGBA8, w, h, layers);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.texSigns = tex;
+    this.signTextures = { layers, w, h };
+    try {
+      const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : document.createElement('canvas');
+      c.width = w; c.height = h;
+      this.signCtx = c.getContext('2d', { willReadFrequently: true });
+    } catch (e) { this.signCtx = null; }
+  }
+
+  drawSign(layer, lines) {
+    const ctx = this.signCtx;
+    if (!ctx || !this.texSigns) return;
+    const { w, h } = this.signTextures;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#1b130a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lh = h / 4;
+    lines.slice(0, 4).forEach((line, i) => {
+      if (!line) return;
+      let size = 13;
+      ctx.font = `700 ${size}px system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`;
+      while (size > 8 && ctx.measureText(line).width > w - 6) {
+        size--;
+        ctx.font = `700 ${size}px system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`;
+      }
+      ctx.fillText(line, w / 2, lh * (i + 0.5) + 1, w - 4);
+    });
+    const img = ctx.getImageData(0, 0, w, h);
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.texSigns);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, w, h, 1, gl.RGBA, gl.UNSIGNED_BYTE, img.data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
   }
 
   uploadEntities(mesh) {
@@ -199,7 +248,7 @@ export class Renderer {
   drawEntities(prog) {
     const gl = this.gl;
     if (!this.entityCount) return;
-    prog.tex('uSkins', this.texSkins, gl.TEXTURE_2D_ARRAY).tex('uItems', this.texItems, gl.TEXTURE_2D_ARRAY);
+    prog.tex('uSkins', this.texSkins, gl.TEXTURE_2D_ARRAY).tex('uItems', this.texItems, gl.TEXTURE_2D_ARRAY).tex('uSigns', this.texSigns, gl.TEXTURE_2D_ARRAY);
     gl.bindVertexArray(this.entityVao);
     gl.drawArrays(gl.TRIANGLES, 0, this.entityCount);
     this.stats.draws++;

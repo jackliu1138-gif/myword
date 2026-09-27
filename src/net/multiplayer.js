@@ -6,6 +6,8 @@
 import { NetClient, serverUrl } from './net.js';
 import { Voice } from './voice.js';
 import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
+import { loadEntity } from '../sim/containers.js';
+import { itemDef } from '../sim/items.js';
 import { PLAYER_VARIANTS } from '../render/models.js';
 import { t } from '../ui/i18n.js';
 
@@ -100,6 +102,8 @@ export function installMultiplayer(Game) {
       players: new Map(), ghosts: new Map(), ghostIds: new Map(), nextGhost: 1e9,
       stateTimer: 0, mobTimer: 0, saveTimer: 0, voiceTimer: 0, lastState: '', sentMobs: false,
       edits: [],
+      // shared dropped items: what the server knows of (all dimensions) and the ones in our world
+      itemData: new Map(), itemEnts: new Map(), dropSeq: 0,
     };
     const me = w.me && typeof w.me === 'object' ? w.me : {};
     this.mp.endHost = w.endHost || null;
@@ -110,9 +114,15 @@ export function installMultiplayer(Game) {
       inventory: Array.isArray(me.inventory) ? me.inventory : undefined,
       selected: me.selected, spawn: me.spawn || null,
       player: me.player && Array.isArray(me.player.pos) ? me.player : undefined,
+      blockEntities: w.bents && typeof w.bents === 'object' ? w.bents : undefined,
     };
     this.loadWorld(w.seed, data);
-    this.world.onEdit = (x, y, z, id) => { if (this.mp) this.mp.edits.push([x, y, z, id]); };
+    this.world.onEdit = (x, y, z, v) => { if (this.mp) this.mp.edits.push([x, y, z, v]); };
+    // every dropped item is shared: announced when dropped, and whoever reaches it first asks the
+    // server for it
+    this.sim.onDrop = (d) => this.shareDrop(d);
+    this.sim.onTake = (it) => { if (this.mp) this.mp.net.send({ t: 'take', i: it.netId }); };
+    for (const it of Array.isArray(w.items) ? w.items : []) this.addSharedItem(it);
     this.sim.onGhostHit = (ghost, damage, from) => net.send({ t: 'hit', to: ghost.owner, e: ghost.rid, d: Math.round(damage * 10) / 10, f: from });
     this.sim.onRemoteLoot = (to, loot, pos) => net.send({ t: 'loot', to, l: loot, p: pos });
     this.voice = new Voice(net, () => (this.audio.ctx && this.audio.ctx.state !== 'closed' ? this.audio.ctx : null));
@@ -171,6 +181,22 @@ export function installMultiplayer(Game) {
       for (const [id, n] of m.l.slice(0, 8)) if (Number.isInteger(id) && n > 0) this.sim.dropItem(id, Math.min(64, n), m.p[0], m.p[1] + 0.5, m.p[2]);
     });
     net.on('fx', (m) => { if (m.k === 'boom') this.sim.emit({ type: 'explosion', pos: m.p, power: m.pw, remote: true }); });
+    net.on('drop', (m) => this.addSharedItem(m));
+    net.on('took', (m) => this.sharedItemTaken(m.i, m.by));
+    net.on('gone', (m) => this.sharedItemTaken(m.i, null));
+    // chests and furnaces: lent by the server one player at a time
+    net.on('cont', (m) => this.onContainerReply(m));
+    net.on('cgone', (m) => {
+      if (this.openBlock && this.openBlock.key === m.k) { this.inventory.container = null; this.openBlock = null; this.closeInventory(); }
+    });
+    // signs (block entities everyone sees)
+    net.on('bent', (m) => {
+      const d = m.d === 1 || m.d === 2 ? m.d : 0;
+      const map = this.bents[d] || (this.bents[d] = new Map());
+      const e = m.e ? loadEntity(m.e) : null;
+      if (e && e.kind === 'sign') map.set(String(m.k), e); else map.delete(String(m.k));
+      if (this.signLayers) this.signLayers.delete(String(m.k));
+    });
     net.on('chat', (m) => { this.ui.addChat(m.n, m.x); if (m.id !== mp.id) this.audio.sfx('pickup', 0.35, 0); });
     net.on('ev', (m) => {
       if (m.k === 'death') this.ui.addChat(null, t('mp.died', { name: m.n }));
@@ -335,6 +361,64 @@ export function installMultiplayer(Game) {
       mp.panelTimer = (mp.panelTimer || 0) - dt;
       if (mp.panelTimer <= 0) { mp.panelTimer = 1; this.refreshMpPanel(); }
     }
+  };
+
+  // ---------------------------------------------------------------- shared items
+  P.shareDrop = function shareDrop(d) {
+    const mp = this.mp;
+    if (!mp) return;
+    d.netId = mp.id + '.' + (++mp.dropSeq);
+    const b = d.body;
+    const msg = {
+      t: 'drop', i: d.netId, it: d.item, n: d.count, w: d.wear || 0, dl: round2(d.pickupDelay || 0),
+      p: b.pos.map(round2), v: b.vel.map(round2), d: this.dimension || 0,
+    };
+    mp.itemData.set(d.netId, msg);
+    mp.itemEnts.set(d.netId, d);
+    mp.net.send(msg);
+  };
+
+  // An item someone dropped (or the server spilled from a broken chest).
+  P.addSharedItem = function addSharedItem(m) {
+    const mp = this.mp;
+    if (!mp || !m || typeof m.i !== 'string' || mp.itemData.has(m.i)) return;
+    if (!Number.isInteger(m.it) || !itemDef(m.it) || !Array.isArray(m.p)) return;
+    mp.itemData.set(m.i, m);
+    if ((m.d | 0) === (this.dimension | 0)) this.spawnSharedItem(m);
+  };
+
+  P.spawnSharedItem = function spawnSharedItem(m) {
+    const v = Array.isArray(m.v) ? m.v : null;
+    const e = this.sim.dropItem(m.it, Math.max(1, Math.min(64, m.n | 0)), m.p[0], m.p[1], m.p[2], v, m.w | 0, { delay: Number(m.dl) || 0, remote: true, netId: m.i });
+    if (e) this.mp.itemEnts.set(m.i, e);
+  };
+
+  // The server's answer: `by` got the item (us: it goes into the inventory), or null: it's gone.
+  P.sharedItemTaken = function sharedItemTaken(id, by) {
+    const mp = this.mp;
+    if (!mp) return;
+    const data = mp.itemData.get(id);
+    mp.itemData.delete(id);
+    const e = mp.itemEnts.get(id);
+    mp.itemEnts.delete(id);
+    if (e) e.removed = true;
+    if (!data || by !== mp.id) return;
+    const left = this.inventory.add(data.it, data.n, data.w || 0);
+    if (left < data.n) this.audio.sfx('pickup', 0.6, 0);
+    if (left > 0) {
+      // no room for all of it: the rest goes back on the ground
+      const p = this.player.pos;
+      this.sim.dropItem(data.it, left, p[0], p[1] + 0.5, p[2], [0, 2, 0], data.w || 0, { delay: 2 });
+      this.ui.toast(t('inv.full'), 2000);
+    }
+  };
+
+  // After changing dimension: the shared items of the world we are in now.
+  P.respawnSharedItems = function respawnSharedItems() {
+    const mp = this.mp;
+    if (!mp) return;
+    mp.itemEnts.clear();
+    for (const m of mp.itemData.values()) if ((m.d | 0) === (this.dimension | 0)) this.spawnSharedItem(m);
   };
 
   P.flushEdits = function flushEdits() {

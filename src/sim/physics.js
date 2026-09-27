@@ -25,6 +25,8 @@ export class Body {
 
   collides(px, py, pz) {
     const w = this.world, hw = this.hw;
+    if (w.boxCollides) return w.boxCollides(px - hw + EPS, py + EPS, pz - hw + EPS, px + hw - EPS, py + this.h - EPS, pz + hw - EPS);
+    // simple worlds (tests) only know whole solid cells
     const x0 = Math.floor(px - hw + EPS), x1 = Math.floor(px + hw - EPS);
     const y0 = Math.floor(py + EPS), y1 = Math.floor(py + this.h - EPS);
     const z0 = Math.floor(pz - hw + EPS), z1 = Math.floor(pz + hw - EPS);
@@ -33,6 +35,22 @@ export class Body {
         for (let x = x0; x <= x1; x++)
           if (w.isSolidAt(x, y, z)) return true;
     return false;
+  }
+
+  // Walking along one axis, stepping up onto slabs and stairs.
+  moveStep(axis, amount, step) {
+    const p = this.pos;
+    const start = p[axis], y = p[1];
+    const blocked = this.moveAxis(axis, amount);
+    if (!blocked || step <= 0) return blocked;
+    const plain = p[axis];
+    p[axis] = start;
+    p[1] = y + step;
+    if (this.collides(p[0], p[1], p[2])) { p[1] = y; p[axis] = plain; return blocked; }
+    const blocked2 = this.moveAxis(axis, amount);
+    if (Math.abs(p[axis] - start) <= Math.abs(plain - start) + 1e-3) { p[1] = y; p[axis] = plain; return blocked; }
+    this.moveAxis(1, -step - EPS);
+    return blocked2;
   }
 
   moveAxis(axis, amount) {
@@ -99,8 +117,9 @@ export class Body {
     const vyBefore = v[1];
     const by = this.moveAxis(1, v[1] * dt);
     if (by) { this.onGround = v[1] < 0; v[1] = 0; } else this.onGround = false;
-    const bx = this.moveAxis(0, v[0] * dt);
-    const bz = this.moveAxis(2, v[2] * dt);
+    const step = opts.step && (this.onGround || wasGround) ? opts.step : 0;
+    const bx = this.moveStep(0, v[0] * dt, step);
+    const bz = this.moveStep(2, v[2] * dt, step);
     if (bx) v[0] = 0;
     if (bz) v[2] = 0;
     this.hitWall = bx || bz;

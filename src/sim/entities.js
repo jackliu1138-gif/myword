@@ -404,7 +404,7 @@ export class Mob extends Entity {
       this.headYaw += dd * 0.15;
       this.headPitch *= 0.9;
     }
-    const landed = b.step(TICK, wish, jump, { swim: !this.def.flies, jumpV: this.type === 'spider' ? 7 : 8.4 });
+    const landed = b.step(TICK, wish, jump, { swim: !this.def.flies, jumpV: this.type === 'spider' ? 7 : 8.4, step: this.def.flies ? 0 : 0.6 });
     if (this.def.flutter && !b.onGround && b.vel[1] < -2) b.vel[1] = -2; // chickens glide down
     else if (landed > 3.5 && !this.def.flutter && !this.def.flies) this.hurt(Math.floor(landed - 3), null);
     const hs = Math.hypot(b.vel[0], b.vel[2]);

@@ -29,12 +29,15 @@ export function installTravel(Game) {
     });
     w.onChunkUnload = (c) => this.renderer.freeChunk(c);
     w.onBlockChanged = (x, y, z, id) => this.onBlockChanged(x, y, z, id);
+    w.fluids.onEvent = (type, x, y, z, id) => this.onFluidEvent(type, x, y, z, id);
     if (this.mp) w.onEdit = (x, y, z, id) => { if (this.mp) this.mp.edits.push([x, y, z, id]); };
     return w;
   };
 
   // Swap the loaded world for another dimension's (its edits are kept per dimension).
   P.switchWorld = function switchWorld(dim) {
+    if (this.state === 'inventory') this.closeInventory();
+    if (this.state === 'sign') this.finishSign(this.ui.signLines());
     if (this.mp) this.flushEdits();
     const old = this.world;
     this.dimEdits[this.dimension] = old.edits;
@@ -53,7 +56,8 @@ export function installTravel(Game) {
     sim.dimension = dim;
     sim.fortressesNear = dim === DIM.NETHER ? (x, z) => this.world.generator.fortressesNear(x, z, 40) : null;
     sim.entities.clear();
-    for (const e of this.dimItems[dim] || []) { e.body.world = this.world; sim.entities.set(e.id, e); }
+    if (this.mp) this.respawnSharedItems();
+    else for (const e of this.dimItems[dim] || []) { e.body.world = this.world; sim.entities.set(e.id, e); }
     this.dimItems[dim] = [];
     this.dragon = null;
     if (this.mp) { this.mp.ghosts.clear(); this.mp.ghostIds.clear(); }

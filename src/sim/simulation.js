@@ -42,6 +42,11 @@ export class Simulation {
     // positions are known here); creatures marked ghost belong to another player's simulation
     this.onGhostHit = null; // (ghost, damage, fromPos) => void
     this.onRemoteLoot = null; // (playerId, [[item, count]], pos) => void
+    // multiplayer: every dropped item is shared. onDrop(item) announces one dropped here; a
+    // player walking into a shared item asks for it with onTake(item) (the server decides who
+    // gets it) instead of picking it up at once
+    this.onDrop = null;
+    this.onTake = null;
   }
 
   get diff() { return DIFFICULTY[this.difficulty] || DIFFICULTY.normal; }
@@ -180,10 +185,15 @@ export class Simulation {
     return m;
   }
 
-  dropItem(itemId, count, x, y, z, vel = null, wear = 0) {
+  // delay: seconds before anyone can pick it up (thrown items fly clear of their thrower first);
+  // remote: an item another player dropped (it is already shared)
+  dropItem(itemId, count, x, y, z, vel = null, wear = 0, { delay = 0.5, remote = false, netId = null } = {}) {
     if (!itemId || count <= 0) return null;
     const d = this.add(new ItemDrop(this, this.nextId++, itemId, count, x, y, z, wear));
     if (vel) d.body.vel = vel.slice();
+    d.pickupDelay = delay;
+    if (netId) d.netId = netId;
+    if (!remote && this.onDrop) this.onDrop(d);
     return d;
   }
 
@@ -383,9 +393,9 @@ export class Simulation {
       const id = item === 'wool' ? mob.variant || BLOCK.WHITE_WOOL : item;
       if (n > 0) loot.push([id, n]);
     }
-    // the loot goes to whoever made the kill, on their machine
+    // the loot goes to whoever made the kill, on their machine (unless items are shared anyway)
     const killer = this.players.get(mob.lastAttacker);
-    if (killer && killer.remote && this.onRemoteLoot) { if (loot.length) this.onRemoteLoot(killer.id, loot, [p[0], p[1], p[2]]); return; }
+    if (killer && killer.remote && this.onRemoteLoot && !this.onDrop) { if (loot.length) this.onRemoteLoot(killer.id, loot, [p[0], p[1], p[2]]); return; }
     for (const [id, n] of loot) this.dropItem(id, n, p[0], p[1] + 0.5, p[2]);
   }
 
@@ -634,29 +644,41 @@ export class Simulation {
     if (this.ticks % 20 === 0) this.mergeItems();
   }
 
+  // Items slide to a player who walks right up to them, and are picked up on touch. Only players
+  // simulated here pick things up: the others do that in their own game.
   tickItem(it) {
+    if (it.pending) {
+      // asked the server for it: hidden until the answer comes (or asked again after a while)
+      if (performance.now() - it.pending > 4000) it.pending = 0;
+      return;
+    }
+    if (it.pickupDelay > 0) return;
     for (const p of this.players.values()) {
-      if (p.dead || !this.pickup) continue;
+      if (p.dead || p.remote || !this.pickup) continue;
       const dx = p.pos[0] - it.body.pos[0], dy = p.pos[1] + 0.9 - it.body.pos[1], dz = p.pos[2] - it.body.pos[2];
       const d = Math.hypot(dx, dy, dz);
-      if (it.pickupDelay <= 0 && d < 3) {
-        // drift towards the player, then collect
-        it.body.vel[0] += (dx / d) * 30 * TICK; it.body.vel[1] += (dy / d) * 30 * TICK; it.body.vel[2] += (dz / d) * 30 * TICK;
+      if (d < 2.2 && d > 0.05) {
+        const k = 1 - d / 2.2;
+        it.body.vel[0] += (dx / d) * 1.4 * k; it.body.vel[1] += (dy / d) * 0.9 * k; it.body.vel[2] += (dz / d) * 1.4 * k;
       }
-      if (it.pickupDelay <= 0 && d < 1.3) {
-        const taken = this.pickup(p.id, it.item, it.count, it.wear);
-        if (taken > 0) {
-          it.count -= taken;
-          this.emit({ type: 'pickup', id: p.id, item: it.item, count: taken, pos: it.body.pos.slice() });
-          if (it.count <= 0) { it.removed = true; return; }
-        }
+      if (d >= 1.25) continue;
+      if (it.netId && this.onTake) {
+        it.pending = performance.now();
+        this.onTake(it, p.id);
+        return;
+      }
+      const taken = this.pickup(p.id, it.item, it.count, it.wear);
+      if (taken > 0) {
+        it.count -= taken;
+        this.emit({ type: 'pickup', id: p.id, item: it.item, count: taken, pos: it.body.pos.slice() });
+        if (it.count <= 0) { it.removed = true; return; }
       }
     }
   }
 
   tickArrowPickup(a) {
     for (const p of this.players.values()) {
-      if (p.dead || !this.pickup) continue;
+      if (p.dead || p.remote || !this.pickup) continue;
       const d = Math.hypot(p.pos[0] - a.body.pos[0], p.pos[1] + 0.9 - a.body.pos[1], p.pos[2] - a.body.pos[2]);
       if (d < 1.4 && this.pickup(p.id, ITEM.ARROW, 1, 0) > 0) {
         a.removed = true;
@@ -667,7 +689,8 @@ export class Simulation {
   }
 
   mergeItems() {
-    const items = [...this.entities.values()].filter((e) => e.kind === 'item' && !e.removed);
+    // shared items keep their own identity (each one is someone's to pick up)
+    const items = [...this.entities.values()].filter((e) => e.kind === 'item' && !e.removed && !e.netId && !e.pending);
     for (let i = 0; i < items.length; i++) {
       const a = items[i];
       if (a.removed) continue;

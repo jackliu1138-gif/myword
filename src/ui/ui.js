@@ -3,20 +3,21 @@
 import { BLOCKS, BLOCK } from '../world/blocks.js';
 import { t, itemName, applyI18n, getLanguage } from './i18n.js';
 import { GLYPHS } from '../game/gamepad.js';
-import { ITEMS, RECIPES, itemDef } from '../sim/items.js';
-import { ARMOR_REF } from '../sim/inventory.js';
+import { ITEMS, RECIPES, itemDef, COOK_TIME } from '../sim/items.js';
+import { ARMOR_REF, CONTAINER_REF } from '../sim/inventory.js';
 
 // Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
 const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
   'oak_leaves', 'birch_leaves', 'spruce_leaves', 'tall_grass', 'fern', 'poppy', 'dandelion', 'cornflower', 'dead_bush', 'pumpkin',
   'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'obsidian', 'netherrack', 'soul_sand', 'nether_quartz_ore', 'magma_block',
-  'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water']);
+  'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water', 'oak_sapling', 'birch_sapling', 'spruce_sapling']);
 const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'misc'];
 function paletteTab(d) {
   if (d.kind === 'block') return NATURE.has(d.key) ? 'nature' : 'building';
   if (['sword', 'bow', 'arrow', 'armor'].includes(d.kind)) return 'combat';
-  if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye'].includes(d.kind)) return 'tools';
-  if (d.kind === 'food') return 'food';
+  if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye', 'bucket', 'fertilizer'].includes(d.kind)) return 'tools';
+  if (d.kind === 'food' || d.kind === 'milk') return 'food';
+  if (d.kind === 'door' || d.kind === 'sign' || d.kind === 'bed') return 'building';
   return 'misc';
 }
 
@@ -198,7 +199,7 @@ export function clockText(tm) {
 
 export class UI {
   constructor() {
-    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer'];
+    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer', 'signedit', 'worlds'];
     this.mp = null;
     this.chatLines = [];
     this.newWorld = { mode: 'survival', difficulty: 'normal' };
@@ -226,6 +227,9 @@ export class UI {
     const click = (id, ev) => $(id).addEventListener('click', () => { this.emit('click'); this.emit(ev); });
     click('btn-play', 'play');
     click('btn-new', 'openNewWorld');
+    click('btn-worlds', 'openWorlds');
+    click('btn-worlds-back', 'back');
+    click('btn-worlds-new', 'openNewWorld');
     click('btn-settings', 'openSettings');
     click('btn-help', 'openHelp');
     click('btn-device', 'openDevice');
@@ -263,14 +267,14 @@ export class UI {
     // tapping or clicking back into the game closes the chat
     $('chat-input').addEventListener('blur', () => setTimeout(() => { if ($('chat').classList.contains('open')) this.emit('chatCancel'); }, 150));
     click('btn-death-title', 'toTitle');
-    $('btn-newworld-create').addEventListener('click', () => {
-      this.emit('click');
-      this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld });
-    });
-    $('seed-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld });
-      e.stopPropagation();
-    });
+    const create = () => this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld, name: $('name-input').value.trim() });
+    $('btn-newworld-create').addEventListener('click', () => { this.emit('click'); create(); });
+    for (const id of ['seed-input', 'name-input']) {
+      $(id).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') create();
+        e.stopPropagation();
+      });
+    }
     // new world: game mode and difficulty
     const seg = (id, key, after) => {
       for (const b of $(id).querySelectorAll('button')) {
@@ -441,7 +445,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['bed', 'farm', 'armor', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -488,7 +492,78 @@ export class UI {
   // meta = { seed, saved }
   setTitleMeta(meta) {
     this.titleMeta = meta;
-    $('title-meta').textContent = t('title.meta', { seed: meta.seed, state: t(meta.saved ? 'title.savedWorld' : 'title.newWorld') });
+    const text = t('title.meta', { seed: meta.seed, state: t(meta.saved ? 'title.savedWorld' : 'title.newWorld') });
+    $('title-meta').textContent = meta.name ? meta.name + ' · ' + text : text;
+  }
+
+  // ------------------------------------------------------------ the list of worlds
+  // Events: worldPlay(id), worldRename(id, name), worldDelete(id)
+  renderWorldList(worlds, currentId) {
+    this.worldList = [worlds, currentId];
+    const host = $('world-list');
+    host.innerHTML = '';
+    if (!worlds.length) {
+      host.innerHTML = `<p class="hint">${escapeHtml(t('worlds.empty'))}</p>`;
+      return;
+    }
+    const when = (ms) => {
+      const m = Math.max(0, (Date.now() - (ms || 0)) / 60000);
+      if (m < 1) return t('when.now');
+      if (m < 60) return t('when.min', { n: Math.floor(m) });
+      if (m < 60 * 24) return t('when.hour', { n: Math.floor(m / 60) });
+      return t('when.day', { n: Math.floor(m / 60 / 24) });
+    };
+    worlds.forEach((w, i) => {
+      const row = document.createElement('div');
+      row.className = 'world-row' + (w.id === currentId ? ' current' : '');
+      row.setAttribute('role', 'listitem');
+      const name = w.name || t('worlds.defaultName', { n: worlds.length - i });
+      const info = document.createElement('div');
+      info.innerHTML = `<p class="world-name">${escapeHtml(name)}${w.id === currentId ? `<span class="tag">${escapeHtml(t('worlds.current'))}</span>` : ''}</p>
+        <p class="world-meta">${escapeHtml(t('worlds.meta', { mode: t('mode.' + (w.mode === 'creative' ? 'creative' : 'survival')), seed: w.seed, when: when(w.savedAt) }))}</p>`;
+      const actions = document.createElement('div');
+      actions.className = 'world-actions';
+      const btn = (label, cls, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn ' + cls;
+        b.textContent = t(label);
+        b.addEventListener('click', () => { this.emit('click'); fn(); });
+        actions.appendChild(b);
+        return b;
+      };
+      btn('worlds.play', 'primary', () => this.emit('worldPlay', w.id));
+      btn('worlds.rename', '', () => {
+        const input = document.createElement('input');
+        input.className = 'world-rename';
+        input.maxLength = 32;
+        input.value = w.name || name;
+        input.setAttribute('aria-label', t('new.name'));
+        info.replaceChildren(input);
+        actions.replaceChildren();
+        btn('worlds.save', 'primary', () => this.emit('worldRename', w.id, input.value));
+        btn('worlds.keep', '', () => this.renderWorldList(...this.worldList));
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') this.emit('worldRename', w.id, input.value);
+          if (e.key === 'Escape') this.renderWorldList(...this.worldList);
+        });
+        input.focus();
+        input.select();
+      });
+      btn('worlds.delete', 'danger', () => {
+        // asked here in the list, not in a browser dialog
+        actions.replaceChildren();
+        const q = document.createElement('p');
+        q.className = 'world-confirm';
+        q.textContent = t('worlds.confirm', { name });
+        row.appendChild(q);
+        btn('worlds.yesDelete', 'danger', () => this.emit('worldDelete', w.id));
+        btn('worlds.keep', 'primary', () => this.renderWorldList(...this.worldList)).focus();
+      });
+      row.append(info, actions);
+      host.appendChild(row);
+    });
   }
 
   setPlayLabel(key) {
@@ -863,16 +938,19 @@ export class UI {
     });
   }
 
-  // inv: the Inventory (slots, armor, cursor); creative shows the palette instead of recipes
+  // inv: the Inventory (slots, armor, cursor, and the open chest or furnace); creative shows the
+  // palette instead of recipes; an open container shows instead of both
   renderInventory(inv, selected, creative, canCraft) {
     this.invState = [inv, selected, creative, canCraft];
+    const box = inv.container;
     const title = $('inv-title'), hint = $('inv-hint');
-    title.dataset.i18n = creative ? 'inv.title' : 'inv.survivalTitle';
-    hint.dataset.i18n = creative ? 'inv.hint' : 'inv.survivalHint';
+    title.dataset.i18n = box ? 'cont.' + box.kind : creative ? 'inv.title' : 'inv.survivalTitle';
+    hint.dataset.i18n = box ? 'cont.hint' : creative ? 'inv.hint' : 'inv.survivalHint';
     title.textContent = t(title.dataset.i18n);
     hint.textContent = t(hint.dataset.i18n);
-    $('inv-creative').hidden = !creative;
-    $('inv-survival').hidden = creative;
+    $('inv-creative').hidden = !creative || !!box;
+    $('inv-survival').hidden = creative || !!box;
+    $('inv-container').hidden = !box;
     const active = document.activeElement;
     const focusKey = active && active.dataset ? active.dataset.key : null;
     const build = (host, refs, cls = 'slot') => {
@@ -912,6 +990,23 @@ export class UI {
     });
     const av = inv.armorValues();
     $('inv-armor-pts').textContent = av.points ? t('inv.armorPts', { n: av.points }) : '';
+    if (box) {
+      $('inv-cont-title').textContent = t('cont.' + box.kind + 'Slots');
+      $('inv-cont-hint').textContent = t(box.kind === 'furnace' ? 'cont.furnaceHint' : 'cont.chestHint');
+      $('inv-chest').hidden = box.kind !== 'chest';
+      $('inv-furnace').hidden = box.kind !== 'furnace';
+      if (box.kind === 'chest') {
+        build($('inv-chest'), box.slots.map((_, i) => CONTAINER_REF + i));
+        for (const el of $('inv-chest').children) fill(el, box.slots[Number(el.dataset.ref) - CONTAINER_REF], t('cont.chest'));
+      } else {
+        const hosts = [['fur-input', 'cont.input'], ['fur-fuel', 'cont.fuel'], ['fur-output', 'cont.output']];
+        hosts.forEach(([id, label], i) => {
+          build($(id), [CONTAINER_REF + i]);
+          fill($(id).firstChild, box.slots[i], t(label));
+        });
+        this.renderFurnaceProgress(box);
+      }
+    }
     // the stack on the cursor
     const cursorEl = $('inv-cursor');
     const c = inv.cursor;
@@ -927,6 +1022,43 @@ export class UI {
       }
     }
     if (!creative) this.renderRecipes(canCraft, focusKey, selected);
+  }
+
+  // the flame (fuel left) and the arrow (how far the item in the furnace has cooked)
+  renderFurnaceProgress(f) {
+    const flame = f.burnMax > 0 ? f.burn / f.burnMax : 0;
+    $('fur-flame').style.height = (flame * 100).toFixed(1) + '%';
+    $('fur-arrow').style.width = (Math.min(1, f.cook / COOK_TIME) * 100).toFixed(1) + '%';
+  }
+
+  // ------------------------------------------------------------ signs
+  openSignEditor(lines) {
+    const inputs = [...document.querySelectorAll('#signedit .sign-line')];
+    inputs.forEach((el, i) => {
+      el.value = lines[i] || '';
+      if (el.dataset.bound) return;
+      el.dataset.bound = '1';
+      el.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (i < inputs.length - 1) inputs[i + 1].focus();
+          else if (e.key === 'Enter') this.emit('signDone', this.signLines());
+        } else if (e.key === 'ArrowUp' && i > 0) { e.preventDefault(); inputs[i - 1].focus(); }
+        else if (e.key === 'Escape') { e.preventDefault(); this.emit('signDone', this.signLines()); }
+      });
+    });
+    const done = $('btn-sign-done');
+    if (!done.dataset.bound) { done.dataset.bound = '1'; done.addEventListener('click', () => { this.emit('click'); this.emit('signDone', this.signLines()); }); }
+    this.show('signedit', inputs[0]);
+  }
+
+  signLines() {
+    return [...document.querySelectorAll('#signedit .sign-line')].map((el) => el.value);
+  }
+
+  closeSignEditor() {
+    if (this.current === 'signedit') this.show(null);
   }
 
   renderRecipes(canCraft, focusKey, selected) {

@@ -6,7 +6,7 @@ const ATTRIBS = `
 layout(location = 0) in vec3 aPos;     // camera relative
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
-layout(location = 3) in vec4 aInfo;    // layer, sky light, block light, mode (0 skin, 1 block, 2 item sprite)
+layout(location = 3) in vec4 aInfo;    // layer, sky light, block light, mode (0 skin, 1 block, 2 item sprite, 3 sign text)
 layout(location = 4) in vec4 aTint;    // rgb + amount (>0 overlay, -1 masked tint, -2 cutout block, -3 cutout tinted)
 `;
 
@@ -34,6 +34,7 @@ ${GPACK}
 uniform sampler2DArray uSkins;
 uniform sampler2DArray uItems;
 uniform sampler2DArray uAlbedo;
+uniform sampler2DArray uSigns;
 uniform vec4 uTexMode;
 in vec2 vUV;
 in vec3 vN;
@@ -48,6 +49,7 @@ void main() {
   float rough = 0.78;
   if (mode == 0) c = texture(uSkins, vec3(vUV, vInfo.x));
   else if (mode == 2) { c = texture(uItems, vec3(vUV, vInfo.x)); rough = 0.55; }
+  else if (mode == 3) { c = texture(uSigns, vec3(vUV, vInfo.x)); rough = 0.9; }
   else c = texture(uAlbedo, vec3(uTexMode.y > 0.5 ? pixelArtUV(vUV, uTexMode.x) : vUV, vInfo.x));
   if (mode != 1 && c.a < 0.5) discard;
   if (mode == 1 && vTint.a < -1.5 && c.a < 0.5) discard;
@@ -86,5 +88,6 @@ void main() {
   int mode = int(vInfo.w + 0.5);
   if (mode == 0 && texture(uSkins, vec3(vUV, vInfo.x)).a < 0.5) discard;
   if (mode == 2 && texture(uItems, vec3(vUV, vInfo.x)).a < 0.5) discard;
+  if (mode == 3) discard; // sign text casts no shadow of its own
 }
 `;

@@ -17,7 +17,7 @@ function handle(msg) {
       return { result: { id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, blocks }, transfer: [blocks.buffer] };
     }
     case 'mesh': {
-      const m = mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options);
+      const m = mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options, msg.states);
       m.id = msg.id;
       m.type = 'mesh';
       m.version = msg.version;

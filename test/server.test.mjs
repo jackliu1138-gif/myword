@@ -199,3 +199,85 @@ test('everyone in the overworld asleep skips the night; each dimension keeps its
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('dropped items are shared first come first served; chests are lent one at a time and spill when broken; signs and furnaces', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'lumen-'));
+  const open = [];
+  let srv = null;
+  try {
+    srv = startServer({ port: 0, dataDir, seed: 'chests', quiet: true });
+    const port = await srv.ready;
+    const a = client(port), b = client(port);
+    open.push(a, b);
+    await a.send({ t: 'hello', n: 'Ann', v: PROTOCOL });
+    const wa = await a.next('welcome');
+    assert.deepEqual(wa.items, []);
+    await b.send({ t: 'hello', n: 'Ben', v: PROTOCOL });
+    const wb = await b.next('welcome');
+    // a drop is announced to the others; the first to ask for it gets it
+    await a.send({ t: 'drop', i: wa.id + '.1', it: 286, n: 3, w: 0, dl: 2, p: [1, 70, 1], v: [0, 2, 0], d: 0 });
+    const d = await b.next('drop');
+    assert.deepEqual([d.i, d.it, d.n], [wa.id + '.1', 286, 3]);
+    await a.send({ t: 'drop', i: wb.id + '.9', it: 286, n: 1, p: [0, 0, 0], v: [0, 0, 0], d: 0 }); // not theirs to name
+    await b.send({ t: 'take', i: d.i });
+    assert.equal((await b.next('took')).by, wb.id);
+    assert.equal((await a.next('gone')).i, d.i);
+    await a.send({ t: 'take', i: d.i });
+    assert.equal((await a.next('gone')).i, d.i, 'too late');
+    // a chest: placed (an edit with its facing in the state), opened by one player at a time
+    const chest = 124 | (2 << 8);
+    await a.send({ t: 'b', l: [[5, 60, 5, chest]] });
+    assert.deepEqual((await b.next('b')).l, [[5, 60, 5, chest]], 'states travel with edits');
+    await a.send({ t: 'open', k: '5,60,5', d: 0 });
+    const c1 = await a.next('cont');
+    assert.equal(c1.c.kind, 'chest');
+    await b.send({ t: 'open', k: '5,60,5', d: 0 });
+    assert.equal((await b.next('cont')).busy, 'Ann');
+    const slots = new Array(27).fill(null);
+    slots[0] = [260, 5, 0];
+    await a.send({ t: 'close', k: '5,60,5', d: 0, c: { kind: 'chest', slots } });
+    await b.send({ t: 'open', k: '5,60,5', d: 0 });
+    const c2 = await b.next('cont');
+    assert.deepEqual(c2.c.slots[0], [260, 5, 0]);
+    // breaking it (while Ben has it open) spills what it held for everyone and tells Ben
+    await a.send({ t: 'b', l: [[5, 60, 5, 0]] });
+    assert.equal((await b.next('cgone')).k, '5,60,5');
+    const spill = await a.next('drop');
+    assert.deepEqual([spill.it, spill.n, spill.p], [260, 5, [5.5, 60.5, 5.5]]);
+    // signs: only on a sign block, and passed on to everyone
+    await a.send({ t: 'bent', k: '7,60,7', d: 0, e: { kind: 'sign', lines: ['no sign here'] } });
+    await a.send({ t: 'b', l: [[7, 60, 7, 163 | (1 << 8)]] });
+    await a.send({ t: 'bent', k: '7,60,7', d: 0, e: { kind: 'sign', lines: ['你好', 'Ben', '', '', 'extra'] } });
+    const bent = await b.next('bent');
+    assert.deepEqual([bent.k, bent.e.lines], ['7,60,7', ['你好', 'Ben', '', '']]);
+    // a furnace nobody has open keeps cooking on the server and lights up for everyone
+    await a.send({ t: 'b', l: [[9, 60, 9, 125 | (2 << 8)]] });
+    await a.send({ t: 'open', k: '9,60,9', d: 0 });
+    await a.next('cont');
+    await a.send({ t: 'close', k: '9,60,9', d: 0, c: { kind: 'furnace', slots: [[371, 1, 0], [257, 1, 0], null], burn: 0, burnMax: 0, cook: 0 } });
+    let lit = await b.next('b', 4000);
+    while (lit.l[0][0] !== 9 || (lit.l[0][3] & 255) === 125) lit = await b.next('b', 4000); // (the placing edit comes first)
+    assert.equal(lit.l[0][3], 126 | (2 << 8), 'lit, facing kept');
+    b.close();
+    a.close();
+    await srv.stop();
+    srv = null;
+    // what chests hold and what signs say is kept on disk; a late joiner reads the sign
+    srv = startServer({ port: 0, dataDir, quiet: true });
+    const c = client(await srv.ready);
+    open.push(c);
+    await c.send({ t: 'hello', n: 'Cat', v: PROTOCOL });
+    const wc = await c.next('welcome');
+    assert.deepEqual(wc.bents[0]['7,60,7'].lines, ['你好', 'Ben', '', '']);
+    assert.equal(wc.bents[0]['9,60,9'], undefined, 'furnaces are not in the welcome');
+    await c.send({ t: 'open', k: '9,60,9', d: 0 });
+    assert.equal((await c.next('cont')).c.kind, 'furnace');
+    c.close();
+    await srv.stop();
+    srv = null;
+  } finally {
+    for (const cl of open) cl.close();
+    if (srv) await srv.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

@@ -1,13 +1,17 @@
 // A player's inventory: 45 slots (0-8 are the hotbar, 9-44 the bag), four armour slots and the
-// stack held on the mouse cursor while items are moved around the inventory screen.
+// stack held on the mouse cursor while items are moved around the inventory screen, plus the
+// slots of whatever chest or furnace is open.
 // A slot is null or { id, count, wear }. Slots are addressed by a reference: 0-44 for the hotbar
-// and bag, ARMOR_REF + 0..3 for helmet, chestplate, leggings and boots.
+// and bag, ARMOR_REF + 0..3 for helmet, chestplate, leggings and boots, CONTAINER_REF + i for the
+// open container's slots (a furnace's are input, fuel and output).
 
-import { itemDef, PLANKS } from './items.js';
+import { itemDef, PLANKS, SMELTING, fuelTime } from './items.js';
 
 export const HOTBAR = 9;
 export const INV_SIZE = 45;
 export const ARMOR_REF = 100;
+export const CONTAINER_REF = 200;
+export const FURNACE_INPUT = CONTAINER_REF, FURNACE_FUEL = CONTAINER_REF + 1, FURNACE_OUTPUT = CONTAINER_REF + 2;
 
 const copy = (s) => (s ? { id: s.id, count: s.count, wear: s.wear || 0 } : null);
 
@@ -17,6 +21,8 @@ export class Inventory {
     this.armor = [null, null, null, null];
     this.cursor = null;
     this.onChange = null;
+    this.container = null; // the open chest or furnace: { kind, slots, ... } (see containers.js)
+    this.onContainerChange = null;
   }
 
   changed() {
@@ -29,19 +35,37 @@ export class Inventory {
   }
 
   get(ref) {
+    if (ref >= CONTAINER_REF) return (this.container && this.container.slots[ref - CONTAINER_REF]) || null;
     return ref >= ARMOR_REF ? this.armor[ref - ARMOR_REF] || null : this.slots[ref] || null;
   }
 
   set(ref, s) {
-    if (ref >= ARMOR_REF) this.armor[ref - ARMOR_REF] = s;
+    if (ref >= CONTAINER_REF) {
+      if (!this.container) return;
+      this.container.slots[ref - CONTAINER_REF] = s;
+      if (this.onContainerChange) this.onContainerChange();
+    } else if (ref >= ARMOR_REF) this.armor[ref - ARMOR_REF] = s;
     else this.slots[ref] = s;
   }
 
-  // Can this stack go in that slot? (armour slots take only their own piece)
+  // Can this stack go in that slot? (armour slots take only their own piece; a furnace's fuel
+  // slot takes fuel, and nothing goes into its output)
   accepts(ref, s) {
     if (!s || ref < ARMOR_REF) return true;
+    if (ref >= CONTAINER_REF) {
+      if (!this.container) return false;
+      if (this.container.kind === 'furnace') {
+        if (ref === FURNACE_OUTPUT) return false;
+        if (ref === FURNACE_FUEL) return fuelTime(s.id) > 0;
+      }
+      return ref - CONTAINER_REF < this.container.slots.length;
+    }
     const d = itemDef(s.id);
     return !!d && d.kind === 'armor' && d.slot === ref - ARMOR_REF;
+  }
+
+  takeOnly(ref) {
+    return ref === FURNACE_OUTPUT && !!this.container && this.container.kind === 'furnace';
   }
 
   // Adds items, filling matching stacks first (hotbar first). Returns what didn't fit.
@@ -136,11 +160,22 @@ export class Inventory {
     const s = this.get(ref);
     const c = this.cursor;
     if (!c && !s) return false;
+    if (c && this.takeOnly(ref)) {
+      // a furnace's output: what is held takes more of the same
+      if (!s || s.id !== c.id || s.wear || c.wear) return false;
+      const n = Math.min(s.count, this.stackOf(c.id) - c.count);
+      if (n <= 0) return false;
+      c.count += n;
+      s.count -= n;
+      this.set(ref, s.count > 0 ? s : null);
+      this.changed();
+      return true;
+    }
     if (!c) {
       const n = button === 2 ? Math.ceil(s.count / 2) : s.count;
       this.cursor = { id: s.id, count: n, wear: s.wear || 0 };
       s.count -= n;
-      if (s.count <= 0) this.set(ref, null);
+      this.set(ref, s.count <= 0 ? null : s);
     } else if (!this.accepts(ref, c)) {
       return false;
     } else if (!s) {
@@ -156,6 +191,7 @@ export class Inventory {
         s.count += n;
         c.count -= n;
         if (c.count <= 0) this.cursor = null;
+        this.set(ref, s);
       }
     } else {
       if (ref >= ARMOR_REF && c.count > 1) return false;
@@ -166,17 +202,25 @@ export class Inventory {
     return true;
   }
 
-  // Shift-click: armour onto the body (and back), hotbar <-> bag.
+  // Shift-click: between an open chest or furnace and the inventory, armour onto the body (and
+  // back), hotbar <-> bag.
   quickMove(ref) {
     const s = this.get(ref);
     if (!s) return false;
     const d = itemDef(s.id);
     let targets;
-    if (ref >= ARMOR_REF) targets = [...this.slots.keys()].slice(HOTBAR).concat([...this.slots.keys()].slice(0, HOTBAR));
+    const box = this.container;
+    const bagFirst = () => [...this.slots.keys()].slice(HOTBAR).concat([...this.slots.keys()].slice(0, HOTBAR));
+    if (ref >= CONTAINER_REF) targets = bagFirst();
+    else if (box && ref < ARMOR_REF && box.kind === 'chest') targets = box.slots.map((_, i) => CONTAINER_REF + i);
+    else if (box && ref < ARMOR_REF && box.kind === 'furnace' && SMELTING.has(s.id)) targets = [FURNACE_INPUT];
+    else if (box && ref < ARMOR_REF && box.kind === 'furnace' && fuelTime(s.id) > 0) targets = [FURNACE_FUEL];
+    else if (ref >= ARMOR_REF) targets = bagFirst();
     else if (d && d.kind === 'armor' && !this.armor[d.slot]) targets = [ARMOR_REF + d.slot];
     else if (ref < HOTBAR) targets = [...this.slots.keys()].slice(HOTBAR);
     else targets = [...this.slots.keys()].slice(0, HOTBAR);
     const max = this.stackOf(s.id);
+    const before = s.count;
     // top up matching stacks first, then empty slots
     for (const t of targets) {
       const o = this.get(t);
@@ -184,6 +228,7 @@ export class Inventory {
       const n = Math.min(max - o.count, s.count);
       o.count += n;
       s.count -= n;
+      this.set(t, o);
       if (s.count <= 0) break;
     }
     if (s.count > 0) {
@@ -195,9 +240,9 @@ export class Inventory {
         return true;
       }
     }
-    if (s.count <= 0) this.set(ref, null);
+    this.set(ref, s.count <= 0 ? null : s);
     this.changed();
-    return true;
+    return s.count !== before;
   }
 
   // Put a whole stack on the cursor (the creative palette); the cursor's own stack is replaced.

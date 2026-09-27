@@ -221,6 +221,42 @@ Object.assign(DRAW, {
   eye_of_ender: (s) => { s.disc(8, 8, 4.6, (x, y) => (x + y < 13 ? [110, 190, 90] : [50, 120, 60])); s.rect(7, 5, 2, 6, [20, 40, 20]); s.set(6, 6, [220, 255, 200]); s.outline([10, 30, 12]); },
 });
 
+// ---- chests, furnaces and building blocks
+function doorItem(s, light, dark, windows) {
+  s.rect(4, 1, 8, 14, (i, j) => ((i + (j >> 2)) % 3 ? light : dark));
+  if (windows) { s.rect(5, 3, 2, 3, [0, 0, 0]); s.rect(9, 3, 2, 3, [0, 0, 0]); for (let j = 3; j < 6; j++) { s.set(5, j, [0, 0, 0], 0); s.set(6, j, [0, 0, 0], 0); s.set(9, j, [0, 0, 0], 0); s.set(10, j, [0, 0, 0], 0); } }
+  s.set(10, 9, [60, 60, 64]); s.set(10, 10, [60, 60, 64]);
+  s.outline(shade(dark, 0.45));
+}
+function bucket(s, fill) {
+  const steel = [200, 200, 206], steelD = [140, 140, 148];
+  for (let y = 4; y <= 13; y++) {
+    const w = 5 - Math.floor((y - 4) / 4);
+    for (let x = 8 - w; x < 8 + w; x++) s.set(x, y, x < 8 - w + 2 ? steel : steelD);
+  }
+  s.rect(3, 3, 10, 2, steel);
+  if (fill) s.rect(4, 3, 8, 2, fill);
+  s.line(3, 3, 5, 1, steelD); s.line(12, 3, 10, 1, steelD); s.line(5, 1, 10, 1, steelD);
+  s.outline([40, 40, 44]);
+}
+Object.assign(DRAW, {
+  oak_door: (s) => doorItem(s, [184, 148, 92], [140, 108, 62], true),
+  birch_door: (s) => doorItem(s, [216, 200, 148], [180, 160, 110], true),
+  spruce_door: (s) => doorItem(s, [120, 90, 56], [86, 62, 36], false),
+  oak_sign: (s) => { s.rect(2, 3, 12, 7, (i, j) => (j % 3 === 2 ? [150, 118, 70] : [184, 148, 92])); s.rect(7, 10, 2, 5, WOOD_D); for (const y of [5, 7]) s.line(4, y, 11, y, [90, 70, 40]); s.outline([60, 44, 24]); },
+  bucket: (s) => bucket(s, null),
+  water_bucket: (s) => bucket(s, [60, 110, 220]),
+  lava_bucket: (s) => bucket(s, [240, 120, 30]),
+  milk_bucket: (s) => bucket(s, [248, 248, 244]),
+  charcoal: (s) => { s.disc(8, 8.5, 4.6, (x, y) => (x + y < 13 ? [74, 60, 50] : [40, 32, 26])); s.set(6, 6, [120, 100, 84]); s.set(9, 7, [96, 80, 66]); s.outline([14, 10, 8]); },
+  raw_iron: (s) => { s.disc(8, 8.5, 4.4, (x, y) => ((x * 5 + y * 3) % 4 ? [200, 170, 150] : [150, 118, 100])); s.set(6, 6, [236, 214, 200]); s.outline([70, 52, 40]); },
+  raw_gold: (s) => { s.disc(8, 8.5, 4.4, (x, y) => ((x * 5 + y * 3) % 4 ? [240, 200, 70] : [190, 140, 30])); s.set(6, 6, [255, 240, 160]); s.outline([100, 70, 10]); },
+  clay_ball: (s) => { s.disc(8, 8.5, 4, (x, y) => (x + y < 14 ? [176, 182, 196] : [136, 142, 158])); s.set(6, 6, [214, 218, 228]); s.outline([70, 74, 86]); },
+  brick: (s) => { s.rect(2, 6, 12, 5, (i, j) => (j === 0 || i === 0 ? [196, 104, 76] : [160, 74, 52])); s.outline([80, 34, 22]); },
+  nether_brick: (s) => { s.rect(2, 6, 12, 5, (i, j) => (j === 0 || i === 0 ? [96, 44, 52] : [64, 28, 34])); s.outline([24, 10, 14]); },
+  bone_meal: (s) => { s.disc(8, 10, 4, (x, y) => ((x * 7 + y * 3) % 5 === 0 ? [214, 214, 206] : [244, 244, 236])); s.disc(8, 7.5, 2.4, [236, 236, 228]); s.outline([120, 120, 110]); },
+});
+
 // { key -> layer index }, and RGBA pixels for every item layer (16x16 each)
 export function buildItemSprites() {
   const layers = [];

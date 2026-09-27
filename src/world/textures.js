@@ -1035,6 +1035,155 @@ for (let stage = 0; stage < 4; stage++) {
   });
 }
 
+// ---------- chests, furnaces, saplings, doors and other building blocks ----------
+const WOOD = {
+  oak: { light: [184, 148, 92], dark: [150, 118, 70], seam: [96, 74, 44], frame: [110, 84, 50] },
+  birch: { light: [216, 200, 148], dark: [190, 172, 118], seam: [140, 124, 84], frame: [168, 150, 100] },
+  spruce: { light: [126, 94, 58], dark: [100, 74, 44], seam: [62, 46, 26], frame: [74, 54, 32] },
+};
+// wood grain for a pixel (vertical boards when `vertical`)
+function grainAt(t, x, y, pal, vertical = false) {
+  const u = vertical ? y : x, v = vertical ? x : y;
+  const board = Math.floor(v / 4);
+  const g = tfbm((u + board * 5) / S, v / S * 0.25, 2, 3, t.seed + board) * 0.6 + pnoise(x, y, t.seed) * 0.2;
+  return mixc(pal.dark, pal.light, clamp01(g * 1.1));
+}
+function chestFace(t, kind) {
+  const pal = WOOD.oak;
+  const rim = [92, 66, 36], latch = [196, 196, 200], latchDark = [120, 120, 126];
+  t.each((x, y, i) => {
+    let c = grainAt(t, x, y, pal);
+    let h = 0.6 + pnoise(x, y, t.seed + 3) * 0.2;
+    // the chest spans pixels 1-14 across; its sides run from row 2 down, the top all over
+    const edgeX = x <= 1 || x >= 14;
+    const edgeY = kind === 'top' ? y <= 1 || y >= 14 : y <= 2 || y >= 15;
+    if (edgeX || edgeY) { c = mixc(rim, c, 0.25); h = 0.35; }
+    if (kind !== 'top' && (y === 6 || y === 7)) { c = scalec(rim, 0.8); h = 0.2; } // the lid's seam
+    if (kind === 'front' && x >= 7 && x <= 8 && y >= 5 && y <= 8) { c = y === 8 ? latchDark : latch; h = 0.9; t.metal[i] = 1; t.rough[i] = 0.3; }
+    t.set(x, y, c);
+    t.height[i] = h;
+    if (!t.metal[i]) t.rough[i] = 0.75;
+  });
+  t.normalStrength = 1.4;
+}
+function furnaceFace(t, kind) {
+  cobble(t, { stone: [118, 118, 118], mortar: [70, 70, 70] });
+  const frame = [96, 96, 96];
+  t.each((x, y, i) => {
+    const edge = x === 0 || x === S - 1 || y === 0 || y === S - 1;
+    if (kind === 'top') {
+      const n = pnoise(x, y, t.seed) * 0.15 + tfbm(x / S, y / S, 4, 2, t.seed) * 0.2;
+      t.set(x, y, edge ? frame : scalec([128, 128, 128], 0.9 + n));
+      t.height[i] = edge ? 0.35 : 0.6;
+      return;
+    }
+    if (edge) { t.set(x, y, frame); t.height[i] = 0.3; }
+    if (kind === 'side') return;
+    // the front: a grate up top and the fire opening below
+    if (y >= 2 && y <= 4 && x >= 3 && x <= 12) { t.set(x, y, (x + y) % 2 ? [48, 48, 48] : [84, 84, 84]); t.height[i] = 0.2; }
+    if (y >= 8 && y <= 13 && x >= 3 && x <= 12) {
+      const rim = y === 8 || x === 3 || x === 12;
+      if (rim) { t.set(x, y, [60, 60, 60]); t.height[i] = 0.25; } else if (kind === 'on') {
+        const f = clamp01((y - 9) / 4 + pnoise(x, y, t.seed + 9) * 0.35);
+        t.set(x, y, mixc([255, 214, 90], [214, 76, 20], f));
+        t.emit[i] = 1;
+        t.height[i] = 0.1;
+      } else { t.set(x, y, [22, 22, 24]); t.height[i] = 0.05; }
+    }
+  });
+}
+function saplingSprite(t, leaf, stem, spruce = false) {
+  plantSprite(t, (t) => {
+    for (let y = 9; y < S; y++) t.set(7, y, stem, 1);
+    t.set(8, 11, stem, 1);
+    const rand = mulberry32(t.seed);
+    for (let y = 1; y <= 10; y++) {
+      const half = spruce ? Math.floor((y - 1) * 0.55) + 1 : Math.round(3.6 - Math.abs(y - 5) * 0.75);
+      for (let x = 7 - half; x <= 8 + half; x++) {
+        if (rand() < 0.2) continue;
+        t.set(x, y, scalec(leaf, 0.8 + rand() * 0.4), 1);
+      }
+    }
+  });
+}
+function doorHalf(t, wood, top, windows) {
+  const pal = WOOD[wood];
+  t.cutout = true;
+  t.each((x, y, i) => {
+    let c = grainAt(t, x, y, pal, true);
+    let h = 0.6;
+    const edge = x <= 1 || x >= 14 || (top ? y <= 1 : y >= 14);
+    if (edge) { c = mixc(pal.frame, c, 0.2); h = 0.4; }
+    if (x % 4 === 0 && !edge) c = mixc(c, pal.seam, 0.35);
+    let a = 1;
+    if (windows && top && y >= 3 && y <= 8 && ((x >= 3 && x <= 6) || (x >= 9 && x <= 12))) a = 0;
+    if (!top && y >= 5 && y <= 11 && x >= 3 && x <= 12 && (x === 3 || x === 12 || y === 5 || y === 11)) c = mixc(c, pal.seam, 0.5); // a panel
+    if (!top && x >= 11 && x <= 12 && y >= 1 && y <= 2) { c = [60, 60, 64]; h = 0.9; } // the handle
+    t.set(x, y, c, a);
+    t.height[i] = h;
+    t.rough[i] = 0.72;
+  });
+  t.normalStrength = 1.3;
+}
+Object.assign(GEN, {
+  chest_top: (t) => chestFace(t, 'top'),
+  chest_side: (t) => chestFace(t, 'side'),
+  chest_front: (t) => chestFace(t, 'front'),
+  furnace_top: (t) => furnaceFace(t, 'top'),
+  furnace_side: (t) => furnaceFace(t, 'side'),
+  furnace_front: (t) => furnaceFace(t, 'front'),
+  furnace_front_on: (t) => furnaceFace(t, 'on'),
+  oak_sapling: (t) => saplingSprite(t, [74, 142, 40], [104, 78, 44]),
+  birch_sapling: (t) => saplingSprite(t, [120, 160, 70], [220, 220, 210]),
+  spruce_sapling: (t) => saplingSprite(t, [52, 96, 54], [84, 60, 36], true),
+  oak_door_top: (t) => doorHalf(t, 'oak', true, true),
+  oak_door_bottom: (t) => doorHalf(t, 'oak', false, false),
+  birch_door_top: (t) => doorHalf(t, 'birch', true, true),
+  birch_door_bottom: (t) => doorHalf(t, 'birch', false, false),
+  spruce_door_top: (t) => doorHalf(t, 'spruce', true, false),
+  spruce_door_bottom: (t) => doorHalf(t, 'spruce', false, false),
+  ladder: (t) => plantSprite(t, (t) => {
+    const pal = WOOD.oak;
+    for (let y = 0; y < S; y++) for (const x of [2, 3, 12, 13]) t.set(x, y, grainAt(t, x, y, pal, true), 1);
+    for (const y of [1, 5, 9, 13]) for (let x = 4; x <= 11; x++) for (const dy of [0, 1]) t.set(x, y + dy, mixc(grainAt(t, x, y, pal), pal.seam, dy * 0.4), 1);
+  }),
+  iron_bars: (t) => {
+    plantSprite(t, (t) => {
+      for (let y = 0; y < S; y++) for (const x of [1, 5, 9, 13]) { t.set(x, y, [168, 170, 176], 1); t.set(x + 1, y, [120, 122, 128], 1); }
+      for (const y of [0, 15]) for (let x = 0; x < S; x++) t.set(x, y, [150, 152, 158], 1);
+    });
+    t.each((x, y, i) => { t.metal[i] = 1; t.rough[i] = 0.35; });
+  },
+  // a sign's board: smooth wood without plank seams, so the words stay readable
+  oak_sign: (t) => {
+    const pal = WOOD.oak;
+    t.each((x, y, i) => {
+      const g = tfbm(x / S * 0.5, y / S * 2, 2, 3, t.seed) * 0.5 + pnoise(x, y, t.seed + 2) * 0.15;
+      let c = mixc(pal.dark, pal.light, clamp01(0.55 + g * 0.6));
+      const edge = x === 0 || x === S - 1 || y === 0 || y === S - 1;
+      if (edge) c = mixc(c, pal.frame, 0.5);
+      t.set(x, y, c);
+      t.height[i] = edge ? 0.45 : 0.6 + g * 0.1;
+      t.rough[i] = 0.78;
+    });
+    t.normalStrength = 0.6;
+  },
+  oak_trapdoor: (t) => {
+    const pal = WOOD.oak;
+    t.cutout = true;
+    t.each((x, y, i) => {
+      let c = grainAt(t, x, y, pal, true);
+      const edge = x <= 1 || x >= 14 || y <= 1 || y >= 14;
+      if (edge) c = mixc(pal.frame, c, 0.2);
+      const hole = !edge && (x === 4 || x === 5 || x === 10 || x === 11) && (y === 4 || y === 5 || y === 10 || y === 11);
+      t.set(x, y, c, hole ? 0 : 1);
+      t.height[i] = edge ? 0.4 : 0.6;
+      t.rough[i] = 0.72;
+    });
+    t.normalStrength = 1.3;
+  },
+});
+
 // One pixel-pack texture by name (the HD pack falls back on these for textures it has no
 // detailed version of).
 export function generatePixelTexture(name) {

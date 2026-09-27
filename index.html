@@ -73,6 +73,7 @@
       <p class="tagline" data-i18n="title.tagline"></p>
       <div class="menu">
         <button id="btn-play" class="btn primary" type="button" data-i18n="title.play"></button>
+        <button id="btn-worlds" class="btn" type="button" data-i18n="title.worlds"></button>
         <button id="btn-new" class="btn" type="button" data-i18n="title.new"></button>
         <button id="btn-multi" class="btn" type="button" data-i18n="title.multi"></button>
         <button id="btn-settings" class="btn" type="button" data-i18n="title.settings"></button>
@@ -157,6 +158,10 @@
           <button type="button" data-v="hard" aria-pressed="false" data-i18n="diff.hard"></button>
         </div>
       </div>
+      <label class="field" for="name-input">
+        <span data-i18n="new.name"></span>
+        <input id="name-input" type="text" autocomplete="off" maxlength="32">
+      </label>
       <label class="field" for="seed-input">
         <span data-i18n="new.seed"></span>
         <input id="seed-input" type="text" inputmode="text" autocomplete="off" maxlength="40" data-i18n-attr="placeholder:new.placeholder">
@@ -164,6 +169,20 @@
       <div class="menu row">
         <button id="btn-newworld-cancel" class="btn" type="button" data-i18n="new.cancel"></button>
         <button id="btn-newworld-create" class="btn primary" type="button" data-i18n="new.create"></button>
+      </div>
+    </div>
+  </section>
+
+  <section id="worlds" class="screen dim" hidden>
+    <div class="sheet narrow worlds-sheet">
+      <header class="sheet-head">
+        <h2 data-i18n="worlds.title"></h2>
+        <p class="hint" data-i18n="worlds.hint"></p>
+      </header>
+      <div id="world-list" class="world-list" role="list"></div>
+      <div class="menu row">
+        <button id="btn-worlds-back" class="btn" type="button" data-i18n="worlds.back"></button>
+        <button id="btn-worlds-new" class="btn primary" type="button" data-i18n="worlds.new"></button>
       </div>
     </div>
   </section>
@@ -226,10 +245,42 @@
             <h3 class="inv-h" data-i18n="inv.crafting"></h3>
             <div id="inv-recipes" class="recipe-list"></div>
           </div>
+          <div id="inv-container" class="inv-container" hidden>
+            <h3 class="inv-h" id="inv-cont-title"></h3>
+            <div id="inv-chest" class="bag-grid inv-chest"></div>
+            <div id="inv-furnace" class="furnace-ui" hidden>
+              <div class="fur-left">
+                <div id="fur-input" class="bag-grid fur-slot"></div>
+                <div class="fur-flame" aria-hidden="true"><i id="fur-flame"></i></div>
+                <div id="fur-fuel" class="bag-grid fur-slot"></div>
+              </div>
+              <div class="fur-arrow" aria-hidden="true"><i id="fur-arrow"></i></div>
+              <div id="fur-output" class="bag-grid fur-slot fur-out"></div>
+            </div>
+            <p class="hint" id="inv-cont-hint"></p>
+          </div>
         </div>
       </div>
     </div>
     <div id="inv-cursor" class="inv-cursor" hidden><img alt=""><span class="count"></span></div>
+  </section>
+
+  <section id="signedit" class="screen dim" hidden>
+    <div class="sheet narrow sign-sheet">
+      <header class="sheet-head">
+        <h2 data-i18n="sign.title"></h2>
+        <p class="hint" data-i18n="sign.hint"></p>
+      </header>
+      <div class="sign-board">
+        <input class="sign-line" type="text" maxlength="18" autocomplete="off" spellcheck="false" data-i18n-attr="aria-label:sign.line">
+        <input class="sign-line" type="text" maxlength="18" autocomplete="off" spellcheck="false" data-i18n-attr="aria-label:sign.line">
+        <input class="sign-line" type="text" maxlength="18" autocomplete="off" spellcheck="false" data-i18n-attr="aria-label:sign.line">
+        <input class="sign-line" type="text" maxlength="18" autocomplete="off" spellcheck="false" data-i18n-attr="aria-label:sign.line">
+      </div>
+      <div class="menu">
+        <button id="btn-sign-done" class="btn primary" type="button" data-i18n="sign.done"></button>
+      </div>
+    </div>
   </section>
 
   <section id="death" class="screen death" hidden>

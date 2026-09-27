@@ -832,6 +832,28 @@ export function emitSpriteM(out, o, layer, m, light) {
   return o;
 }
 
+// The words on a sign: a quad on the front of its board (mode 3 = the sign text array).
+// center: world position of the middle of the board's face; nrm: the way the words face.
+export function emitSignText(out, o, layer, center, nrm, cam, light) {
+  const rx = nrm[2], rz = -nrm[0]; // to the reader's right
+  const hw = 0.47, hh = 0.235;
+  const cx = center[0] - cam[0], cy = center[1] - cam[1], cz = center[2] - cam[2];
+  const pts = [
+    [cx - rx * hw, cy + hh, cz - rz * hw], [cx + rx * hw, cy + hh, cz + rz * hw],
+    [cx + rx * hw, cy - hh, cz + rz * hw], [cx - rx * hw, cy - hh, cz - rz * hw],
+  ];
+  const uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  for (const qi of QUAD) {
+    const p = pts[qi];
+    out[o++] = p[0]; out[o++] = p[1]; out[o++] = p[2];
+    out[o++] = nrm[0]; out[o++] = nrm[1]; out[o++] = nrm[2];
+    out[o++] = uv[qi][0]; out[o++] = uv[qi][1];
+    out[o++] = layer; out[o++] = light[0]; out[o++] = light[1]; out[o++] = 3;
+    out[o++] = 1; out[o++] = 1; out[o++] = 1; out[o++] = 0;
+  }
+  return o;
+}
+
 // An arrow in flight or stuck in a block, pointing along its direction.
 export function emitArrow(out, o, pos, dir, cam, light, skins) {
   const yaw = Math.atan2(-dir[0], -dir[2]);
