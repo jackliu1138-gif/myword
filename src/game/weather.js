@@ -2,6 +2,23 @@
 
 export const WEATHER_MODES = ['auto', 'clear', 'rain', 'storm'];
 
+// The weather's own clock (for 'auto', and for a multiplayer server): after the fair spell it
+// rains for a while, now and then as a thunderstorm. s: { target, stormTarget, timer } (changed).
+export function stepWeatherClock(s, dt, random = Math.random) {
+  s.timer -= dt;
+  if (s.timer > 0) return false;
+  if (s.target > 0) {
+    s.target = 0;
+    s.stormTarget = 0;
+    s.timer = 360 + random() * 540; // 6..15 minutes of fair weather
+  } else {
+    s.target = 0.75 + random() * 0.25;
+    s.stormTarget = random() < 0.35 ? 1 : 0;
+    s.timer = 150 + random() * 240; // 2.5..6.5 minutes of rain
+  }
+  return true;
+}
+
 export class Weather {
   constructor() {
     this.rain = 0; // precipitation intensity 0..1 (smoothed)
@@ -16,24 +33,24 @@ export class Weather {
     this.thunderQueue = [];
   }
 
+  // The weather everyone on a server shares (their 'auto' follows it): rain and storm targets;
+  // `now` jumps straight there (on joining) instead of clouding over.
+  setShared(target, stormTarget, now = false) {
+    this.shared = { target: Math.max(0, Math.min(1, +target || 0)), stormTarget: stormTarget ? 1 : 0 };
+    if (now) {
+      this.rain = this.target = this.shared.target;
+      this.storm = this.stormTarget = this.shared.stormTarget;
+      this.wetness = Math.max(this.wetness, this.rain * 0.8);
+    }
+  }
+
+  // mode: the setting ('auto', 'clear', 'rain', 'storm'); 'shared': a server's weather
   update(dt, mode, onThunder) {
     if (mode === 'clear') { this.target = 0; this.stormTarget = 0; }
     else if (mode === 'rain') { this.target = 1; this.stormTarget = 0; }
     else if (mode === 'storm') { this.target = 1; this.stormTarget = 1; }
-    else {
-      this.timer -= dt;
-      if (this.timer <= 0) {
-        if (this.target > 0) {
-          this.target = 0;
-          this.stormTarget = 0;
-          this.timer = 360 + Math.random() * 540; // 6..15 minutes of fair weather
-        } else {
-          this.target = 0.75 + Math.random() * 0.25;
-          this.stormTarget = Math.random() < 0.35 ? 1 : 0;
-          this.timer = 150 + Math.random() * 240; // 2.5..6.5 minutes of rain
-        }
-      }
-    }
+    else if (mode === 'shared' && this.shared) { this.target = this.shared.target; this.stormTarget = this.shared.stormTarget; }
+    else stepWeatherClock(this, dt);
     // clouds build up and clear over roughly a minute
     const k = 1 - Math.exp(-dt / 22);
     this.rain += (this.target - this.rain) * k;

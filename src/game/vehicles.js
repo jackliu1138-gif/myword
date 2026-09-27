@@ -211,32 +211,75 @@ export function installVehicles(Game) {
     if (this.boost > 0) { p.boost = Math.max(p.boost, this.boost); this.boost = 0; }
     const speed = Math.hypot(p.vel[0], p.vel[1], p.vel[2]);
     this.audio.setWind(p.gliding ? Math.min(1, speed / 30) : 0);
-    if (!p.gliding) { this.glideTime = 0; return; }
+    if (!p.gliding) { this.glideTime = 0; this.prevTips = null; this.wasBoosting = false; return; }
     // the elytra wear down as they are flown
     this.glideTime = (this.glideTime || 0) + dt;
     if (this.glideTime >= 1 && !this.isCreative()) { this.glideTime = 0; if (this.inventory.wear(ARMOR_REF + 1, 1)) this.toolBroke(d); }
-    // the trail: faint streaks off the wingtips, bright sparks while a rocket pushes
-    const f = p.forward();
-    const right = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
-    const base = [p.pos[0], p.pos[1] + 0.5, p.pos[2]];
-    const boosting = p.boost > 0;
-    this.trailTimer = (this.trailTimer || 0) - dt;
-    if (this.trailTimer <= 0) {
-      this.trailTimer = boosting ? 0.012 : 0.05;
-      for (const side of [-1, 1]) {
-        const tip = [base[0] + right[0] * side * 0.95 - f[0] * 0.3, base[1] + 0.25, base[2] + right[2] * side * 0.95 - f[2] * 0.3];
-        if (boosting) {
-          const hue = (performance.now() / 400 + (side > 0 ? 0.5 : 0)) % 1;
-          const c = hsv(hue, 0.75, 6);
-          this.particles.spark(tip[0], tip[1], tip[2], -p.vel[0] * 0.08 + (Math.random() - 0.5), -p.vel[1] * 0.08 + (Math.random() - 0.5), -p.vel[2] * 0.08 + (Math.random() - 0.5), c, { life: 0.9 + Math.random() * 0.5, size: 0.07, gravity: 1.5, drag: 1.2, twinkle: true });
-        } else if (speed > 12) {
-          this.particles.spark(tip[0], tip[1], tip[2], 0, 0, 0, [0.9, 0.95, 1.1], { life: 0.35, size: 0.035, drag: 0 });
+    this.glideTrail(this, p.pos, p.yaw, p.forward(), speed, p.boost > 0, p.vel);
+  };
+
+  // The trail behind someone gliding, laid along the way they came since the last frame (so it
+  // stays unbroken at any frame rate): faint streaks off the wingtips when fast, and while a
+  // rocket pushes, a stream of colour-cycling sparks off both wings that twinkle and fall away,
+  // with the rocket's own fire between them. st keeps the last wingtips.
+  P.glideTrail = function glideTrail(st, pos, yaw, f, speed, boosting, vel) {
+    const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
+    const base = [pos[0], pos[1] + 0.5, pos[2]];
+    const tips = [-1, 1].map((side) => [base[0] + right[0] * side * 0.95 - f[0] * 0.3, base[1] + 0.25, base[2] + right[2] * side * 0.95 - f[2] * 0.3]);
+    tips.push([base[0] - f[0] * 0.7, base[1] - 0.35, base[2] - f[2] * 0.7]); // the rocket, at the feet
+    const prev = st.prevTips;
+    st.prevTips = tips;
+    if (boosting && !st.wasBoosting) {
+      // the kick: a ring of sparks blown out all around
+      const up = [0, 1, 0];
+      const side2 = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]];
+      const sl = Math.hypot(...side2) || 1;
+      const s = side2.map((v) => v / sl);
+      const u = [s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2], s[0] * f[1] - s[1] * f[0]];
+      for (let i = 0; i < 28; i++) {
+        const a = (i / 28) * Math.PI * 2;
+        const dir = [s[0] * Math.cos(a) + u[0] * Math.sin(a), s[1] * Math.cos(a) + u[1] * Math.sin(a), s[2] * Math.cos(a) + u[2] * Math.sin(a)];
+        this.particles.spark(base[0] - f[0], base[1], base[2] - f[2], dir[0] * 7 + vel[0] * 0.3, dir[1] * 7 + vel[1] * 0.3, dir[2] * 7 + vel[2] * 0.3, hsv(i / 28, 0.6, 5), { life: 0.55, size: 0.06, drag: 3.5 });
+      }
+    }
+    st.wasBoosting = boosting;
+    if (!prev || (!boosting && speed <= 12)) return;
+    const now = performance.now() / 1000;
+    const travelled = Math.hypot(tips[0][0] - prev[0][0], tips[0][1] - prev[0][1], tips[0][2] - prev[0][2]);
+    // one spark every so far along the way (closer together behind a rocket)
+    const n = Math.max(1, Math.min(boosting ? 36 : 10, Math.round(travelled / (boosting ? 0.28 : 0.6))));
+    for (let k = 0; k < 3; k++) {
+      if (k === 2 && !boosting) break;
+      const a = prev[k], b = tips[k];
+      for (let i = 0; i < n; i++) {
+        const q = (i + Math.random()) / n;
+        const x = a[0] + (b[0] - a[0]) * q, y = a[1] + (b[1] - a[1]) * q, z = a[2] + (b[2] - a[2]) * q;
+        const j = () => (Math.random() - 0.5) * 1.4;
+        if (k === 2) {
+          // the rocket's fire: hot white-gold, short-lived
+          this.particles.spark(x, y, z, j() - f[0] * 3, j() - f[1] * 3, j() - f[2] * 3, [7, 5, 2.2], { life: 0.25 + Math.random() * 0.2, size: 0.07, drag: 2.5 });
+        } else if (boosting) {
+          const hue = (now * 0.9 + q * 0.05 + (k ? 0.5 : 0)) % 1;
+          this.particles.spark(x, y, z, j() * 0.6, j() * 0.6 - 0.3, j() * 0.6, hsv(hue, 0.8, 5.5), { life: 0.7 + Math.random() * 0.7, size: 0.065, gravity: 1.8, drag: 1.4, twinkle: true });
+        } else {
+          this.particles.spark(x, y, z, 0, 0, 0, [0.85, 0.9, 1.05], { life: 0.35, size: 0.03, drag: 0 });
         }
       }
-      if (boosting) {
-        // the rocket itself, fizzing at our feet
-        for (let i = 0; i < 2; i++) this.particles.spark(base[0] - f[0] * 0.6, base[1] - 0.3, base[2] - f[2] * 0.6, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, [6, 4.5, 2], { life: 0.4, size: 0.05, drag: 2 });
-      }
+    }
+  };
+
+  // the other players gliding (their flags say so): the same trail behind them
+  P.remoteTrails = function remoteTrails(dt) {
+    const mp = this.mp;
+    if (!mp) return;
+    for (const r of mp.players.values()) {
+      if (!r.pos || (r.dim | 0) !== (this.dimension | 0) || !(r.flags & 64)) { r.trail = null; continue; }
+      const st = r.trail || (r.trail = { last: r.pos.slice() });
+      const v = [(r.pos[0] - st.last[0]) / Math.max(dt, 1e-3), (r.pos[1] - st.last[1]) / Math.max(dt, 1e-3), (r.pos[2] - st.last[2]) / Math.max(dt, 1e-3)];
+      st.last = r.pos.slice();
+      const cp = Math.cos(r.pitch || 0);
+      const f = [-Math.sin(r.yaw) * cp, Math.sin(r.pitch || 0), -Math.cos(r.yaw) * cp];
+      this.glideTrail(st, r.pos, r.yaw, f, Math.hypot(...v), !!(r.flags & 512), v);
     }
   };
 

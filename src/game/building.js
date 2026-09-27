@@ -5,20 +5,23 @@
 // helps). Installed as methods on Game.prototype.
 
 import {
-  BLOCK, BLOCKS, IS_SOLID, IS_OPAQUE, IS_LIQUID, SHAPE, SHAPE_OF, MODEL_OF, MODELS_BY_NAME, FACING, facingOf, opposite, COLLIDE_KIND, WORLD_HEIGHT,
+  BLOCK, BLOCKS, IS_SOLID, IS_OPAQUE, IS_LIQUID, IS_RAIL, SHAPE, SHAPE_OF, MODEL_OF, MODELS_BY_NAME, FACING, facingOf, opposite, COLLIDE_KIND, WORLD_HEIGHT,
 } from '../world/blocks.js';
 import { ITEM, blockDrops } from '../sim/items.js';
-import { newEntity, entityKey, parseKey, tickFurnace, furnaceLit, contentsOf, serializeEntity, loadEntity, loadEntities, serializeEntities } from '../sim/containers.js';
-import { TerrainGenerator } from '../world/generator.js';
+import { newEntity, entityKey, parseKey, tickFurnace, furnaceLit, tickBrewing, contentsOf, serializeEntity, loadEntity, loadEntities, serializeEntities } from '../sim/containers.js';
+import { TerrainGenerator2 } from '../world/generator2.js';
+import { rollLoot } from '../sim/loot.js';
 import { mulberry32, hash3 } from '../world/noise.js';
 import { raycast } from './player.js';
 import { t } from '../ui/i18n.js';
 
 const M = MODELS_BY_NAME;
 const SOIL = new Set([BLOCK.GRASS, BLOCK.DIRT, BLOCK.SNOWY_GRASS, BLOCK.FARMLAND]);
-const LEAVES = new Set([BLOCK.OAK_LEAVES, BLOCK.BIRCH_LEAVES, BLOCK.SPRUCE_LEAVES]);
-const SAPLINGS = new Set([BLOCK.OAK_SAPLING, BLOCK.BIRCH_SAPLING, BLOCK.SPRUCE_SAPLING]);
-const DOOR_ITEM = { [BLOCK.OAK_DOOR]: ITEM.OAK_DOOR, [BLOCK.BIRCH_DOOR]: ITEM.BIRCH_DOOR, [BLOCK.SPRUCE_DOOR]: ITEM.SPRUCE_DOOR };
+const LEAVES = new Set(BLOCKS.filter((d) => d.key.endsWith('_leaves')).map((d) => d.id));
+const SAPLINGS = new Set(BLOCKS.filter((d) => d.sapling).map((d) => d.id));
+const DOOR_ITEM = { [BLOCK.OAK_DOOR]: ITEM.OAK_DOOR, [BLOCK.BIRCH_DOOR]: ITEM.BIRCH_DOOR, [BLOCK.SPRUCE_DOOR]: ITEM.SPRUCE_DOOR, [BLOCK.IRON_DOOR]: ITEM.IRON_DOOR };
+// crops bone meal hurries along: [first stage, last stage]
+const BONE_CROPS = [[BLOCK.WHEAT_0, BLOCK.WHEAT_3], [BLOCK.CARROTS_0, BLOCK.CARROTS_3], [BLOCK.POTATOES_0, BLOCK.POTATOES_3]];
 const SAPLING_GROWTH = 0.12; // chance per crop tick (48 a day)
 
 // which block entity a block keeps
@@ -79,17 +82,32 @@ export function installBuilding(Game) {
 
   // ---------------------------------------------------------------- chests and furnaces
   P.openContainer = function openContainer(x, y, z) {
-    const kind = entityKindOf(this.world.getBlock(x, y, z));
-    if (kind !== 'chest' && kind !== 'furnace') return false;
+    const w = this.world;
+    const b = w.getBlock(x, y, z);
+    const kind = entityKindOf(b);
+    if (kind === 'enchant') { this.swing = 1; return this.openEnchanting(x, y, z); }
+    if (kind !== 'chest' && kind !== 'furnace' && kind !== 'brewing') return false;
     const key = entityKey(x, y, z);
     this.swing = 1;
+    // a chest a structure left behind: what is in it is decided the first time it is opened
+    const st = w.getState(x, y, z);
+    const loot = kind === 'chest' ? st >> 4 : 0;
+    if (loot) w.setBlock(x, y, z, b, { state: st & 15 });
     if (this.mp) {
-      // the server lends it to one player at a time
-      this.mp.net.send({ t: 'open', k: key, d: this.dimension || 0 });
+      // the server lends it to one player at a time (and fills a loot chest, once)
+      if (loot) this.flushEdits();
+      this.mp.net.send({ t: 'open', k: key, d: this.dimension || 0, ...(loot ? { loot } : {}) });
       this.mp.opening = { key, x, y, z, kind, at: performance.now() };
       return true;
     }
-    this.showContainer({ key, x, y, z, kind }, this.blockEntity(x, y, z, true));
+    let e = this.blockEntity(x, y, z, false);
+    if (!e) {
+      e = this.blockEntity(x, y, z, true);
+      const slots = loot && e ? rollLoot(loot, w.seed, x, y, z) : null;
+      if (slots) e.slots = slots;
+      w.dirtyEdits = true;
+    }
+    this.showContainer({ key, x, y, z, kind }, e);
     return true;
   };
 
@@ -98,7 +116,7 @@ export function installBuilding(Game) {
     this.openBlock = { ...ob, dim: this.dimension || 0 };
     this.inventory.container = e;
     this.inventory.onContainerChange = () => this.containerChanged();
-    this.audio.sfx(ob.kind === 'chest' ? 'chestOpen' : 'furnace', 0.7, 0);
+    this.audio.sfx(ob.kind === 'furnace' ? 'furnace' : 'chestOpen', ob.kind === 'brewing' ? 0.35 : 0.7, 0);
     this.openInventory();
   };
 
@@ -128,6 +146,18 @@ export function installBuilding(Game) {
     this.openBlock = null;
     this.inventory.container = null;
     this.inventory.onContainerChange = null;
+    if (ob.temp) {
+      // an enchanting table keeps nothing: what was left on it comes back; a villager is free again
+      if (e && e.kind === 'enchant') {
+        for (const s of e.slots) {
+          if (!s) continue;
+          const left = this.inventory.add(s.id, s.count, s.wear || 0, s.ench || null);
+          if (left > 0) this.throwStack({ ...s, count: left });
+        }
+      }
+      if (e && e.kind === 'trade' && e.villager) e.villager.trading = null;
+      return;
+    }
     if (ob.kind === 'chest') this.audio.sfx('chestClose', 0.6, 0);
     if (this.mp) this.mp.net.send({ t: 'close', k: ob.key, d: ob.dim, c: serializeEntity(e) });
   };
@@ -139,9 +169,10 @@ export function installBuilding(Game) {
     const mp = this.mp;
     const box = this.openBlock && this.inventory.container;
     if (box && box.kind === 'furnace' && this.state === 'inventory') this.ui.renderFurnaceProgress(box);
+    if (box && box.kind === 'brewing' && this.state === 'inventory') this.ui.renderBrewingProgress(box);
     if (mp) {
       const ob = this.openBlock;
-      if (ob && ob.kind === 'furnace' && this.inventory.container) this.runFurnace(ob.x, ob.y, ob.z, this.inventory.container, dt);
+      if (ob && (ob.kind === 'furnace' || ob.kind === 'brewing') && this.inventory.container) this.runFurnace(ob.x, ob.y, ob.z, this.inventory.container, dt);
       if (ob && mp.contDirty) {
         mp.contTimer = (mp.contTimer || 0) - dt;
         if (mp.contTimer <= 0) {
@@ -157,7 +188,7 @@ export function installBuilding(Game) {
     const step = this.furnaceTimer;
     this.furnaceTimer = 0;
     for (const [k, e] of this.entitiesHere()) {
-      if (e.kind !== 'furnace') continue;
+      if (e.kind !== 'furnace' && e.kind !== 'brewing') continue;
       const [x, y, z] = parseKey(k);
       if (!this.world.isChunkReady(x, z)) continue;
       this.runFurnace(x, y, z, e, step);
@@ -165,6 +196,14 @@ export function installBuilding(Game) {
   };
 
   P.runFurnace = function runFurnace(x, y, z, e, dt) {
+    if (e.kind === 'brewing') {
+      const before = e.brew;
+      if (!tickBrewing(e, dt)) return;
+      if (before > 0 && e.brew === 0 && this.openBlock && this.inventory.container === e) this.audio.sfx('fizz', 0.4, 0);
+      if (this.openBlock && this.inventory.container === e) { this.refreshInventoryUI(); this.containerChanged(); }
+      else if (!this.mp) this.world.dirtyEdits = true;
+      return;
+    }
     const wasLit = furnaceLit(e);
     const changed = tickFurnace(e, dt);
     const lit = furnaceLit(e);
@@ -202,7 +241,17 @@ export function installBuilding(Game) {
         const [dx, dz] = FACING[wall];
         return IS_OPAQUE[w.getBlock(x + dx, y, z + dz)] ? { id, state: wall } : null;
       }
-      default: return { id, state: 0 };
+      case M.vine: {
+        if (n[1] !== 0) return null;
+        const wall = facingOf(-n[0], -n[2]);
+        const [dx, dz] = FACING[wall];
+        const on = w.getBlock(x + dx, y, z + dz);
+        return IS_SOLID[on] || LEAVES.has(on) ? { id, state: wall } : null;
+      }
+      case M.plate: return COLLIDE_KIND[below] === 1 ? { id, state: 0 } : null;
+      default:
+        if (IS_RAIL[id]) return COLLIDE_KIND[below] === 1 ? { id, state: this.railShapeAt(x, y, z, look) } : null;
+        return { id, state: 0 };
     }
   };
 
@@ -263,7 +312,7 @@ export function installBuilding(Game) {
     const hinge = left === def.block && !(w.getState(x + lx, y, z + lz) & 16) ? 16 : 0;
     w.setBlock(x, y, z, def.block, { state: look | hinge });
     w.setBlock(x, y + 1, z, def.block, { state: look | hinge | 8 });
-    this.audio.play('place', 'wood');
+    this.audio.play('place', BLOCKS[def.block].ironDoor ? 'metal' : 'wood');
     this.swing = 1;
     if (!this.isCreative()) this.inventory.consume(this.selected);
     return true;
@@ -319,7 +368,7 @@ export function installBuilding(Game) {
   P.useBlock = function useBlock(hit) {
     const { x, y, z, block: b } = hit;
     const m = MODEL_OF[b];
-    if (m === M.door) { this.toggleDoor(x, y, z, b); return true; }
+    if (m === M.door) { if (BLOCKS[b].ironDoor) return false; this.toggleDoor(x, y, z, b); return true; } // iron doors only open for plates
     if (m === M.gate) { this.toggleGate(x, y, z, b); return true; }
     if (m === M.trapdoor) { this.toggleTrapdoor(x, y, z, b); return true; }
     if (BLOCKS[b].container) return this.openContainer(x, y, z);
@@ -479,27 +528,6 @@ export function installBuilding(Game) {
     if (left) this.throwStack({ id: full, count: 1, wear: 0 });
   };
 
-  // Right click on a creature with something in hand; true when it did something.
-  P.useOnMob = function useOnMob(mob, def) {
-    if (!def) return false;
-    if (def.kind === 'bucket' && !def.holds && mob.type === 'cow' && mob.deathTime === 0) {
-      this.fillHeldBucket(ITEM.MILK_BUCKET);
-      this.audio.sfx('bucketFill', 0.7, 0);
-      this.audio.sfx('cow', 0.5, 0);
-      this.swing = 1;
-      return true;
-    }
-    return false;
-  };
-
-  P.drinkMilk = function drinkMilk() {
-    const me = this.me();
-    if (me) { me.fire = 0; this.sim.healPlayer('local', 2); }
-    this.audio.sfx('drink', 0.8, 0);
-    this.swing = 1;
-    if (!this.isCreative()) { const s = this.heldSlot(); if (s) { s.id = ITEM.BUCKET; this.inventory.changed(); } }
-  };
-
   // Water washing away a torch or a plant leaves the item behind.
   P.onFluidEvent = function onFluidEvent(type, x, y, z, id) {
     if (type === 'fizz') {
@@ -515,25 +543,46 @@ export function installBuilding(Game) {
   // ---------------------------------------------------------------- saplings and bone meal
   P.growTree = function growTree(x, y, z, sapling) {
     const w = this.world;
-    const gen = this.treeGen || (this.treeGen = new TerrainGenerator(this.world.seed));
+    const gen = this.treeGen || (this.treeGen = new TerrainGenerator2(this.world.seed));
+    const kind = BLOCKS[sapling].sapling;
+    // four saplings in a square grow a big tree (dark oaks only grow that way)
+    let big = null;
+    if (kind === 'jungle' || kind === 'dark_oak') {
+      for (const [ox, oz] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+        let all = true;
+        for (let dz = 0; dz < 2 && all; dz++) for (let dx = 0; dx < 2; dx++) if (w.getBlock(x + ox + dx, y, z + oz + dz) !== sapling) { all = false; break; }
+        if (all) { big = [x + ox, z + oz]; break; }
+      }
+      if (kind === 'dark_oak' && !big) return false;
+    }
+    const cells = big ? [[big[0], big[1]], [big[0] + 1, big[1]], [big[0], big[1] + 1], [big[0] + 1, big[1] + 1]] : [[x, z]];
     // room to grow: a clear trunk
-    for (let k = 1; k <= 5; k++) {
-      const b = w.getBlock(x, y + k, z);
-      if (b && !BLOCKS[b].replaceable && !LEAVES.has(b)) return false;
+    for (const [cx, cz] of cells) {
+      for (let k = 1; k <= 5; k++) {
+        const b = w.getBlock(cx, y + k, cz);
+        if (b && !BLOCKS[b].replaceable && !LEAVES.has(b)) return false;
+      }
     }
     const rnd = mulberry32((hash3(x, y, z, 777) * 4294967296) >>> 0);
     // trees only grow into air, plants and leaves (and their trunk through the sapling and the soil)
-    const set = (wx, wy, wz, b, replaceSolid = false) => {
+    const set = (wx, wy, wz, b, replaceSolid = false, state = 0) => {
       if (wy < 1 || wy > WORLD_HEIGHT - 2) return;
       const cur = w.getBlock(wx, wy, wz);
       const soft = cur === 0 || (BLOCKS[cur].replaceable && !IS_LIQUID[cur]) || LEAVES.has(cur) || SAPLINGS.has(cur);
-      if (soft || (replaceSolid && SOIL.has(cur))) w.setBlock(wx, wy, wz, b);
+      if (soft || (replaceSolid && SOIL.has(cur))) w.setBlock(wx, wy, wz, b, state ? { state } : undefined);
     };
-    w.setBlock(x, y, z, 0);
-    if (sapling === BLOCK.SPRUCE_SAPLING) gen.spruce(set, x, y, z, rnd);
-    else if (sapling === BLOCK.BIRCH_SAPLING) gen.oak(set, x, y, z, rnd, BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES, 5 + Math.floor(rnd() * 2));
-    else gen.oak(set, x, y, z, rnd, BLOCK.OAK_LOG, BLOCK.OAK_LEAVES, 4 + Math.floor(rnd() * 2));
-    if (w.getBlock(x, y, z) === 0) w.setBlock(x, y, z, sapling); // nothing grew after all
+    for (const [cx, cz] of cells) w.setBlock(cx, y, cz, 0);
+    const [bx, bz] = big || [x, z];
+    switch (kind) {
+      case 'spruce': gen.spruce(set, x, y, z, rnd); break;
+      case 'birch': gen.oak(set, x, y, z, rnd, BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES, 5 + Math.floor(rnd() * 2)); break;
+      case 'jungle': if (big) gen.megaJungle(set, bx, y, bz, rnd); else gen.jungleTree(set, x, y, z, rnd); break;
+      case 'acacia': gen.acacia(set, x, y, z, rnd); break;
+      case 'dark_oak': gen.darkOak(set, bx, y, bz, rnd); break;
+      case 'cherry': gen.cherryTree(set, x, y, z, rnd); break;
+      default: gen.oak(set, x, y, z, rnd, BLOCK.OAK_LOG, BLOCK.OAK_LEAVES, 4 + Math.floor(rnd() * 2));
+    }
+    for (const [cx, cz] of cells) if (w.getBlock(cx, y, cz) === 0) w.setBlock(cx, y, cz, sapling); // nothing grew after all
     return true;
   };
 
@@ -542,8 +591,9 @@ export function installBuilding(Game) {
     const w = this.world;
     const { x, y, z, block: b } = hit;
     let used = false;
-    if (b >= BLOCK.WHEAT_0 && b < BLOCK.WHEAT_3) {
-      w.setBlock(x, y, z, Math.min(BLOCK.WHEAT_3, b + 1 + Math.floor(Math.random() * 2)));
+    const crop = BONE_CROPS.find(([lo, hi]) => b >= lo && b < hi);
+    if (crop) {
+      w.setBlock(x, y, z, Math.min(crop[1], b + 1 + Math.floor(Math.random() * 2)));
       used = true;
     } else if (SAPLINGS.has(b)) {
       if (Math.random() < 0.45) this.growTree(x, y, z, b);

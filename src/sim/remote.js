@@ -9,13 +9,26 @@ export const MOB_TYPES = Object.keys(MOBS);
 
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
 
+// What a creature is doing, as bits (for the other players, and for drawing it): 1 dying, 2 hurt,
+// 4 burning, 8 chasing, 16 swinging, 32 young, 64 sheared / saddled / open / puffed up, 128 tamed,
+// 256 sitting, 512 angry / charging up, 1024 ridden
+export function mobFlags(e) {
+  let f = (e.deathTime > 0 ? 1 : 0) | (e.hurtTime > 0.2 ? 2 : 0) | (e.burning > 0 ? 4 : 0) | (e.mode === 'chase' ? 8 : 0) | (e.swing > 0 ? 16 : 0);
+  if (e.growth < 0) f |= 32;
+  if (e.sheared || e.saddled || e.open || e.puffed > 0) f |= 64;
+  if (e.tamed) f |= 128;
+  if (e.sitting) f |= 256;
+  if (e.angryAt || e.charge > 0) f |= 512;
+  if (e.rider) f |= 1024;
+  return f;
+}
+
 // Snapshot of one of our own creatures for the other players:
 // [id, type, x, y, z (1/16 block), yaw, head yaw (1/100 rad), flags, variant, fuse (1/10 s)]
 export function mobSnapshot(e) {
   const b = e.body;
-  const flags = (e.deathTime > 0 ? 1 : 0) | (e.hurtTime > 0.2 ? 2 : 0) | (e.burning > 0 ? 4 : 0) | (e.mode === 'chase' ? 8 : 0) | (e.swing > 0 ? 16 : 0);
   return [e.id, MOB_TYPES.indexOf(e.type), Math.round(b.pos[0] * 16), Math.round(b.pos[1] * 16), Math.round(b.pos[2] * 16),
-    Math.round(e.yaw * 100), Math.round((e.headYaw ?? e.yaw) * 100), flags, e.variant || 0, Math.round((e.fuse || 0) * 10)];
+    Math.round(e.yaw * 100), Math.round((e.headYaw ?? e.yaw) * 100), mobFlags(e), e.variant || 0, Math.round((e.fuse || 0) * 10)];
 }
 
 export class RemoteMob {
@@ -47,6 +60,8 @@ export class RemoteMob {
     this.variant = 0;
     this.mode = 'idle';
     this.swing = 0;
+    this.flags = 0;
+    this.renderScale = 1;
     this.health = d.health;
     this.age = 0;
     this.stale = 0;
@@ -76,6 +91,14 @@ export class RemoteMob {
     if (f & 16) this.swing = Math.max(this.swing, 0.4);
     this.variant = s[8] | 0;
     this.fuse = (s[9] | 0) / 10;
+    this.flags = f;
+    // how big it is drawn (and hit): slimes by their size, the young smaller, a puffed-up pufferfish
+    if (this.type === 'slime') {
+      const n = Math.max(1, this.variant);
+      this.renderScale = n;
+      this.body.hw = 0.26 * n;
+      this.body.h = 0.52 * n;
+    } else this.renderScale = f & 32 ? 0.55 : this.type === 'pufferfish' && f & 64 ? 2.4 : 1;
     this.stale = 0;
   }
 

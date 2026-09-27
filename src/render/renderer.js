@@ -806,7 +806,9 @@ export class Renderer {
     v4(188, s.shadows ? 1 : 0, s.pcf, s.volSteps || 1, s.cloudSteps || 1);
     const wx = state.weather || {};
     v4(192, wx.rain || 0, wx.wetness || 0, wx.flash || 0, wx.snow ? 1 : 0);
-    v4(196, dim, DIM ? DIM.amb[0] : 0, DIM ? DIM.amb[1] : 0, DIM ? DIM.amb[2] : 0);
+    // (night vision lifts the dark everywhere with a cool, even light)
+    const nv = state.nightVision || 0;
+    v4(196, dim, (DIM ? DIM.amb[0] : 0) + nv * 0.16, (DIM ? DIM.amb[1] : 0) + nv * 0.18, (DIM ? DIM.amb[2] : 0) + nv * 0.21);
     v4(200, DIM ? DIM.fog[0] : 0, DIM ? DIM.fog[1] : 0, DIM ? DIM.fog[2] : 0, 0);
     this.ubo.upload();
   }
@@ -1268,6 +1270,7 @@ export class Renderer {
     // the nether's glow and the end's pale light: keep them dim and moody, not washed out
     if (state.dimension === 1) env += 3.0;
     else if (state.dimension === 2) env += 1.0;
+    env += (state.nightVision || 0) * 1.6;
     const torch = Math.pow(state.eyeBlock ?? 0, 2.6) * 10;
     return 10.0 / (env + torch + 0.03);
   }

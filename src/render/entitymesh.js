@@ -1,12 +1,14 @@
 // Builds the triangles for every creature, dropped item and arrow each frame, interpolating
 // between simulation ticks so movement stays smooth at any frame rate.
 
-import { emitModel, emitBlockCube, emitSprite, emitArrow, emitSignText, modelVertexCount, ENTITY_FLOATS, GEAR_VERTICES } from './models.js';
+import { emitModel, emitBlockCube, emitSprite, emitArrow, emitSignText, modelVertexCount, skinKeyOf, ENTITY_FLOATS, GEAR_VERTICES } from './models.js';
+import { mobFlags } from '../sim/remote.js';
 import { isBlockItem } from '../sim/items.js';
 import { BLOCK } from '../world/blocks.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+const LINE_SEGMENTS = 14;
 
 export class EntityMesh {
   constructor(skins, sprites) {
@@ -25,9 +27,11 @@ export class EntityMesh {
     this.data = d;
   }
 
-  // extras: other players in multiplayer ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... });
-  // signs: the words on signs in view ({ layer, center, nrm, light }, see Game.visibleSigns)
-  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null) {
+  // extras: players drawn as models ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... }: the
+  // others in multiplayer, and ourselves in the third-person views); signs: the words on signs in
+  // view ({ layer, center, nrm, light }, see Game.visibleSigns); rodTip: where our fishing line
+  // starts
+  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null, rodTip = null) {
     let o = 0;
     const p = [0, 0, 0];
     if (signs) {
@@ -39,10 +43,10 @@ export class EntityMesh {
         const q = e.pos;
         const dx = q[0] - cam[0], dy = q[1] - cam[1], dz = q[2] - cam[2];
         if (dx * dx + dy * dy + dz * dz > maxDist * maxDist) continue;
-        this.ensure(o + (modelVertexCount('player') + GEAR_VERTICES) * ENTITY_FLOATS);
+        this.ensure(o + (modelVertexCount('player') + GEAR_VERTICES + 3 * 36) * ENTITY_FLOATS);
         const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + 1.2), Math.floor(q[2]));
         const tint = e.hurtTime > 0.2 ? [1, 0.18, 0.12, 0.55] : [0, 0, 0, 0];
-        const gear = { held: e.held, armor: e.armor, sprites: this.sprites };
+        const gear = { held: e.held, armor: e.armor, sprites: this.sprites, skins: this.skins, wings: e.wings, offhand: e.offhand };
         o = emitModel(this.data, o, e, 'player', q, e.yaw, cam, [sl / 15, bl / 15], this.skins, t, tint, e.skin, gear);
       }
     }
@@ -56,16 +60,19 @@ export class EntityMesh {
       const [sl, bl] = world.getLight(Math.floor(p[0]), Math.floor(p[1] + b.h * 0.6), Math.floor(p[2]));
       const light = [sl / 15, bl / 15];
       if (e.kind === 'mob') {
-        this.ensure(o + (modelVertexCount(e.model || e.type) + GEAR_VERTICES) * ENTITY_FLOATS);
+        if (!e.ghost) e.flags = mobFlags(e);
+        this.ensure(o + (modelVertexCount(e.type) + GEAR_VERTICES) * ENTITY_FLOATS);
         let tint = [0, 0, 0, 0];
         if (e.hurtTime > 0.2 || e.deathTime > 0) tint = [1, 0.18, 0.12, 0.55];
-        else if (e.type === 'creeper' && e.fuse > 0 && Math.sin(e.fuse * 18) > 0.2) tint = [1, 1, 1, 0.55];
+        else if ((e.type === 'creeper' || e.type === 'tnt') && e.fuse > 0 && Math.sin(e.fuse * 18) > 0.2) tint = [1, 1, 1, 0.55];
+        else if (e.type === 'wither' && e.charge > 0) tint = [0.55, 0.65, 1, 0.25 + 0.2 * Math.sin(t * 8)];
         if (e.burning > 0 && e.deathTime === 0) tint = [1, 0.55, 0.2, Math.max(tint[3], 0.25 + 0.2 * Math.sin(t * 20))];
         const yaw = lerpAngle(e.prevYaw, e.yaw, alpha);
-        const skin = e.type === 'sheep' && e.variant ? 'sheep:' + e.variant : e.type;
         const held = e.def && e.def.held;
-        const gear = held || e.armor ? { held, armor: e.armor, sprites: this.sprites } : null;
-        o = emitModel(this.data, o, e, e.type, p, yaw, cam, light, this.skins, t, tint, skin, gear);
+        const gear = held || e.armor ? { held, armor: e.armor, sprites: this.sprites, skins: this.skins } : null;
+        // the light of the glowing ones comes from themselves
+        const lit = e.type === 'blaze' || e.type === 'end_crystal' || e.type === 'wither' ? [light[0], Math.max(light[1], 0.8)] : light;
+        o = emitModel(this.data, o, e, e.type, p, yaw, cam, lit, this.skins, t, tint, skinKeyOf(e), gear);
       } else if (e.kind === 'item') {
         if (e.pending) continue; // being picked up (waiting for the server)
         this.ensure(o + 36 * ENTITY_FLOATS);
@@ -73,14 +80,37 @@ export class EntityMesh {
         const q = [p[0], p[1] + bob, p[2]];
         if (isBlockItem(e.item)) o = emitBlockCube(this.data, o, e.item, [q[0], q[1] + 0.1, q[2]], e.spin, 0.25, cam, light);
         else o = emitSprite(this.data, o, this.sprites.index.get(e.item) || 0, q, e.spin, 0.42, cam, light);
-      } else if (e.kind === 'thrown') {
-        // pearls and eyes: a small sprite turned to face the camera
+      } else if (e.kind === 'thrown' || (e.kind === 'firework' && !e.attached)) {
+        // pearls, eyes, potions and rockets: a small sprite turned to face the camera
         this.ensure(o + 6 * ENTITY_FLOATS);
         const face = Math.atan2(cam[0] - p[0], cam[2] - p[2]);
         o = emitSprite(this.data, o, this.sprites.index.get(e.item) || 0, [p[0], p[1] - 0.15, p[2]], face, 0.36, cam, [Math.max(light[0], 0.5), Math.max(light[1], 0.4)]);
       } else if (e.kind === 'fireball') {
         this.ensure(o + 36 * ENTITY_FLOATS);
         o = emitBlockCube(this.data, o, e.small ? BLOCK.MAGMA_BLOCK : BLOCK.GLOWSTONE, [p[0], p[1] + 0.15, p[2]], e.spin, e.small ? 0.3 : 0.75, cam, [0, 1]);
+      } else if (e.kind === 'skull') {
+        // the wither's skulls, turning as they fly
+        this.ensure(o + 36 * ENTITY_FLOATS);
+        o = emitBlockCube(this.data, o, BLOCK.WITHER_SKELETON_SKULL, [p[0], p[1], p[2]], e.age * 4, 0.34, cam, [light[0], Math.max(light[1], 0.35)]);
+      } else if (e.kind === 'bullet') {
+        this.ensure(o + 36 * ENTITY_FLOATS);
+        o = emitBlockCube(this.data, o, BLOCK.SEA_LANTERN, [p[0], p[1], p[2]], e.age * 9, 0.2, cam, [0, 1]);
+      } else if (e.kind === 'bobber') {
+        this.ensure(o + (1 + LINE_SEGMENTS) * 36 * ENTITY_FLOATS);
+        const bob = e.bite > 0 ? -0.12 : Math.sin(t * 3 + e.id) * 0.02;
+        o = emitBlockCube(this.data, o, BLOCK.RED_WOOL, [p[0], p[1] + bob, p[2]], 0, 0.14, cam, light);
+        // the line, sagging between the rod and the float
+        const tip = e.owner === 'local' ? rodTip : null;
+        if (tip) {
+          const q = [p[0], p[1] + bob + 0.07, p[2]];
+          const span = Math.hypot(q[0] - tip[0], q[2] - tip[2]);
+          const sag = e.hooked || e.bite > 0 ? 0.05 : Math.min(1.5, span * 0.12);
+          for (let i = 0; i < LINE_SEGMENTS; i++) {
+            const k = (i + 0.5) / LINE_SEGMENTS;
+            const pt = [lerp(tip[0], q[0], k), lerp(tip[1], q[1], k) - Math.sin(k * Math.PI) * sag, lerp(tip[2], q[2], k)];
+            o = emitBlockCube(this.data, o, BLOCK.WHITE_WOOL, pt, 0, 0.02, cam, light);
+          }
+        }
       } else if (e.kind === 'arrow') {
         this.ensure(o + 108 * ENTITY_FLOATS);
         o = emitArrow(this.data, o, p, e.dir || b.vel, cam, light, this.skins);
@@ -90,3 +120,4 @@ export class EntityMesh {
     return this;
   }
 }
+

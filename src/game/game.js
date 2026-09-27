@@ -391,6 +391,8 @@ export class Game {
       }
     });
     ui.on('invClick', (ref, button) => this.inventoryClick(ref, button));
+    ui.on('enchantPick', (i) => this.enchantPick(i));
+    ui.on('tradePick', (i) => this.tradePick(i));
     ui.on('invQuick', (ref) => this.inventoryQuick(ref));
     ui.on('invSwap', (ref, hot) => this.inventorySwap(ref, hot));
     ui.on('invOutside', () => this.inventoryOutside());
@@ -659,7 +661,7 @@ export class Game {
       ctl.jump = k('Space') || tc.jump;
       ctl.jumpPressed = input.wasPressed('Space') || (tc.jump && !this.prevTouchJump);
       this.prevTouchJump = tc.jump;
-      if (input.wasPressed('F5') || input.wasPressed('KeyV')) this.cycleCamera();
+      if (input.wasPressed('F5') || input.wasPressed('KeyC')) this.cycleCamera();
       if (input.wasPressed('KeyX')) this.swapHands();
       ctl.sneak = k('ShiftLeft') || k('ShiftRight') || tc.sneak;
       // (no Ctrl for sprint: Ctrl+W would close the browser tab)
@@ -670,6 +672,7 @@ export class Game {
       if (tc.inventory) { tc.inventory = false; this.openInventory(); }
       if (tc.chat) { tc.chat = false; this.openChat(); }
       if (tc.mic) { tc.mic = false; this.toggleMic(); }
+      if (tc.camera) { tc.camera = false; this.cycleCamera(); }
       for (let i = 0; i < 9; i++) {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
@@ -724,7 +727,9 @@ export class Game {
 
     // weather
     if (this.state !== 'paused' && !this.dimension) {
-      this.weather.update(dt, this.settings.weather, (distance) => this.audio.play('thunder', 'stone', 1.2 - distance * 0.7));
+      // on a server, 'changing' weather is the server's, the same for everyone
+      const wmode = this.mp && this.settings.weather === 'auto' ? 'shared' : this.settings.weather;
+      this.weather.update(dt, wmode, (distance) => this.audio.play('thunder', 'stone', 1.2 - distance * 0.7));
     }
 
     // camera
@@ -1080,6 +1085,7 @@ export class Game {
         snow: this.precip.type === 'snow',
       },
       dimension: dim,
+      nightVision: this.nightVision || 0,
       precip: this.precip,
       selection: this.hudHidden ? null : this.selection,
       particles: this.particles,

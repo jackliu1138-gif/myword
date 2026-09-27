@@ -281,3 +281,99 @@ test('dropped items are shared first come first served; chests are lent one at a
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('protocol 4: the generator version, shared weather, structure creatures spawned once, creatures that stay, loot chests, brewing stands, enchanted drops', async () => {
+  const { BLOCK } = await import('../src/world/blocks.js');
+  const { ITEM } = await import('../src/sim/items.js');
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  const dataDir = mkdtempSync(join(tmpdir(), 'lumen-'));
+  const open = [];
+  let srv = null;
+  try {
+    srv = startServer({ port: 0, dataDir, seed: 'villages', quiet: true });
+    const port = await srv.ready;
+    const a = client(port), b = client(port);
+    open.push(a, b);
+    await a.send({ t: 'hello', n: 'Ann', v: PROTOCOL });
+    const wa = await a.next('welcome');
+    assert.equal(wa.gen, 2, 'a new world is made with the new generator');
+    assert.ok(wa.weather && typeof wa.weather.r === 'number' && (wa.weather.s === 0 || wa.weather.s === 1), 'the weather everyone shares');
+    await b.send({ t: 'hello', n: 'Ben', v: PROTOCOL });
+    await b.next('welcome');
+    // a village's creatures: whoever claims the chunk first spawns them, nobody else does
+    await a.send({ t: 'claim', k: 123456, d: 0 });
+    assert.equal((await a.next('claimed')).ok, 1);
+    await b.send({ t: 'claim', k: 123456, d: 0 });
+    assert.equal((await b.next('claimed')).ok, 0);
+    await b.send({ t: 'claim', k: 123456, d: 1 });
+    assert.equal((await b.next('claimed')).ok, 1, 'each dimension has its own');
+    // creatures that stay: Ann simulates a villager; when she leaves, Ben (near it) is handed it
+    const villager = { uid: 'p1.abc.1', type: 'villager', p: [10, 70, 10], yaw: 0, hp: 20, v: 1, persistent: true, trades: [0, 2] };
+    await a.send({ t: 'st', p: [12, 70, 12], y: 0, pi: 0, h: 0, f: 0 });
+    await a.send({ t: 'pmobs', d: 0, l: [villager], rel: [], full: 1 });
+    await b.send({ t: 'st', p: [30, 70, 30], y: 0, pi: 0, h: 0, f: 0 });
+    a.close();
+    const adopt = await b.next('adopt', 5000);
+    assert.equal(adopt.d, 0);
+    assert.deepEqual(adopt.l.map((c) => [c.uid, c.type, c.trades]), [['p1.abc.1', 'villager', [0, 2]]]);
+    // a chest a structure left: filled the first time it is opened
+    await b.send({ t: 'b', l: [[3, 50, 3, BLOCK.CHEST | (2 << 8)]] });
+    await b.send({ t: 'open', k: '3,50,3', d: 0, loot: 1 });
+    const loot = await b.next('cont');
+    assert.ok(loot.c.slots.filter(Boolean).length > 0, 'the dungeon chest has loot');
+    await b.send({ t: 'close', k: '3,50,3', d: 0, c: loot.c });
+    // a brewing stand is lent like a furnace
+    await b.send({ t: 'b', l: [[4, 50, 4, BLOCK.BREWING_STAND]] });
+    await b.send({ t: 'open', k: '4,50,4', d: 0 });
+    const brew = await b.next('cont');
+    assert.equal(brew.c.kind, 'brewing');
+    assert.equal(brew.c.slots.length, 5);
+    await b.send({ t: 'close', k: '4,50,4', d: 0, c: brew.c });
+    // enchantments travel with dropped items (and odd ones are dropped)
+    const wb2 = client(port);
+    open.push(wb2);
+    await wb2.send({ t: 'hello', n: 'Cy', v: PROTOCOL });
+    const wc = await wb2.next('welcome');
+    await wb2.send({ t: 'drop', i: wc.id + '.1', it: ITEM.DIAMOND_SWORD, n: 1, w: 3, p: [1, 70, 1], v: [0, 0, 0], d: 0, e: { sharpness: 3, bogus: 99, '<x>': 1 } });
+    const dr = await b.next('drop');
+    assert.deepEqual(dr.e, { sharpness: 3 });
+    b.close();
+    wb2.close();
+    await srv.stop();
+    srv = null;
+    // restart: the villager, the claims and the loot chest's contents are kept
+    srv = startServer({ port: 0, dataDir, quiet: true });
+    const c = client(await srv.ready);
+    open.push(c);
+    await c.send({ t: 'hello', n: 'Dee', v: PROTOCOL });
+    const wd = await c.next('welcome');
+    assert.equal(wd.gen, 2);
+    await c.send({ t: 'claim', k: 123456, d: 0 });
+    assert.equal((await c.next('claimed')).ok, 0, 'claims are kept');
+    await c.send({ t: 'st', p: [8, 70, 8], y: 0, pi: 0, h: 0, f: 0 });
+    const ad2 = await c.next('adopt', 5000);
+    assert.equal(ad2.l[0].uid, 'p1.abc.1');
+    c.close();
+    await srv.stop();
+    srv = null;
+    // a world from before the 384-high one (no generator version saved) keeps its terrain
+    const old = mkdtempSync(join(tmpdir(), 'lumen-'));
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, 'world.json'), JSON.stringify({ version: 1, seed: 42, dayTime: 0.3, dayCount: 2, edits: {}, dimEdits: {}, players: {} }));
+    srv = startServer({ port: 0, dataDir: old, quiet: true });
+    const o = client(await srv.ready);
+    open.push(o);
+    await o.send({ t: 'hello', n: 'Old', v: PROTOCOL });
+    const wo = await o.next('welcome');
+    assert.equal(wo.gen, 1);
+    assert.equal(wo.seed, 42);
+    o.close();
+    await srv.stop();
+    srv = null;
+    rmSync(old, { recursive: true, force: true });
+  } finally {
+    for (const cl of open) cl.close();
+    if (srv) await srv.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

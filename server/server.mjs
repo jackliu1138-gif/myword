@@ -19,11 +19,18 @@ import { acceptUpgrade } from './ws.mjs';
 // the game's own rules for items, chests and furnaces (plain data modules, no browser needed)
 import { BLOCKS, WORLD_HEIGHT } from '../src/world/blocks.js';
 import { itemDef } from '../src/sim/items.js';
-import { loadEntity, serializeEntity, serializeEntities, loadEntities, newEntity, tickFurnace, furnaceLit, contentsOf, parseKey } from '../src/sim/containers.js';
+import { loadEntity, serializeEntity, serializeEntities, loadEntities, newEntity, tickFurnace, furnaceLit, tickBrewing, contentsOf, parseKey } from '../src/sim/containers.js';
+import { rollLoot } from '../src/sim/loot.js';
+import { stepWeatherClock } from '../src/game/weather.js';
 
 // 2: beds, armour, the nether and the end (new block and item ids); 3: block states in edits
-// (id | state << 8), shared dropped items, chests, furnaces and signs
-export const PROTOCOL = 3;
+// (id | state << 8), shared dropped items, chests, furnaces and signs; 4: the 384-high world and
+// its generator version, shared weather, brewing stands, loot chests, enchanted items, the
+// creatures of structures (spawned once) and the creatures that stay (kept by the server)
+export const PROTOCOL = 4;
+const CURRENT_GEN = 2;
+const MAX_PMOBS = 3000; // creatures kept per dimension
+const ADOPT_RADIUS = 64;
 const ITEM_LIFE = 5 * 60 * 1000; // dropped items vanish after five minutes, as they do in the game
 const MAX_ITEMS = 3000;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -89,9 +96,14 @@ export function startServer(overrides = {}) {
   const worldFile = join(cfg.dataDir, 'world.json');
   // edits: the overworld's; dimEdits: the nether's (1) and the end's (2); bents: chests, furnaces
   // and signs per dimension ("x,y,z" -> entity); items: dropped items everyone sees (not saved)
+  // gen: the terrain generator the world was made with (1: the 128-high world; 2: 384 high, with
+  // structures); weather: the rain everyone shares; claims: chunks whose structure creatures
+  // have been spawned; pmobs: creatures that stay (villagers, pets...), uid -> { c: data, owner }
   const world = {
-    seed: 0, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {},
+    seed: 0, gen: CURRENT_GEN, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {},
     bents: { 0: new Map(), 1: new Map(), 2: new Map() }, items: new Map(),
+    weather: { target: 0, stormTarget: 0, timer: 300 + Math.random() * 420 },
+    claims: { 0: new Set(), 1: new Set(), 2: new Set() }, pmobs: { 0: new Map(), 1: new Map(), 2: new Map() },
   };
   const locks = new Map(); // "d:x,y,z" -> client holding that chest or furnace open
   let dirty = false;
@@ -103,7 +115,19 @@ export function startServer(overrides = {}) {
     try {
       const d = JSON.parse(await readFile(worldFile, 'utf8'));
       world.seed = d.seed | 0;
+      // worlds from before the 384-high world keep their terrain
+      world.gen = Number.isInteger(d.gen) && d.gen >= 1 && d.gen <= CURRENT_GEN ? d.gen : 1;
       world.dayTime = num(d.dayTime, 0, 1, 0.06);
+      if (d.weather && typeof d.weather === 'object') {
+        world.weather = { target: num(d.weather.target, 0, 1, 0), stormTarget: d.weather.stormTarget ? 1 : 0, timer: num(d.weather.timer, 0, 3600, 300) };
+      }
+      for (const dim of [0, 1, 2]) {
+        const cl = d.claims && Array.isArray(d.claims[dim]) ? d.claims[dim] : [];
+        world.claims[dim] = new Set(cl.filter((k) => Number.isFinite(k)));
+        const pm = d.pmobs && Array.isArray(d.pmobs[dim]) ? d.pmobs[dim] : [];
+        world.pmobs[dim] = new Map();
+        for (const c of pm.slice(0, MAX_PMOBS)) { const ok = cleanCreature(c); if (ok) world.pmobs[dim].set(ok.uid, { c: ok, owner: null }); }
+      }
       world.dayCount = d.dayCount | 0;
       world.players = d.players && typeof d.players === 'object' ? d.players : {};
       const readEdits = (obj, into) => {
@@ -120,11 +144,12 @@ export function startServer(overrides = {}) {
       world.endState = d.endState && typeof d.endState === 'object' ? d.endState : null;
       const be = d.bents && typeof d.bents === 'object' ? d.bents : {};
       for (const dim of [0, 1, 2]) world.bents[dim] = loadEntities(be[dim]);
-      log(`world loaded: seed ${world.seed}, ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players`);
+      log(`world loaded: seed ${world.seed} (generator ${world.gen}), ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players, ${world.pmobs[0].size} creatures kept`);
     } catch (e) {
       world.seed = seedFromString(cfg.seed);
+      world.gen = CURRENT_GEN;
       dirty = true;
-      log(`new world, seed ${world.seed}`);
+      log(`new world, seed ${world.seed} (generator ${world.gen})`);
     }
   }
 
@@ -142,9 +167,12 @@ export function startServer(overrides = {}) {
       dirty = false;
       await mkdir(cfg.dataDir, { recursive: true });
       const body = JSON.stringify({
-        version: 1, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(),
+        version: 1, seed: world.seed, gen: world.gen, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(),
         dimEdits: serializeDimEdits(), endState: world.endState, players: world.players,
         bents: { 0: serializeEntities(world.bents[0]), 1: serializeEntities(world.bents[1]), 2: serializeEntities(world.bents[2]) },
+        weather: world.weather,
+        claims: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.claims[d]]])),
+        pmobs: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.pmobs[d].values()].map((r) => r.c)])),
       });
       const tmp = worldFile + '.tmp';
       await writeFile(tmp, body);
@@ -189,14 +217,21 @@ export function startServer(overrides = {}) {
     if (holder) { locks.delete(lockKey(d, k)); send(holder, { t: 'cgone', k, d }); }
     if (e.kind === 'sign') broadcast({ t: 'bent', k, d, e: null });
     let n = 0;
-    for (const [it, count, wear] of contentsOf(e)) {
-      spawnItem({ i: 's.' + Date.now().toString(36) + '.' + (n++) + '.' + Math.floor(Math.random() * 1e6), it, n: count, w: wear, dl: 0.5, p: [x + 0.5, y + 0.5, z + 0.5], v: [(Math.random() - 0.5) * 3, 3, (Math.random() - 0.5) * 3], d });
+    for (const [it, count, wear, ench] of contentsOf(e)) {
+      spawnItem({ i: 's.' + Date.now().toString(36) + '.' + (n++) + '.' + Math.floor(Math.random() * 1e6), it, n: count, w: wear, dl: 0.5, p: [x + 0.5, y + 0.5, z + 0.5], v: [(Math.random() - 0.5) * 3, 3, (Math.random() - 0.5) * 3], d, e: cleanEnch(ench) });
     }
   }
 
   // ------------------------------------------------------------------ dropped items
   // an item as players see it (without the server's own timestamp)
-  const itemInfo = (it) => ({ i: it.i, it: it.it, n: it.n, w: it.w, dl: it.dl, p: it.p, v: it.v, d: it.d });
+  const itemInfo = (it) => (it.e ? { i: it.i, it: it.it, n: it.n, w: it.w, dl: it.dl, p: it.p, v: it.v, d: it.d, e: it.e } : { i: it.i, it: it.it, n: it.n, w: it.w, dl: it.dl, p: it.p, v: it.v, d: it.d });
+  // enchantments on an item: { name: level } (a few, small levels)
+  const cleanEnch = (e) => {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return undefined;
+    const out = {};
+    for (const [k, v] of Object.entries(e).slice(0, 8)) if (/^[a-z_]{1,24}$/.test(k) && Number.isInteger(v) && v > 0 && v <= 10) out[k] = v;
+    return Object.keys(out).length ? out : undefined;
+  };
   function spawnItem(it, from = null) {
     it.at = Date.now();
     world.items.set(it.i, it);
@@ -217,6 +252,39 @@ export function startServer(overrides = {}) {
       } else out.push({ urls: cfg.turn, username: cfg.turnUser, credential: cfg.turnPass });
     }
     return out;
+  }
+
+  // ------------------------------------------------------------------ creatures that stay
+  // A creature as a client describes it (see Game.serializeCreature): checked and trimmed.
+  function cleanCreature(c) {
+    if (!c || typeof c !== 'object' || typeof c.uid !== 'string' || !/^[\w.:-]{1,40}$/.test(c.uid)) return null;
+    if (typeof c.type !== 'string' || !/^[a-z_]{1,24}$/.test(c.type) || !Array.isArray(c.p) || c.p.length !== 3) return null;
+    const body = JSON.stringify(c);
+    if (body.length > 4096) return null;
+    const p = c.p.map((v) => num(v, -3e7, 3e7));
+    if (p[1] < -64 || p[1] > WORLD_HEIGHT + 64) return null;
+    return { ...c, p };
+  }
+
+  // Creatures nobody simulates go to a player near them (the first one to come by).
+  function adoptCreatures() {
+    for (const d of [0, 1, 2]) {
+      const near = [...clients.values()].filter((o) => o.ready && o.state && (o.state.d || 0) === d);
+      if (!near.length) continue;
+      const give = new Map();
+      for (const [uid, r] of world.pmobs[d]) {
+        if (r.owner && clients.get(r.owner) && clients.get(r.owner).ready) continue;
+        r.owner = null;
+        const p = r.c.p;
+        const o = near.find((q) => (q.state.p[0] - p[0]) ** 2 + (q.state.p[2] - p[2]) ** 2 < ADOPT_RADIUS * ADOPT_RADIUS);
+        if (!o) continue;
+        r.owner = o.id;
+        if (!give.has(o)) give.set(o, []);
+        if (give.get(o).length < 128) give.get(o).push(r.c); else r.owner = null;
+        void uid;
+      }
+      for (const [o, l] of give) send(o, { t: 'adopt', d, l });
+    }
   }
 
   // ------------------------------------------------------------------ messaging
@@ -273,7 +341,7 @@ export function startServer(overrides = {}) {
     const msg = {
       t: 'welcome', v: PROTOCOL, id: c.id, name: cfg.name, seed: world.seed, dayTime: world.dayTime, dayCount: world.dayCount,
       dayLength: cfg.dayLength, mode: cfg.mode, difficulty: cfg.difficulty, edits: serializeEdits(), dimEdits: serializeDimEdits(),
-      endState: world.endState, endHost, me: saved,
+      endState: world.endState, endHost, me: saved, gen: world.gen, weather: { r: world.weather.target, s: world.weather.stormTarget },
       // signs everyone can read (what chests and furnaces hold is sent when one is opened)
       bents: Object.fromEntries([0, 1, 2].map((d) => [d, Object.fromEntries([...world.bents[d]].filter(([, e]) => e.kind === 'sign').map(([k, e]) => [k, serializeEntity(e)]))])),
       items: [...world.items.values()].map(itemInfo),
@@ -369,7 +437,7 @@ export function startServer(overrides = {}) {
         if (now - c.dropWindow > 1000) { c.dropWindow = now; c.dropCount = 0; }
         if (++c.dropCount > 80) return;
         const vec = (a) => (Array.isArray(a) ? a.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : [0, 0, 0]);
-        spawnItem({ i, it, n: Math.max(1, Math.min(64, int(m.n) || 1)), w: Math.max(0, int(m.w) || 0), dl: num(m.dl, 0, 5, 0.5), p: vec(m.p), v: vec(m.v).map((v) => Math.max(-30, Math.min(30, v))), d: m.d === 1 || m.d === 2 ? m.d : 0 }, c);
+        spawnItem({ i, it, n: Math.max(1, Math.min(64, int(m.n) || 1)), w: Math.max(0, int(m.w) || 0), dl: num(m.dl, 0, 5, 0.5), p: vec(m.p), v: vec(m.v).map((v) => Math.max(-30, Math.min(30, v))), d: m.d === 1 || m.d === 2 ? m.d : 0, e: cleanEnch(m.e) }, c);
         break;
       }
       case 'take': { // first come, first served
@@ -391,9 +459,16 @@ export function startServer(overrides = {}) {
         const [x, y, z] = parseKey(k);
         const v = editAt(x, y, z, d);
         const kind = v === null ? null : kindOf(v & 255);
-        if (kind !== 'chest' && kind !== 'furnace') { send(c, { t: 'cont', k, c: null }); return; }
+        if (kind !== 'chest' && kind !== 'furnace' && kind !== 'brewing') { send(c, { t: 'cont', k, c: null }); return; }
         let e = world.bents[d].get(k);
-        if (!e || e.kind !== kind) { e = newEntity(kind); world.bents[d].set(k, e); }
+        if (!e || e.kind !== kind) {
+          e = newEntity(kind);
+          // a chest a structure left behind: filled the first time anyone opens it
+          const loot = int(m.loot);
+          if (kind === 'chest' && loot > 0 && loot < 16) { const slots = rollLoot(loot, world.seed, x, y, z); if (slots) e.slots = slots; }
+          world.bents[d].set(k, e);
+          dirty = true;
+        }
         locks.set(lk, c);
         send(c, { t: 'cont', k, c: serializeEntity(e) });
         break;
@@ -421,6 +496,42 @@ export function startServer(overrides = {}) {
         world.bents[d].set(k, e);
         dirty = true;
         broadcast({ t: 'bent', k, d, e: serializeEntity(e) }, c);
+        break;
+      }
+      case 'claim': { // a chunk with a structure's creatures, made for the first time in someone's game
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const k = Number(m.k);
+        if (!Number.isFinite(k)) return;
+        const ok = !world.claims[d].has(k);
+        if (ok) { world.claims[d].add(k); dirty = true; }
+        send(c, { t: 'claimed', k, d, ok: ok ? 1 : 0 });
+        break;
+      }
+      case 'pmobs': { // the creatures that stay which this player simulates (l), and the ones let go (rel)
+        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const map = world.pmobs[d];
+        const seen = new Set();
+        for (const raw of Array.isArray(m.l) ? m.l.slice(0, 512) : []) {
+          const cr = cleanCreature(raw);
+          if (!cr) continue;
+          const r = map.get(cr.uid);
+          if (r && r.owner && r.owner !== c.id && clients.get(r.owner)) continue; // someone else has it
+          if (!r && map.size >= MAX_PMOBS) continue;
+          map.set(cr.uid, { c: cr, owner: c.id });
+          seen.add(cr.uid);
+        }
+        for (const raw of Array.isArray(m.rel) ? m.rel.slice(0, 512) : []) {
+          const cr = cleanCreature(raw);
+          if (!cr) continue;
+          const r = map.get(cr.uid);
+          if (r && r.owner && r.owner !== c.id && clients.get(r.owner)) continue;
+          if (!r && map.size >= MAX_PMOBS) continue;
+          map.set(cr.uid, { c: cr, owner: null });
+          seen.add(cr.uid);
+        }
+        // ours that are in neither list are gone (died, or picked back up as items)
+        if (m.full) for (const [uid, r] of map) if (r.owner === c.id && !seen.has(uid)) map.delete(uid);
+        dirty = true;
         break;
       }
       case 'm': // creature snapshots from the client that simulates them
@@ -473,6 +584,7 @@ export function startServer(overrides = {}) {
   function onClose(c) {
     clients.delete(c.id);
     for (const [lk, holder] of locks) if (holder === c) locks.delete(lk);
+    for (const d of [0, 1, 2]) for (const r of world.pmobs[d].values()) if (r.owner === c.id) r.owner = null;
     if (!c.ready) return;
     broadcast({ t: 'leave', id: c.id });
     checkEndHost();
@@ -539,6 +651,13 @@ export function startServer(overrides = {}) {
       world.dayTime += dt / (Math.max(1, cfg.dayLength) * 60);
       if (world.dayTime >= 1) { world.dayTime -= 1; world.dayCount++; }
       if (now - lastTimeBroadcast > 10000) { lastTimeBroadcast = now; broadcast({ t: 'time', d: world.dayTime, n: world.dayCount }); }
+      // the weather everyone shares
+      if (stepWeatherClock(world.weather, dt)) {
+        dirty = true;
+        broadcast({ t: 'weather', r: world.weather.target, s: world.weather.stormTarget });
+        log(world.weather.target > 0 ? (world.weather.stormTarget ? 'a thunderstorm rolls in' : 'it starts to rain') : 'the rain stops');
+      }
+      adoptCreatures();
     }
     for (const c of clients.values()) {
       if (now - c.lastSeen > 60000) c.ws.close(4001);
@@ -548,6 +667,7 @@ export function startServer(overrides = {}) {
     if (online.length) {
       for (const d of [0, 1, 2]) {
         for (const [k, e] of world.bents[d]) {
+          if (e.kind === 'brewing' && !locks.has(lockKey(d, k))) { if (tickBrewing(e, dt)) dirty = true; continue; }
           if (e.kind !== 'furnace' || locks.has(lockKey(d, k)) || (!e.burn && !e.slots[0])) continue;
           const wasLit = furnaceLit(e);
           if (tickFurnace(e, dt)) dirty = true;

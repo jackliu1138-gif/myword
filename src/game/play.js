@@ -4,7 +4,7 @@
 
 import { Simulation, MAX_HEALTH, MAX_AIR } from '../sim/simulation.js';
 import { Inventory, ARMOR_REF } from '../sim/inventory.js';
-import { ITEM, itemDef, isBlockItem, blockDrops, breakInfo, RECIPES } from '../sim/items.js';
+import { ITEM, itemDef, isBlockItem, blockDrops, breakInfo, RECIPES, SMELT_XP } from '../sim/items.js';
 import { raycast } from './player.js';
 import { materialOf } from './audio.js';
 import { EntityMesh } from '../render/entitymesh.js';
@@ -105,7 +105,7 @@ export function installPlay(Game) {
     if (!this.inventory) return;
     if (this.touch) this.touch.setFlyVisible(this.isCreative());
     this.ui.renderHotbar(this.inventory.slots.slice(0, 9), this.selected, !this.isCreative());
-    if (this.state === 'inventory') this.ui.renderInventory(this.inventory, this.selected, this.isCreative(), (r) => this.canCraft(r));
+    if (this.state === 'inventory') this.ui.renderInventory(this.inventory, this.selected, this.isCreative(), (r) => this.canCraft(r), { level: this.xp ? this.xp.level : 0 });
     const me = this.me();
     if (me) this.ui.setVitals(this.vitals(me));
   };
@@ -137,11 +137,36 @@ export function installPlay(Game) {
 
   // ---- the inventory screen (see Inventory.click and ui.renderInventory)
   P.inventoryClick = function inventoryClick(ref, button) {
+    const out = this.furnaceOutput();
     if (this.inventory.click(ref, button)) this.audio.play('pop');
+    this.smeltXp(out);
   };
 
   P.inventoryQuick = function inventoryQuick(ref) {
+    const out = this.furnaceOutput();
     if (this.inventory.quickMove(ref)) this.audio.play('pop');
+    this.smeltXp(out);
+  };
+
+  // Taking what a furnace made out of it gives experience (a little for most things, more for
+  // metals and gems).
+  P.furnaceOutput = function furnaceOutput() {
+    const box = this.inventory.container;
+    const s = box && box.kind === 'furnace' ? box.slots[2] : null;
+    return s ? { id: s.id, count: s.count } : null;
+  };
+
+  P.smeltXp = function smeltXp(before) {
+    if (!before || this.isCreative()) return;
+    const box = this.inventory.container;
+    const s = box && box.kind === 'furnace' ? box.slots[2] : null;
+    const taken = before.count - (s && s.id === before.id ? s.count : 0);
+    if (taken <= 0) return;
+    const d = itemDef(before.id);
+    const rate = SMELT_XP.get(before.id) ?? (d && d.kind === 'food' ? 0.35 : 0.1);
+    const pts = taken * rate;
+    const whole = Math.floor(pts) + (Math.random() < pts - Math.floor(pts) ? 1 : 0);
+    if (whole > 0) this.gainXp(whole);
   };
 
   // A number key over a slot: swap it with that hotbar slot (armour only takes its own piece).
@@ -255,14 +280,22 @@ export function installPlay(Game) {
     if (this.hurtFlash > 0) { this.hurtFlash = Math.max(0, this.hurtFlash - dt * 2.2); this.ui.setHurt(this.hurtFlash); }
     // vitals change slowly: refresh a few times a second
     this.vitalsTimer = (this.vitalsTimer || 0) - dt;
-    if (this.vitalsTimer <= 0) { this.vitalsTimer = 0.1; if (me) this.ui.setVitals(this.vitals(me)); }
+    if (this.vitalsTimer <= 0) {
+      this.vitalsTimer = 0.1;
+      if (me) {
+        this.ui.setVitals(this.vitals(me));
+        this.ui.setEffects(Object.entries(me.effects || {}).map(([key, e]) => ({ key, t: e.t, amp: e.amp })));
+      }
+    }
     if (playing) this.ambientCreatures(dt);
     this.sim.dayCount = this.dayCount || 0;
     this.updateSurvival(dt);
     this.updateLures(dt);
     this.updatePlates(dt);
     this.updateFlight(dt);
+    this.remoteTrails(dt);
     this.updateGateways(dt);
+    this.updateCreatureFx(dt);
     this.updateSleep(dt);
     this.updateBlocks(dt);
     this.updateFurnaces(dt);
@@ -527,9 +560,6 @@ export function installPlay(Game) {
     } else if (usePressed && hit && !aimMob && this.useOnBlock(hit, def)) {
       tc.tap = false;
       this.placeTimer = 0.24;
-    } else if (def && def.kind === 'milk') {
-      if (usePressed && this.useCooldown <= 0) { this.useCooldown = 0.9; this.drinkMilk(); }
-      tc.tap = false;
     } else if (def && (def.kind === 'pearl' || def.kind === 'eye')) {
       if (usePressed && this.useCooldown <= 0) { this.useCooldown = 0.45; this.throwHeld(def); }
       tc.tap = false;
@@ -736,12 +766,28 @@ export function installPlay(Game) {
   // ---------------------------------------------------------------- rendering
   P.buildEntities = function buildEntities() {
     if (!this.sim || !this.entityMesh) return null;
-    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, this.mp ? this.remotePlayerModels() : null, this.visibleSigns(this.camera.pos));
+    const players = this.mp ? this.remotePlayerModels() : [];
+    const self = this.state !== 'title' && this.state !== 'boot' ? this.localPlayerModel() : null;
+    if (self) players.push(self);
+    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip());
+  };
+
+  // Where our fishing line leaves the rod: out in front and to the right of the view, or from the
+  // hand of our model in the third-person views.
+  P.rodTip = function rodTip() {
+    const b = this.bobber;
+    if (!b || b.removed || !this.camera) return null;
+    const p = this.player;
+    const f = p.forward();
+    const right = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
+    if (this.camMode) return [p.pos[0] + right[0] * 0.4 + f[0] * 1.1, p.pos[1] + 1.35 + f[1] * 1.1, p.pos[2] + right[2] * 0.4 + f[2] * 1.1];
+    const e = this.camera.pos;
+    return [e[0] + f[0] * 0.9 + right[0] * 0.42, e[1] + f[1] * 0.9 + 0.02, e[2] + f[2] * 0.9 + right[2] * 0.42];
   };
 
   P.handState = function handState() {
     const held = this.heldSlot();
-    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping) return null;
+    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode) return null;
     const id = held.id;
     const p = this.player;
     const bob = this.settings.viewBobbing ? p.bobAmount : 0;

@@ -1,22 +1,27 @@
 // DOM user interface: screens, settings, hotbar, inventory, toasts, help, device check, debug overlay.
 
-import { BLOCKS, BLOCK } from '../world/blocks.js';
+import { BLOCKS, BLOCK, IS_RAIL } from '../world/blocks.js';
 import { t, itemName, applyI18n, getLanguage } from './i18n.js';
 import { GLYPHS } from '../game/gamepad.js';
 import { ITEMS, RECIPES, itemDef, COOK_TIME } from '../sim/items.js';
-import { ARMOR_REF, CONTAINER_REF } from '../sim/inventory.js';
+import { ARMOR_REF, OFFHAND_REF, CONTAINER_REF } from '../sim/inventory.js';
+import { EFFECTS, ENCHANTS, ROMAN, BREW_TIME, BLAZE_FUEL } from '../sim/effects.js';
+import './strings3.js';
 
 // Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
 const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
   'oak_leaves', 'birch_leaves', 'spruce_leaves', 'tall_grass', 'fern', 'poppy', 'dandelion', 'cornflower', 'dead_bush', 'pumpkin',
   'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'obsidian', 'netherrack', 'soul_sand', 'nether_quartz_ore', 'magma_block',
   'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water', 'oak_sapling', 'birch_sapling', 'spruce_sapling']);
-const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'misc'];
+const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'potions', 'transport', 'eggs', 'misc'];
 function paletteTab(d) {
-  if (d.kind === 'block') return NATURE.has(d.key) ? 'nature' : 'building';
-  if (['sword', 'bow', 'arrow', 'armor'].includes(d.kind)) return 'combat';
-  if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye', 'bucket', 'fertilizer'].includes(d.kind)) return 'tools';
+  if (d.kind === 'block') return IS_RAIL[d.id] ? 'transport' : NATURE.has(d.key) ? 'nature' : 'building';
+  if (d.elytra || ['boat', 'minecart', 'saddle', 'firework'].includes(d.kind)) return 'transport';
+  if (['sword', 'bow', 'arrow', 'armor', 'crossbow', 'shield', 'totem'].includes(d.kind)) return 'combat';
+  if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye', 'bucket', 'fertilizer', 'shears', 'fishing_rod'].includes(d.kind)) return 'tools';
   if (d.kind === 'food' || d.kind === 'milk') return 'food';
+  if (['potion', 'splash', 'bottle'].includes(d.kind) || ['blaze_powder', 'nether_wart', 'glistering_melon_slice', 'spider_eye', 'fermented_spider_eye', 'magma_cream', 'ghast_tear', 'rabbit_foot', 'phantom_membrane', 'golden_carrot', 'glowstone_dust', 'redstone', 'sugar', 'pufferfish'].includes(d.key)) return 'potions';
+  if (d.kind === 'egg') return 'eggs';
   if (d.kind === 'door' || d.kind === 'sign' || d.kind === 'bed') return 'building';
   return 'misc';
 }
@@ -115,6 +120,9 @@ const HELP = [
       [kb('1–9', 'i18n:key.wheel'), 'act.hotbar'],
       [kb('E'), 'act.inventory'],
       [kb('Q'), 'act.drop'],
+      [kb('X'), 'keys.swap'],
+      [kb('F5', 'i18n:key.or', 'C'), 'keys.camera'],
+      [kb('Shift'), 'keys.dismount'],
       [kb('Enter'), 'act.chat'],
       [kb('V'), 'act.mic'],
       [kb('T'), 'act.fastTime'],
@@ -186,6 +194,16 @@ function deviceRows(rows) {
     const cls = [ok === false ? 'bad' : ok === true ? 'good' : '', WIDE_ROWS.has(k) ? 'wide' : ''].join(' ').trim();
     return `<div class="${cls}"><dt>${escapeHtml(t(k))}</dt><dd>${escapeHtml(v)}</dd></div>`;
   }).join('');
+}
+
+// "Sharpness II, Unbreaking III"
+export function enchText(ench) {
+  return Object.entries(ench || {}).map(([k, lv]) => {
+    const e = ENCHANTS[k];
+    if (!e) return '';
+    const n = getLanguage() === 'zh' ? e.zh : e.en;
+    return e.max > 1 ? n + ' ' + (ROMAN[lv] || lv) : n;
+  }).filter(Boolean).join(getLanguage() === 'zh' ? '，' : ', ');
 }
 
 const SLOT_HTML = (num) => `${num !== '' ? `<span class="num">${num}</span>` : ''}<img alt="" hidden><span class="count"></span><span class="wear" hidden><i></i></span>`;
@@ -445,7 +463,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -618,7 +636,7 @@ export class UI {
   // v = { health, max, air, maxAir, underwater } or null (creative: no hearts)
   setVitals(v) {
     const box = $('vitals');
-    if (!v) { box.hidden = true; this.vitalsState = null; return; }
+    if (!v) { box.hidden = true; $('xpbar').hidden = true; this.vitalsState = null; return; }
     const prev = this.vitalsState;
     this.vitalsState = { ...v };
     box.hidden = false;
@@ -645,6 +663,41 @@ export class UI {
       for (let i = 0; i < 10; i++) bar.children[i].className = 'armor-pip' + (pts >= (i + 1) * 2 ? ' full' : pts === i * 2 + 1 ? ' half' : '');
       bar.setAttribute('aria-label', t('hud.armor', { n: pts }));
     }
+    hearts.classList.toggle('poison', !!v.poisoned && !v.withered);
+    hearts.classList.toggle('wither', !!v.withered);
+    // absorption: golden hearts over the red ones
+    const ab = $('absorb');
+    const an = Math.ceil((v.absorb || 0) / 2);
+    ab.hidden = an <= 0;
+    if (an > 0 && (!prev || prev.absorb !== v.absorb || ab.children.length !== an)) {
+      if (ab.children.length !== an) ab.innerHTML = '<i class="heart"></i>'.repeat(an);
+      const a = Math.ceil(v.absorb);
+      for (let i = 0; i < an; i++) ab.children[i].className = 'heart' + (a >= (i + 1) * 2 ? ' full' : ' half');
+    }
+    // hunger: ten drumsticks, two points each, emptying from the left
+    const food = $('food');
+    if (food.children.length !== 10) food.innerHTML = '<i class="food"></i>'.repeat(10);
+    const fd = Math.max(0, Math.ceil(v.food ?? 20));
+    const starving = fd <= 6 && (v.sat || 0) <= 0;
+    if (!prev || Math.ceil(prev.food ?? 20) !== fd || prev.hungry !== v.hungry || prev.starving !== starving || !food.getAttribute('aria-label')) {
+      for (let i = 0; i < 10; i++) food.children[i].className = 'food' + (fd >= (i + 1) * 2 ? ' full' : fd === i * 2 + 1 ? ' half' : '');
+      food.classList.toggle('hunger', !!v.hungry);
+      food.classList.toggle('starving', starving);
+      food.setAttribute('aria-label', t('hud.food', { n: fd }));
+    }
+    this.vitalsState.starving = starving;
+    // experience
+    const xp = $('xpbar');
+    xp.hidden = false;
+    const w = (Math.max(0, Math.min(1, v.progress || 0)) * 100).toFixed(1) + '%';
+    const fill = $('xp-fill');
+    if (fill.style.width !== w) fill.style.width = w;
+    const lvl = $('xp-level');
+    const lt = v.level > 0 ? String(v.level) : '';
+    if (lvl.textContent !== lt) {
+      lvl.textContent = lt;
+      if (prev && v.level > (prev.level || 0)) { xp.classList.remove('up'); void xp.offsetWidth; xp.classList.add('up'); }
+    }
     const bubbles = $('bubbles');
     const showAir = v.underwater || v.air < v.maxAir - 0.01;
     bubbles.hidden = !showAir;
@@ -654,6 +707,27 @@ export class UI {
       const a = Math.ceil(v.air - 0.001);
       for (let i = 0; i < m; i++) bubbles.children[i].classList.toggle('gone', i >= a);
       bubbles.setAttribute('aria-label', t('hud.air'));
+    }
+  }
+
+  // Status effects: [{ key, t (seconds left), amp }], shown top right.
+  setEffects(list) {
+    const el = $('effects');
+    const key = list.map((e) => e.key + e.amp + ':' + Math.ceil(e.t)).join('|') + getLanguage();
+    if (key === this.effectsKey) return;
+    this.effectsKey = key;
+    el.innerHTML = '';
+    for (const e of list) {
+      const d = EFFECTS[e.key];
+      if (!d || e.t <= 0) continue;
+      const row = document.createElement('div');
+      row.className = 'fx' + (d.good ? '' : ' bad') + (e.t < 10 ? ' ending' : '');
+      row.style.setProperty('--c', `rgb(${d.color.join(',')})`);
+      const s = Math.ceil(e.t);
+      const time = s >= 3600 ? '**:**' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      const name = (getLanguage() === 'zh' ? d.zh : d.en) + (e.amp > 0 ? ' ' + ROMAN[e.amp + 1] : '');
+      row.innerHTML = `<i></i><span>${escapeHtml(name)}</span><span class="fx-t">${time}</span>`;
+      el.appendChild(row);
     }
   }
 
@@ -743,7 +817,10 @@ export class UI {
     else { img.removeAttribute('src'); img.hidden = true; }
     const name = d ? itemName(d) : '';
     img.alt = name;
-    el.title = name;
+    const ench = slot && slot.ench && Object.keys(slot.ench).length ? slot.ench : null;
+    el.title = ench ? name + '\n' + enchText(ench) : name;
+    el.classList.toggle('ench', !!ench);
+    if (ench) el.style.setProperty('--icon', `url("${src}")`);
     const c = el.querySelector('.count');
     c.textContent = showCounts && slot && slot.count > 1 ? String(slot.count) : '';
     const w = el.querySelector('.wear');
@@ -940,8 +1017,8 @@ export class UI {
 
   // inv: the Inventory (slots, armor, cursor, and the open chest or furnace); creative shows the
   // palette instead of recipes; an open container shows instead of both
-  renderInventory(inv, selected, creative, canCraft) {
-    this.invState = [inv, selected, creative, canCraft];
+  renderInventory(inv, selected, creative, canCraft, info = {}) {
+    this.invState = [inv, selected, creative, canCraft, info];
     const box = inv.container;
     const title = $('inv-title'), hint = $('inv-hint');
     title.dataset.i18n = box ? 'cont.' + box.kind : creative ? 'inv.title' : 'inv.survivalTitle';
@@ -970,7 +1047,7 @@ export class UI {
     for (let i = 9; i < inv.slots.length; i++) bagRefs.push(i);
     build($('inv-bag'), bagRefs);
     build($('inv-hotbar'), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    build($('inv-armor'), [ARMOR_REF, ARMOR_REF + 1, ARMOR_REF + 2, ARMOR_REF + 3]);
+    build($('inv-armor'), [ARMOR_REF, ARMOR_REF + 1, ARMOR_REF + 2, ARMOR_REF + 3, OFFHAND_REF]);
     const trash = $('inv-trash');
     if (!trash.dataset.bound) { trash.dataset.bound = '1'; this.bindSlot(trash, 'trash'); }
     const fill = (el, slot, label) => {
@@ -984,20 +1061,38 @@ export class UI {
       fill(el, inv.slots[i], String(i + 1));
     }
     [...$('inv-armor').children].forEach((el, k) => {
-      const slot = inv.armor[k];
-      fill(el, slot, t('inv.armorSlot.' + k));
+      const slot = k < 4 ? inv.armor[k] : inv.offhand;
+      fill(el, slot, t(k < 4 ? 'inv.armorSlot.' + k : 'inv.offhand'));
+      el.classList.toggle('offhand', k === 4);
       if (slot) el.removeAttribute('data-empty'); else el.dataset.empty = String(k);
     });
     const av = inv.armorValues();
     $('inv-armor-pts').textContent = av.points ? t('inv.armorPts', { n: av.points }) : '';
     if (box) {
       $('inv-cont-title').textContent = t('cont.' + box.kind + 'Slots');
-      $('inv-cont-hint').textContent = t(box.kind === 'furnace' ? 'cont.furnaceHint' : 'cont.chestHint');
+      $('inv-cont-hint').textContent = t('cont.' + box.kind + 'Hint');
+      if (box.kind === 'trade') $('inv-cont-title').textContent = t('job.' + (box.job || 'none'));
       $('inv-chest').hidden = box.kind !== 'chest';
       $('inv-furnace').hidden = box.kind !== 'furnace';
+      $('inv-enchant').hidden = box.kind !== 'enchant';
+      $('inv-brewing').hidden = box.kind !== 'brewing';
+      $('inv-trade').hidden = box.kind !== 'trade';
+      const one = (id, i, label) => { build($(id), [CONTAINER_REF + i]); fill($(id).firstChild, box.slots[i], t(label)); };
       if (box.kind === 'chest') {
         build($('inv-chest'), box.slots.map((_, i) => CONTAINER_REF + i));
         for (const el of $('inv-chest').children) fill(el, box.slots[Number(el.dataset.ref) - CONTAINER_REF], t('cont.chest'));
+      } else if (box.kind === 'enchant') {
+        one('ench-item', 0, 'cont.enchantItem');
+        one('ench-lapis', 1, 'cont.lapis');
+        this.renderEnchantOffers(box, creative, info.level || 0);
+      } else if (box.kind === 'brewing') {
+        build($('brew-bottles'), [CONTAINER_REF, CONTAINER_REF + 1, CONTAINER_REF + 2]);
+        for (const el of $('brew-bottles').children) fill(el, box.slots[Number(el.dataset.ref) - CONTAINER_REF], t('cont.bottle'));
+        one('brew-ing', 3, 'cont.ingredient');
+        one('brew-fuel', 4, 'cont.blaze');
+        this.renderBrewingProgress(box);
+      } else if (box.kind === 'trade') {
+        this.renderTradeOffers(box, inv, creative);
       } else {
         const hosts = [['fur-input', 'cont.input'], ['fur-fuel', 'cont.fuel'], ['fur-output', 'cont.output']];
         hosts.forEach(([id, label], i) => {
@@ -1022,6 +1117,75 @@ export class UI {
       }
     }
     if (!creative) this.renderRecipes(canCraft, focusKey, selected);
+  }
+
+  // the enchanting table's three offers: the first enchantment named (more hinted at), the cost
+  // in levels, and the lapis it takes (1-3)
+  renderEnchantOffers(box, creative, level) {
+    const host = $('ench-offers');
+    const lapis = box.slots[1] ? box.slots[1].count : 0;
+    const key = JSON.stringify(box.offers) + level + lapis + creative + getLanguage();
+    if (host.dataset.key === key) return;
+    host.dataset.key = key;
+    host.innerHTML = '';
+    if (!box.offers.length) {
+      host.innerHTML = `<p class="ench-empty">${escapeHtml(t(box.slots[0] ? 'ench.cannot' : 'ench.put'))}</p>`;
+      return;
+    }
+    box.offers.forEach((o, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ench-offer';
+      const keys = Object.keys(o.ench);
+      const first = keys.length ? enchText({ [keys[0]]: o.ench[keys[0]] }) + (keys.length > 1 ? ' …' : '') : '?';
+      const short = !creative && (level < o.cost || lapis < o.lapis);
+      b.classList.toggle('short', !creative && level < o.cost);
+      b.disabled = short || !keys.length;
+      b.innerHTML = `<span class="lapis">${'<i></i>'.repeat(o.lapis)}</span><span class="ench-name">${escapeHtml(first)}<small>${escapeHtml(t('ench.cost', { n: o.lapis }))}</small></span><span class="cost">${o.cost}</span>`;
+      b.setAttribute('aria-label', t('ench.offer', { what: first, cost: o.cost, lapis: o.lapis }));
+      b.addEventListener('click', () => { this.emit('click'); this.emit('enchantPick', i); });
+      host.appendChild(b);
+    });
+  }
+
+  // the brewing stand's fuel (blaze powder left) and how far the brew has come
+  renderBrewingProgress(b) {
+    $('brew-fuelbar').style.width = ((Math.max(0, b.fuel) / BLAZE_FUEL) * 100).toFixed(1) + '%';
+    $('brew-progress').style.height = (b.brew > 0 ? (1 - b.brew / BREW_TIME) * 100 : 0).toFixed(1) + '%';
+  }
+
+  // a villager's offers: what each costs, what it gives, how many are left today
+  renderTradeOffers(box, inv, creative) {
+    const host = $('trade-offers');
+    const has = (id, n) => creative || inv.has(id, n);
+    const key = JSON.stringify(box.offers.map((o) => [o.cost, o.give, o.uses, o.cost.every(([id, n]) => has(id, n))])) + getLanguage();
+    if (host.dataset.key === key) return;
+    host.dataset.key = key;
+    host.innerHTML = '';
+    const icon = (id, n) => {
+      const d = itemDef(id);
+      const src = (this.icons && this.icons.get(id)) || '';
+      return `<span class="t-item" title="${escapeHtml(d ? itemName(d) : '')}"><img alt="" src="${src}">${n > 1 ? `<b>${n}</b>` : ''}</span>`;
+    };
+    box.offers.forEach((o, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'trade-offer';
+      b.setAttribute('role', 'listitem');
+      const [gid, gn, gench] = o.give;
+      const gd = itemDef(gid);
+      const afford = o.cost.every(([id, n]) => has(id, n));
+      const out = o.uses >= o.max;
+      b.disabled = out || !afford;
+      b.classList.toggle('short', !afford);
+      const gname = (gd ? itemName(gd) : '') + (gench ? ' (' + enchText(gench) + ')' : '');
+      b.innerHTML = `<span class="t-side t-cost">${o.cost.map(([id, n]) => icon(id, n)).join('')}</span><span class="t-arrow" aria-hidden="true"></span>`
+        + `<span class="t-side">${icon(gid, gn)}<span class="t-name">${escapeHtml(gname)}</span></span>`
+        + `<span class="t-uses">${out ? escapeHtml(t('trade.out')) : `${o.max - o.uses}/${o.max}`}</span>`;
+      b.setAttribute('aria-label', t('trade.offer', { what: gname, n: gn }));
+      b.addEventListener('click', () => { this.emit('click'); this.emit('tradePick', i); });
+      host.appendChild(b);
+    });
   }
 
   // the flame (fuel left) and the arrow (how far the item in the furnace has cooked)

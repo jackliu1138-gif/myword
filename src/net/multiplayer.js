@@ -15,7 +15,8 @@ import { t } from '../ui/i18n.js';
 const STATE_INTERVAL = 1 / 12;
 const MOB_INTERVAL = 1 / 8;
 const SHARE_RADIUS = 72; // our creatures within this distance of another player are sent to them
-const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32 };
+const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512 };
+const PMOB_INTERVAL = 5; // how often the server hears of the creatures that stay
 const MP_KEY = 'lumencraft.multiplayer';
 
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -105,6 +106,9 @@ export function installMultiplayer(Game) {
       edits: [],
       // shared dropped items: what the server knows of (all dimensions) and the ones in our world
       itemData: new Map(), itemEnts: new Map(), dropSeq: 0,
+      // chunks whose structure creatures we asked to spawn ("d:key" -> creatures); the creatures
+      // that stay are reported every few seconds
+      claims: new Map(), pmobTimer: 2,
     };
     const me = w.me && typeof w.me === 'object' ? w.me : {};
     this.mp.endHost = w.endHost || null;
@@ -116,8 +120,11 @@ export function installMultiplayer(Game) {
       selected: me.selected, spawn: me.spawn || null,
       player: me.player && Array.isArray(me.player.pos) ? me.player : undefined,
       blockEntities: w.bents && typeof w.bents === 'object' ? w.bents : undefined,
+      survival: me.survival && typeof me.survival === 'object' ? me.survival : undefined,
     };
     this.loadWorld(w.seed, data);
+    // the server's weather, straight away
+    if (w.weather) this.weather.setShared(w.weather.r, w.weather.s, true);
     this.world.onEdit = (x, y, z, v) => { if (this.mp) this.mp.edits.push([x, y, z, v]); };
     // every dropped item is shared: announced when dropped, and whoever reaches it first asks the
     // server for it
@@ -205,6 +212,21 @@ export function installMultiplayer(Game) {
     });
     net.on('voice', (m) => { const p = mp.players.get(m.id); if (p) { p.voice = { on: !!m.on, muted: !!m.muted }; this.refreshMpPanel(); } });
     net.on('rtc', (m) => { if (this.voice) this.voice.signal(m.from, m.d); });
+    net.on('weather', (m) => this.weather.setShared(m.r, m.s));
+    // structure creatures: spawned by whoever the server says got there first
+    net.on('claimed', (m) => {
+      const key = (m.d | 0) + ':' + m.k;
+      const mobs = mp.claims.get(key);
+      mp.claims.delete(key);
+      if (m.ok && mobs && (m.d | 0) === (this.dimension | 0)) this.spawnFeatureMobs(mobs);
+    });
+    // creatures that stay, handed to us because we are near them and nobody else simulates them
+    net.on('adopt', (m) => {
+      if ((m.d | 0) !== (this.dimension | 0) || !Array.isArray(m.l)) { if (Array.isArray(m.l)) mp.net.send({ t: 'pmobs', d: m.d | 0, l: [], rel: m.l }); return; }
+      const have = new Set();
+      for (const e of this.sim.entities.values()) if (e.uid) have.add(e.uid);
+      for (const o of m.l) if (o && !have.has(o.uid)) this.loadCreature(o);
+    });
     net.on('time', (m) => {
       if (Math.abs(m.d - this.dayTime) > 0.002) this.dayTime = m.d;
       this.dayCount = m.n;
@@ -251,6 +273,7 @@ export function installMultiplayer(Game) {
     p.goalYaw = s.y || 0;
     p.pitch = s.pi || 0;
     p.held = s.h || 0;
+    p.offhand = s.o | 0;
     p.armor = Array.isArray(s.a) ? s.a.slice(0, 4).map((v) => v | 0) : null;
     p.dim = s.d | 0;
     p.flags = s.f || 0;
@@ -299,8 +322,10 @@ export function installMultiplayer(Game) {
     if (mp.stateTimer <= 0) {
       mp.stateTimer = STATE_INTERVAL;
       const pl = this.player;
-      const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0);
+      const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0)
+        | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0);
       const msg = { t: 'st', p: [round2(pl.pos[0]), round2(pl.pos[1]), round2(pl.pos[2])], y: round2(pl.yaw), pi: round2(pl.pitch), h: this.heldId(), f };
+      if (this.inventory && this.inventory.offhand) msg.o = this.inventory.offhand.id;
       const armor = this.inventory ? this.inventory.armorIds() : null;
       if (armor && armor.some(Boolean)) msg.a = armor;
       if (this.dimension) msg.d = this.dimension;
@@ -355,6 +380,10 @@ export function installMultiplayer(Game) {
       }
       this.ui.setVoiceHud({ mic: this.voice.micOn, muted: this.voice.muted, level: this.voice.level, speaking });
     }
+    // the creatures that stay: kept on the server; the ones whose chunks we no longer have go
+    // back to it, for whoever comes by
+    mp.pmobTimer -= dt;
+    if (mp.pmobTimer <= 0) { mp.pmobTimer = PMOB_INTERVAL; this.reportCreatures(false); }
     // our inventory and position are kept on the server
     mp.saveTimer += dt;
     if (mp.saveTimer > 20) { mp.saveTimer = 0; net.send({ t: 'save', s: this.mpSaveState() }); }
@@ -374,6 +403,7 @@ export function installMultiplayer(Game) {
       t: 'drop', i: d.netId, it: d.item, n: d.count, w: d.wear || 0, dl: round2(d.pickupDelay || 0),
       p: b.pos.map(round2), v: b.vel.map(round2), d: this.dimension || 0,
     };
+    if (d.ench) msg.e = d.ench;
     mp.itemData.set(d.netId, msg);
     mp.itemEnts.set(d.netId, d);
     mp.net.send(msg);
@@ -390,7 +420,8 @@ export function installMultiplayer(Game) {
 
   P.spawnSharedItem = function spawnSharedItem(m) {
     const v = Array.isArray(m.v) ? m.v : null;
-    const e = this.sim.dropItem(m.it, Math.max(1, Math.min(64, m.n | 0)), m.p[0], m.p[1], m.p[2], v, m.w | 0, { delay: Number(m.dl) || 0, remote: true, netId: m.i });
+    const ench = m.e && typeof m.e === 'object' ? m.e : null;
+    const e = this.sim.dropItem(m.it, Math.max(1, Math.min(64, m.n | 0)), m.p[0], m.p[1], m.p[2], v, m.w | 0, { delay: Number(m.dl) || 0, remote: true, netId: m.i, ench });
     if (e) this.mp.itemEnts.set(m.i, e);
   };
 
@@ -404,12 +435,13 @@ export function installMultiplayer(Game) {
     mp.itemEnts.delete(id);
     if (e) e.removed = true;
     if (!data || by !== mp.id) return;
-    const left = this.inventory.add(data.it, data.n, data.w || 0);
+    const ench = data.e && typeof data.e === 'object' ? data.e : null;
+    const left = this.inventory.add(data.it, data.n, data.w || 0, ench);
     if (left < data.n) this.audio.sfx('pickup', 0.6, 0);
     if (left > 0) {
       // no room for all of it: the rest goes back on the ground
       const p = this.player.pos;
-      this.sim.dropItem(data.it, left, p[0], p[1] + 0.5, p[2], [0, 2, 0], data.w || 0, { delay: 2 });
+      this.sim.dropItem(data.it, left, p[0], p[1] + 0.5, p[2], [0, 2, 0], data.w || 0, { delay: 2, ench });
       this.ui.toast(t('inv.full'), 2000);
     }
   };
@@ -420,6 +452,20 @@ export function installMultiplayer(Game) {
     if (!mp) return;
     mp.itemEnts.clear();
     for (const m of mp.itemData.values()) if ((m.d | 0) === (this.dimension | 0)) this.spawnSharedItem(m);
+  };
+
+  // releaseAll: leaving the dimension (or the server): every one of them goes back
+  P.reportCreatures = function reportCreatures(releaseAll) {
+    const mp = this.mp;
+    if (!mp || !this.sim) return;
+    const l = [], rel = [];
+    for (const e of this.sim.entities.values()) {
+      if (e.kind !== 'mob' || e.ghost || e.removed || e.deathTime > 0 || !this.keepsCreature(e)) continue;
+      const o = this.serializeCreature(e);
+      if (releaseAll || !this.world.isChunkReady(e.body.pos[0], e.body.pos[2])) { rel.push(o); if (!releaseAll) e.removed = true; }
+      else l.push(o);
+    }
+    mp.net.send({ t: 'pmobs', d: this.dimension || 0, l, rel, full: 1 });
   };
 
   P.flushEdits = function flushEdits() {
@@ -442,6 +488,7 @@ export function installMultiplayer(Game) {
       spawn: this.spawnPoint,
       mode: this.mode,
       dimension: this.dimension || 0,
+      survival: this.serializeSurvival ? this.serializeSurvival() : undefined,
     };
   };
 
@@ -463,9 +510,13 @@ export function installMultiplayer(Game) {
     for (const p of mp.players.values()) {
       if (!p.pos) continue;
       if ((p.dim | 0) !== (this.dimension | 0)) continue; // in another dimension
+      const gliding = !!(p.flags & FLAG.GLIDE);
+      const chest = p.armor && p.armor[1] ? itemDef(p.armor[1]) : null;
       out.push({
-        id: p.id, pos: p.pos, yaw: p.yaw, headYaw: p.yaw, headPitch: p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),
-        walkPhase: p.walkPhase, walkAmount: p.walkAmount, swing: p.swing, hurtTime: p.hurtTime, deathTime: p.deathTime,
+        id: p.id, pos: p.pos, yaw: p.yaw, headYaw: p.yaw, headPitch: gliding ? 0 : p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),
+        walkPhase: p.walkPhase, walkAmount: p.flags & FLAG.RIDE ? 0 : p.walkAmount, swing: p.swing, hurtTime: p.hurtTime, deathTime: p.deathTime,
+        gliding, glidePitch: gliding ? -p.pitch * 0.6 : 0, sitting: !!(p.flags & FLAG.RIDE), blocking: !!(p.flags & FLAG.BLOCK),
+        wings: !!(chest && chest.elytra), offhand: p.offhand || 0,
       });
     }
     return out;
@@ -552,7 +603,7 @@ export function installMultiplayer(Game) {
   P.leaveServer = async function leaveServer(lost = false) {
     const mp = this.mp;
     if (!mp) return;
-    if (!lost) mp.net.send({ t: 'save', s: this.mpSaveState() });
+    if (!lost) { mp.net.send({ t: 'save', s: this.mpSaveState() }); this.reportCreatures(true); }
     if (this.voice) { this.voice.stop(); this.voice = null; }
     for (const p of mp.players.values()) p.tag.remove();
     this.mp = null;

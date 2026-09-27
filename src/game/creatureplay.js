@@ -205,8 +205,10 @@ export function installCreaturePlay(Game) {
   };
 
   // ---------------------------------------------------------------- creatures that stay
+  // (each gets a name that stays with it, so a server can tell them apart)
   P.serializeCreature = function serializeCreature(e) {
-    const o = { type: e.type, p: e.body.pos.map((v) => Math.round(v * 100) / 100), yaw: Math.round(e.yaw * 100) / 100, hp: Math.round(e.health * 10) / 10, v: e.variant || 0 };
+    if (!e.uid) e.uid = (this.mp ? 'p' + this.mp.id : 'l') + '.' + Date.now().toString(36) + '.' + Math.floor(Math.random() * 1e6).toString(36);
+    const o = { uid: e.uid, type: e.type, p: e.body.pos.map((v) => Math.round(v * 100) / 100), yaw: Math.round(e.yaw * 100) / 100, hp: Math.round(e.health * 10) / 10, v: e.variant || 0 };
     for (const k of PERSIST_FIELDS) if (e[k] !== undefined && e[k] !== null && e[k] !== false) o[k] = e[k];
     return o;
   };
@@ -216,6 +218,7 @@ export function installCreaturePlay(Game) {
     const m = this.sim.spawnMob(o.type, o.p[0], o.p[1], o.p[2]);
     m.yaw = m.headYaw = m.prevYaw = Number(o.yaw) || 0;
     m.variant = o.v | 0;
+    if (typeof o.uid === 'string') m.uid = o.uid;
     for (const k of PERSIST_FIELDS) if (o[k] !== undefined) m[k] = o[k];
     if (o.type === 'slime' && o.size) m.setSize(o.size);
     if (typeof o.hp === 'number') m.health = Math.max(1, o.hp);
@@ -224,13 +227,18 @@ export function installCreaturePlay(Game) {
     return m;
   };
 
-  // the creatures of the dimension we are in that should outlive being far away
+  // the creatures that should outlive being far away (villagers, pets, what was bred or ridden)
+  P.keepsCreature = function keepsCreature(e) {
+    if (e.type === 'end_crystal' || e.type === 'ender_dragon' || e.type === 'tnt' || e.type === 'evoker_fangs') return false;
+    return !!(e.persistent || e.tamed || e.def.persistent || e.def.vehicle);
+  };
+
+  // the ones of the dimension we are in
   P.keptCreatures = function keptCreatures() {
     const out = [];
     for (const e of this.sim.entities.values()) {
       if (e.kind !== 'mob' || e.ghost || e.removed || e.deathTime > 0) continue;
-      if (e.type === 'end_crystal' || e.type === 'ender_dragon' || e.type === 'tnt' || e.type === 'evoker_fangs') continue;
-      if (e.persistent || e.tamed || e.def.persistent || e.def.vehicle) out.push(this.serializeCreature(e));
+      if (this.keepsCreature(e)) out.push(this.serializeCreature(e));
     }
     return out;
   };
@@ -249,6 +257,8 @@ export function installCreaturePlay(Game) {
   };
 
   P.stashCreatures = function stashCreatures() {
+    // on a server they go back to it, for whoever is near them
+    if (this.mp) { this.reportCreatures(true); return; }
     if (!this.dimCreatures) this.dimCreatures = {};
     this.dimCreatures[this.dimension || 0] = this.keptCreatures();
   };
@@ -259,6 +269,52 @@ export function installCreaturePlay(Game) {
     const spawnedChunks = {};
     for (const d of [0, 1, 2]) spawnedChunks[d] = [...(this.spawnedChunks && this.spawnedChunks[d] ? this.spawnedChunks[d] : [])];
     return { creatures, spawnedChunks };
+  };
+
+  // ---------------------------------------------------------------- what glows and flies
+  // Experience orbs and shulker bullets glow; a guardian's beam charges up at its target; the
+  // wither has a boss bar while it is near.
+  P.updateCreatureFx = function updateCreatureFx(dt) {
+    if (!this.sim || !this.camera) return;
+    const cam = this.camera.pos;
+    const a = this.sim.alpha || 0;
+    const tm = performance.now() / 1000;
+    const life = dt + 0.004;
+    let wither = null, wd = 64;
+    for (const e of this.sim.entities.values()) {
+      if (e.removed || !e.body) continue;
+      const b = e.body;
+      const x = e.prevPos[0] + (b.pos[0] - e.prevPos[0]) * a, y = e.prevPos[1] + (b.pos[1] - e.prevPos[1]) * a, z = e.prevPos[2] + (b.pos[2] - e.prevPos[2]) * a;
+      const d = Math.hypot(x - cam[0], y - cam[1], z - cam[2]);
+      if (e.kind === 'xp') {
+        if (d > 48) continue;
+        const pulse = 0.8 + 0.2 * Math.sin(tm * 7 + e.id);
+        const s = 0.07 + Math.min(0.09, (e.value || 1) * 0.005);
+        this.particles.spark(x, y + 0.18 + Math.sin(tm * 3 + e.id) * 0.04, z, 0, 0, 0, [1.6 * pulse, 2.6 * pulse, 0.35], { life, size: s, fade: false });
+      } else if (e.kind === 'bullet') {
+        if (d > 64) continue;
+        this.particles.spark(x, y, z, 0, 0, 0, [3, 3, 2.4], { life, size: 0.16, fade: false });
+        if (Math.random() < 0.5) this.particles.spark(x, y, z, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, [1.6, 0.8, 2.2], { life: 0.5, size: 0.05, drag: 1 });
+      } else if (e.kind === 'mob' && e.beamTarget && e.beam > 0 && d < 64) {
+        // the guardian's beam: a line of light from its eye, brighter as it charges
+        const tg = e.beamTarget.body ? e.beamTarget.body.pos : e.beamTarget.pos;
+        if (!tg) continue;
+        const from = [x, y + e.def.eye, z], to = [tg[0], tg[1] + 1.1, tg[2]];
+        const len = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        const k = Math.min(1, e.beam / (e.def.elder ? 2 : 3));
+        const col = [0.6 + 2 * k, 1.2 + 1.6 * k, 2.4 + 0.6 * k];
+        const n = Math.min(40, Math.ceil(len * 2));
+        for (let i = 0; i < n; i++) {
+          const f = (i + ((tm * 4) % 1)) / n;
+          this.particles.spark(from[0] + (to[0] - from[0]) * f, from[1] + (to[1] - from[1]) * f, from[2] + (to[2] - from[2]) * f, 0, 0, 0, col, { life, size: 0.05 + 0.03 * k, fade: false });
+        }
+      } else if (e.kind === 'mob' && e.type === 'wither' && e.deathTime === 0 && d < wd) { wither = e; wd = d; }
+    }
+    if (this.dimension !== 2) {
+      if (wither) this.ui.setBoss({ name: t('boss.wither'), frac: Math.max(0, wither.health / wither.def.health) });
+      else if (this.witherBar) this.ui.setBoss(null);
+      this.witherBar = !!wither;
+    }
   };
 
   void EGG_ITEMS; void itemDef; void IS_SOLID;

@@ -12,6 +12,15 @@ import { t, itemName } from '../ui/i18n.js';
 
 const isNight = (tm) => tm > 0.52 && tm < 0.985;
 const CROP_TICKS_PER_DAY = 48;
+// crops that grow on the shared clock: [first stage, last stage, chance per tick, needs light]
+const CROPS = [
+  [BLOCK.WHEAT_0, BLOCK.WHEAT_3, 0.42, true], [BLOCK.CARROTS_0, BLOCK.CARROTS_3, 0.42, true], [BLOCK.POTATOES_0, BLOCK.POTATOES_3, 0.42, true],
+  [BLOCK.NETHER_WART_0, BLOCK.NETHER_WART_2, 0.2, false],
+];
+// the crop a block is while it still has growing to do
+const growing = (id) => CROPS.find((c) => id >= c[0] && id < c[1]);
+// what each seed grows into, and on what
+const PLANTS = { wheat: [BLOCK.WHEAT_0, BLOCK.FARMLAND], carrots: [BLOCK.CARROTS_0, BLOCK.FARMLAND], potatoes: [BLOCK.POTATOES_0, BLOCK.FARMLAND], nether_wart: [BLOCK.NETHER_WART_0, BLOCK.SOUL_SAND] };
 const NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 export function installUse(Game) {
@@ -40,8 +49,18 @@ export function installUse(Game) {
       this.wearHeld(def, 1);
       return true;
     }
-    if (def.key === 'wheat_seeds' && b === BLOCK.FARMLAND && hit.normal[1] === 1 && w.getBlock(x, y + 1, z) === 0) {
-      w.setBlock(x, y + 1, z, BLOCK.WHEAT_0);
+    // a shovel flattens grass into a path
+    if (def.kind === 'shovel' && (b === BLOCK.GRASS || b === BLOCK.DIRT || b === BLOCK.SNOWY_GRASS) && hit.normal[1] >= 0 && w.getBlock(x, y + 1, z) === 0) {
+      w.setBlock(x, y, z, BLOCK.DIRT_PATH);
+      this.audio.play('place', 'gravel', 0.9);
+      this.swing = 1;
+      this.wearHeld(def, 1);
+      return true;
+    }
+    // seeds, carrots and potatoes go in farmland; nether wart in soul sand
+    const plant = PLANTS[def.key === 'wheat_seeds' ? 'wheat' : def.plant];
+    if (plant && b === plant[1] && hit.normal[1] === 1 && w.getBlock(x, y + 1, z) === 0) {
+      w.setBlock(x, y + 1, z, plant[0]);
       this.audio.play('place', 'grass', 0.8);
       this.swing = 1;
       if (!this.isCreative()) this.inventory.consume(this.selected);
@@ -180,6 +199,15 @@ export function installUse(Game) {
   // ---------------------------------------------------------------- fire, portals, eyes
   P.useFlint = function useFlint(hit, def) {
     const w = this.world;
+    // TNT: lit where it stands
+    if (hit.block === BLOCK.TNT) {
+      w.setBlock(hit.x, hit.y, hit.z, 0);
+      this.sim.primeTnt(hit.x, hit.y, hit.z, 4);
+      this.audio.sfx('ignite', 0.8, 0);
+      this.swing = 1;
+      this.wearHeld(def, 1);
+      return true;
+    }
     const x = hit.x + hit.normal[0], y = hit.y + hit.normal[1], z = hit.z + hit.normal[2];
     if (w.getBlock(x, y, z) !== 0) return true;
     this.audio.sfx('ignite', 0.8, 0);
@@ -282,7 +310,7 @@ export function installUse(Game) {
   // Every changed block passes through here (ours and other players').
   P.onBlockChanged = function onBlockChanged(x, y, z, id) {
     const key = x + ',' + y + ',' + z;
-    if ((id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) || SAPLINGS.has(id)) this.crops.set(key, [x, y, z]); else this.crops.delete(key);
+    if (growing(id) || SAPLINGS.has(id)) this.crops.set(key, [x, y, z]); else this.crops.delete(key);
     this.blockEntityChanged(x, y, z, id);
     if (id === BLOCK.FIRE) this.fires.set(key, { x, y, z, until: performance.now() + 4000 + Math.random() * 5000 });
     else this.fires.delete(key);
@@ -299,7 +327,7 @@ export function installUse(Game) {
       const cx = Math.floor(key / 65536) - 32768, cz = (key % 65536) - 32768;
       for (const [i, v] of m) {
         const id = v & 255;
-        if ((id >= BLOCK.WHEAT_0 && id < BLOCK.WHEAT_3) || id === BLOCK.FIRE || SAPLINGS.has(id)) {
+        if (growing(id) || id === BLOCK.FIRE || SAPLINGS.has(id)) {
           const x = cx * 16 + (i & 15), z = cz * 16 + ((i >> 4) & 15), y = i >> 8;
           const k = x + ',' + y + ',' + z;
           if (id === BLOCK.FIRE) { if (!this.fires.has(k)) this.fires.set(k, { x, y, z, until: performance.now() + 3000 }); }
@@ -324,11 +352,14 @@ export function installUse(Game) {
           if (!w.isChunkReady(x, z)) continue;
           const b = w.getBlock(x, y, z);
           const sapling = SAPLINGS.has(b);
-          if (!sapling && (b < BLOCK.WHEAT_0 || b >= BLOCK.WHEAT_3)) { this.crops.delete(key); continue; }
-          const [sl, bl] = w.getLight(x, y + 1, z);
-          if (Math.max(sl, bl) < 9) continue;
+          const crop = !sapling && growing(b);
+          if (!sapling && !crop) { this.crops.delete(key); continue; }
+          if (sapling || crop[3]) {
+            const [sl, bl] = w.getLight(x, y + 1, z);
+            if (Math.max(sl, bl) < 9) continue;
+          }
           if (sapling) this.saplingTick(x, y, z, b, tick);
-          else if (hash3(x, y, z, tick) < 0.42) w.setBlock(x, y, z, b + 1);
+          else if (hash3(x, y, z, tick) < crop[2]) w.setBlock(x, y, z, b + 1);
         }
       }
     }

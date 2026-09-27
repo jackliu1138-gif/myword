@@ -46,10 +46,16 @@
     <div id="vitals" hidden>
       <div class="vit-left">
         <div id="armorbar" class="armorbar" role="img" hidden></div>
+        <div id="absorb" class="hearts gold" role="img" hidden></div>
         <div id="hearts" class="hearts" role="img"></div>
       </div>
-      <div id="bubbles" class="bubbles" role="img" hidden></div>
+      <div class="vit-right">
+        <div id="bubbles" class="bubbles" role="img" hidden></div>
+        <div id="food" class="food-bar" role="img"></div>
+      </div>
     </div>
+    <div id="xpbar" class="xpbar" hidden><span id="xp-level" class="xp-level"></span><div class="xp-track"><i id="xp-fill"></i></div></div>
+    <div id="effects" class="effects"></div>
     <div id="hotbar" data-i18n-attr="aria-label:hud.hotbar"></div>
     <div id="lockhint" hidden data-i18n="hud.lockHint"></div>
     <div id="nametags" aria-hidden="true"></div>
@@ -256,6 +262,29 @@
               </div>
               <div class="fur-arrow" aria-hidden="true"><i id="fur-arrow"></i></div>
               <div id="fur-output" class="bag-grid fur-slot fur-out"></div>
+            </div>
+            <div id="inv-enchant" class="enchant-ui" hidden>
+              <div class="ench-slots">
+                <div id="ench-item" class="bag-grid fur-slot"></div>
+                <div id="ench-lapis" class="bag-grid fur-slot"></div>
+              </div>
+              <div id="ench-offers" class="ench-offers"></div>
+            </div>
+            <div id="inv-brewing" class="brewing-ui" hidden>
+              <div class="brew-top">
+                <div class="brew-fuelcol">
+                  <div id="brew-fuel" class="bag-grid fur-slot"></div>
+                  <div class="brew-fuelbar" aria-hidden="true"><i id="brew-fuelbar"></i></div>
+                </div>
+                <div class="brew-mid">
+                  <div id="brew-ing" class="bag-grid fur-slot"></div>
+                  <div class="brew-progress" aria-hidden="true"><i id="brew-progress"></i></div>
+                </div>
+              </div>
+              <div id="brew-bottles" class="bag-grid brew-bottles"></div>
+            </div>
+            <div id="inv-trade" class="trade-ui" hidden>
+              <div id="trade-offers" class="trade-offers" role="list"></div>
             </div>
             <p class="hint" id="inv-cont-hint"></p>
           </div>

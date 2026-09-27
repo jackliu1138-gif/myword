@@ -30,6 +30,8 @@ export function installTravel(Game) {
     w.onChunkUnload = (c) => this.renderer.freeChunk(c);
     w.onBlockChanged = (x, y, z, id) => this.onBlockChanged(x, y, z, id);
     w.fluids.onEvent = (type, x, y, z, id) => this.onFluidEvent(type, x, y, z, id);
+    // the villagers, golems, cats... a structure comes with
+    w.onFeatures = (c, f) => { if (this.spawnedChunks && this.sim && this.world === w) this.onChunkFeatures(c, f); };
     if (this.mp) w.onEdit = (x, y, z, id) => { if (this.mp) this.mp.edits.push([x, y, z, id]); };
     return w;
   };
@@ -39,6 +41,10 @@ export function installTravel(Game) {
     if (this.state === 'inventory') this.closeInventory();
     if (this.state === 'sign') this.finishSign(this.ui.signLines());
     if (this.mp) this.flushEdits();
+    if (this.player.riding) this.dismount();
+    if (this.bobber) { this.bobber.removed = true; this.bobber = null; }
+    // the creatures that stay (villagers, pets, boats...) wait here for us
+    this.stashCreatures();
     const old = this.world;
     this.dimEdits[this.dimension] = old.edits;
     // dropped items stay where they were, for when we come back
@@ -59,6 +65,7 @@ export function installTravel(Game) {
     if (this.mp) this.respawnSharedItems();
     else for (const e of this.dimItems[dim] || []) { e.body.world = this.world; sim.entities.set(e.id, e); }
     this.dimItems[dim] = [];
+    this.restoreCreatures();
     this.dragon = null;
     if (this.mp) { this.mp.ghosts.clear(); this.mp.ghostIds.clear(); }
     this.crops = new Map();

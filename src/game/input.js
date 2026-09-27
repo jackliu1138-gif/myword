@@ -160,6 +160,7 @@ const ICONS = {
   chat: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>',
   mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
   fullscreen: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  camera: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="2.1"/></svg>',
 };
 
 export class TouchControls {
@@ -188,6 +189,7 @@ export class TouchControls {
         ${btn('touch-mic', 'mic', ICONS.mic, 'touch.mic')}
         ${btn('touch-chat', 'chat', ICONS.chat, 'touch.chat')}
         ${btn('touch-full', 'fullscreen', ICONS.fullscreen, 'touch.fullscreen')}
+        ${btn('touch-cam', 'camera', ICONS.camera, 'touch.camera')}
         ${btn('touch-inv', 'inventory', ICONS.inventory, 'touch.inventory')}
         ${btn('touch-menu', 'menu', ICONS.pause, 'touch.pause')}
       </div>

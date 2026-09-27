@@ -12,6 +12,7 @@ import {
 import { BLOCK, BLOCKS, IS_SOLID, IS_LIQUID } from '../world/blocks.js';
 import { raycast } from './player.js';
 import { t, itemName } from '../ui/i18n.js';
+import { JOB_LIST } from '../sim/looks.js';
 
 const EAT_TIME = 1.6;
 const DRINK_TIME = 1.6;
@@ -145,8 +146,8 @@ export function installSurvival(Game) {
         tc.tap = false;
         return true;
       }
-      case 'potion': {
-        if ((usePressed || tc.tap) && !this.eating) this.eating = { slot: this.selected, id: def.id, t: 0, tick: 0, drink: true, auto: !!tc.tap };
+      case 'potion': case 'milk': {
+        if ((usePressed || tc.tap) && !this.eating) this.eating = { slot: this.selected, id: def.id, t: creative ? DRINK_TIME : 0, tick: 0, drink: true, auto: !!tc.tap };
         else if (this.eating && !useHeld && !this.eating.auto) this.eating = null;
         tc.tap = false;
         return true;
@@ -217,6 +218,14 @@ export function installSurvival(Game) {
         const s = this.inventory.slots[this.selected];
         if (s) { s.id = ITEM.GLASS_BOTTLE; this.inventory.changed(); }
       }
+    } else if (def.kind === 'milk') {
+      // milk: every effect gone (and the bucket back)
+      me.fire = 0;
+      this.clearEffects();
+      if (!creative) {
+        const s = this.inventory.slots[this.selected];
+        if (s) { s.id = ITEM.BUCKET; s.wear = 0; this.inventory.changed(); }
+      }
     }
     this.swing = 0.5;
   };
@@ -227,13 +236,28 @@ export function installSurvival(Game) {
     if (me) { me.effects = {}; me.absorb = 0; }
   };
 
+  // X: what is in the hand and what is in the other hand change places.
+  P.swapHands = function swapHands() {
+    const inv = this.inventory;
+    if (!inv) return;
+    const main = inv.slots[this.selected] || null;
+    inv.slots[this.selected] = inv.offhand || null;
+    inv.offhand = main;
+    this.eating = null;
+    this.crossbowLoad = 0;
+    this.blocking = false;
+    this.bowDraw = 0;
+    inv.changed();
+    this.audio.sfx('pickup', 0.3, 0);
+  };
+
   // ---------------------------------------------------------------- the shield
   // Held up with the use button while it is in the other hand (and the main hand has nothing
   // better to do); an axe knocks it aside for a few seconds.
   P.updateShield = function updateShield(useHeld, def) {
     const off = this.inventory.offhand;
     const shield = off && itemDef(off.id) && itemDef(off.id).kind === 'shield';
-    const busy = def && ['food', 'potion', 'bow', 'crossbow', 'fishing_rod', 'splash', 'pearl', 'eye', 'firework', 'bucket', 'egg', 'bottle'].includes(def.kind);
+    const busy = def && ['food', 'potion', 'milk', 'bow', 'crossbow', 'fishing_rod', 'splash', 'pearl', 'eye', 'firework', 'bucket', 'egg', 'bottle'].includes(def.kind);
     const want = !!(shield && useHeld && !busy && !this.isCreative() && this.shieldCooldown <= 0 && !this.eating && !(this.selection && def && def.kind === 'block'));
     if (want !== !!this.blocking) this.blocking = want;
   };
@@ -473,7 +497,7 @@ export function installSurvival(Game) {
     const offers = this.tradesOf(m);
     if (!offers.length) { this.audio.sfx('villagerNo', 0.7, 0); this.ui.toast(t('trade.none'), 1800); return; }
     m.trading = 'local';
-    this.inventory.container = { kind: 'trade', slots: [], offers, villager: m };
+    this.inventory.container = { kind: 'trade', slots: [], offers, villager: m, job: JOB_LIST[m.variant | 0] || 'none' };
     this.inventory.onContainerChange = null;
     this.openBlock = { key: 'trade:' + m.id, kind: 'trade', dim: this.dimension || 0, temp: true };
     this.audio.sfx('villager', 0.8, 0);

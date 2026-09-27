@@ -18,12 +18,12 @@ npm run dev      # http://localhost:8080
 To get a single self-contained file:
 
 ```bash
-npm run build    # writes dist/index.html (about 250 KB)
+npm run build    # writes dist/index.html (about 1 MB)
 ```
 
 `dist/index.html` runs straight from disk (double-click it) or from any static host. Served over HTTP(S) it is also an installable web app (manifest and icons are copied next to it), so phones and tablets can add it to the home screen and run it full screen.
 
-`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather, flowing liquids, shaped blocks, furnaces and chests, the multiplayer server and the translations, without a browser.
+`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather, flowing liquids, shaped blocks, furnaces and chests, hunger, experience, enchanting, brewing, loot, trading, rails, elytra flight, structures, the multiplayer server and the translations, without a browser.
 
 ### Controls
 
@@ -31,15 +31,18 @@ npm run build    # writes dist/index.html (about 250 KB)
 | --- | --- |
 | `W` `A` `S` `D` | Walk |
 | Mouse | Look |
-| `Space` | Jump, swim up, fly up |
+| `Space` | Jump, swim up, fly up; while falling with elytra on, glide |
 | `Space` twice or `F` | Toggle flying |
 | `Shift` | Sneak (won't walk off edges), fly down |
 | `W` twice or `R` | Sprint |
 | Left click (hold) | Break blocks |
-| Right click | Place the selected block; open doors, gates, chests and furnaces; use buckets |
+| Right click | Place the selected block; open doors, gates, chests, furnaces, brewing stands and enchanting tables; eat and drink (hold); use buckets, bows, crossbows, fishing rods, fireworks and spawn eggs; trade, tame, breed, shear, milk, saddle and ride; hold up a shield in the other hand |
 | Middle click | Pick the block you're looking at |
 | `1`–`9`, mouse wheel | Choose hotbar slot |
 | `Q` (`Ctrl`+`Q`: the stack) | Drop the held item |
+| `X` | Swap what is in your hands (the other hand holds a shield, a totem, a torch...) |
+| `F5` or `C` | First person, third person from behind, from the front |
+| `Shift` (riding) | Get off |
 | `E` | Open all blocks |
 | `T` (hold) | Fast-forward the time of day |
 | `F3` or `` ` `` | Debug overlay |
@@ -92,6 +95,16 @@ New worlds start in **survival** (choose creative or a difficulty when you creat
 - **The End**: eyes of ender (ender pearl + blaze powder) fly towards the nearest stronghold; fill its portal room's 12 frames and jump in. On the End's island ten obsidian pillars hold end crystals that heal the Ender Dragon; destroy them, defeat the dragon (boss bar at the top) and the exit portal home opens, with the dragon egg. Endermen drop ender pearls, which you can throw to teleport.
 - **Dying** drops everything you carried where you fell; you respawn at your bed (if it's still there) or the world spawn.
 - **Several worlds**: the title screen's world list keeps as many single-player worlds as you like, each with its own name, mode, buildings, inventory and time; open, rename or delete them there.
+- **Hunger**: ten drumsticks beside the hearts. Running, jumping, swimming, fighting and healing use them up; eating takes a moment (hold the use button) and each food fills them by its own amount (and saturation). Full, you heal quickly; empty, you starve. Rotten flesh, raw chicken and pufferfish can make you ill.
+- **Experience and enchanting**: creatures, ores, smelting, trading, breeding and fishing leave green orbs; levels show above the hotbar. An enchanting table (book, diamonds, obsidian) with up to 15 bookshelves around it offers three enchantments for levels and lapis lazuli: sharpness, smite, looting, efficiency, fortune, silk touch, unbreaking, protection, feather falling, power, flame, infinity, quick charge, multishot, piercing, lure, luck of the sea... Mending (on some villagers' wares) repairs what you hold and wear with the experience you pick up.
+- **Potions**: a brewing stand fuelled with blaze powder turns water bottles into potions: nether wart makes an Awkward Potion, then glistering melon, ghast tear, blaze powder, sugar, magma cream, golden carrot, pufferfish, spider eye, phantom membrane or a slime ball give healing, regeneration, strength, swiftness, fire resistance, night vision, water breathing, poison, slow falling or leaping; fermented spider eye turns them to harming, weakness, slowness or invisibility, and gunpowder makes them splash. Effects show at the top right; milk clears them.
+- **Shield, crossbow, fishing rod, totem**: a shield in the other hand blocks what comes from the front (an axe knocks it aside). The crossbow loads while held and fires an arrow (or three with multishot, or a firework from the other hand). The fishing rod catches fish, now and then treasure or junk, and can hook a creature to pull it in. A totem of undying in either hand saves you from death once.
+- **Villages**: houses, farms, a well, a smithy and lamp posts on dirt paths, in plains, desert, savanna, taiga and snowy styles. Villagers have jobs (farmer, fisherman, shepherd, fletcher, librarian, cartographer, cleric, armorer, weaponsmith, toolsmith, butcher, leatherworker, mason) and trade for emeralds; they restock every morning and go home at night. **Iron golems** guard them (and are built from a T of iron blocks and a pumpkin).
+- **Pets and farm animals**: wolves (tamed with bones) follow you, fight for you and sit when told; cats (raw fish) scare creepers away. Two animals fed their food (wheat, carrots, seeds) have a baby that grows up. Shear sheep for wool (it grows back), milk cows with a bucket. Cod, salmon, tropical fish, pufferfish and squid swim in the water.
+- **New monsters**: witches (throw potions, drink their own), slimes (split when killed; in swamps and slime chunks), phantoms (swoop down on players who haven't slept for three nights), pillager patrols and outposts, vindicators, evokers (fangs from the ground) in woodland mansions, guardians and an elder guardian in ocean monuments, shulkers in end cities, cave spiders by mineshaft spawners, wither skeletons, and the **Wither** (three wither skeleton skulls on a T of soul sand).
+- **Getting about**: boats on water; minecarts on rails that curve and slope as they are laid (powered rails speed carts up); horses (ride one until it stops throwing you, then saddle it); and **elytra**: jump while falling to glide, the view widening with speed and the air rushing past. Use a firework rocket in flight for a burst along the way you look (to about 34 blocks a second, as in Minecraft), with colour-cycling sparks streaming off both wings and the rocket's fire between them.
+- **Pressure plates** open the doors, gates and trapdoors beside them while a player, creature or item is on them (stone plates only for players and creatures), and close them again when it steps off; iron doors only open this way. TNT lit with flint and steel (or under a plate) blows up after a moment.
+- **Structures** in the new world: villages, desert temples (with their TNT trap), abandoned mineshafts (rails, cobwebs, cave spider spawners), dungeons (a monster spawner and loot), witch huts, pillager outposts, ocean monuments, woodland mansions and end cities with their ships (elytra aboard, beyond the End's outer gateways after the dragon). Their chests hold loot rolled when first opened.
 
 The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or WebGL, so the multiplayer server can run the same code.
 
@@ -101,7 +114,9 @@ Run `node server/server.mjs` on a server (Node 18+, no packages) and friends ope
 
 - **Shared world**: block edits in all three dimensions, the End's dragon fight, chests, furnaces, signs and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
 - **Shared things**: dropped items are seen by everyone and go to whoever reaches them first. A chest or furnace is open to one player at a time (others are told who is using it); furnaces keep cooking on the server; breaking a chest spills what it held for everyone.
-- **Creatures** live on the machine of the player they spawned near and are sent to nearby players as snapshots; hits, damage, knockback and loot travel as messages, so everyone can fight the same zombie.
+- **Creatures** live on the machine of the player they spawned near and are sent to nearby players as snapshots; hits, damage, knockback and loot travel as messages, so everyone can fight the same zombie. A structure's villagers, golems and cats are spawned once for the whole server (by whoever gets there first). The creatures that stay (villagers, pets, horses, boats, what was bred) are kept by the server and handed to whoever is near them when the player simulating them leaves or walks away.
+- **Weather** is the server's: rain and storms come and go for everyone at once. A player who picks Clear, Rain or Storm in their settings sees that instead, only for themselves.
+- Brewing stands brew on the server like furnaces; loot chests are filled once, by the server; enchantments travel with dropped items; hunger, experience and effects are saved with each player.
 - **Chat** with Enter. **Voice** is a WebRTC mesh signalled through the server, played through Web Audio with distance falloff and stereo placement ("Nearby"), or at equal volume ("Everyone"). Devices without a microphone still hear everyone.
 - Settings: `PORT`, `PASSWORD`, `SERVER_NAME`, `MAX_PLAYERS`, `SEED`, `GAME_MODE`, `DIFFICULTY`, `DAY_LENGTH`, `TURN_URLS`, `TURN_SECRET` (environment or `server/config.json`).
 - The claude.ai preview can't connect: its sandbox blocks WebSockets and the microphone.
@@ -131,10 +146,11 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 
 ## World
 
-- Infinite terrain streamed in 16×16×128 chunks. It has continents and oceans, eroded mountains with 3D overhangs and snow caps, and rivers.
-- Ten biomes: plains, forest, birch forest, taiga, snowy taiga, desert, beach, ocean, river and mountains.
-- Spaghetti and cheese caves with lava lakes, plus coal, iron, gold and diamond ores.
-- Oak, big oak, birch and spruce trees, cacti, grass, ferns and flowers.
+- Infinite terrain streamed in 16×16×384 chunks (as tall as Minecraft's, with the sea at 63 and peaks past 200). It has continents and oceans, eroded mountains with 3D overhangs and snow caps, and rivers. Only the part of a chunk that holds something is lit and meshed.
+- Sixteen biomes: plains, forest, birch forest, taiga, snowy taiga, desert, beach, ocean, river and mountains, plus jungle (giant trees, vines, melons), savanna (acacias), swamp (murky water, lily pads, drooping oaks), badlands (terracotta mesas in bands), cherry grove (pink blossom and petals) and dark forest (thick dark oaks).
+- Worlds made before the 384-high world keep their original 128-high terrain (the generator version is saved with each world); new worlds use the new one.
+- Spaghetti and cheese caves with lava lakes, plus coal, iron, gold, lapis, emerald (in mountains) and diamond ores.
+- Oak, big oak, birch, spruce, jungle (and giant jungle), acacia, dark oak and cherry trees, which all grow from their saplings (four in a square for the big ones), cacti, grass, ferns and flowers.
 - Over 150 placeable blocks, including glass, bricks, metal blocks, wool in 16 colours, torches and light-emitting blocks, and blocks with a state (which way they face, open or shut, a liquid's level) such as stairs, doors and flowing water.
 - Terrain generation, light propagation and meshing run in a pool of Web Workers. Meshing uses face culling, per-vertex ambient occlusion and smooth lighting. If workers are unavailable, it falls back to the main thread.
 - Physics covers gravity and axis-separated AABB collision, sprinting, sneaking with edge protection, swimming, flying and optional auto-jump.
