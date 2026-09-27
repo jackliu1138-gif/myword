@@ -4,7 +4,9 @@
 import { Body } from './physics.js';
 import { findPath } from './path.js';
 import { ITEM } from './items.js';
-import { BLOCK, IS_OPAQUE } from '../world/blocks.js';
+import { BLOCK, IS_OPAQUE, IS_SOLID } from '../world/blocks.js';
+import { BRAINS, TICKERS, tickMobEffects, alive } from './creatures.js';
+import { FISH_COUNT, CAT_COUNT, HORSE_COUNT, JOB_LIST } from './looks.js';
 
 export const TICK = 1 / 20;
 
@@ -49,6 +51,44 @@ export const MOBS = {
   },
   ender_dragon: { hostile: true, boss: true, hw: 3, h: 3, eye: 1.5, health: 200, damage: 10, follow: 220, fireproof: true, drops: [], xp: 500 },
   end_crystal: { hw: 1, h: 2, eye: 1, health: 1, fixed: true, fireproof: true, drops: [] },
+  // ---- appended with villages, pets, the sea, the illagers, the wither and what is ridden
+  villager: { hw: 0.3, h: 1.95, eye: 1.62, health: 20, speed: 1.5, persistent: true, drops: [] },
+  iron_golem: { hw: 0.7, h: 2.7, eye: 2.4, health: 100, speed: 1.4, chase: 2.2, damage: 11, reach: 1.5, follow: 18, persistent: true, heavy: true, drops: [[ITEM.IRON_INGOT, 3, 5], [BLOCK.POPPY, 0, 2]] },
+  wolf: { neutral: true, animal: true, hw: 0.3, h: 0.85, eye: 0.7, health: 8, speed: 1.9, chase: 4.4, damage: 3, reach: 1.1, follow: 24, tameWith: 'bone', drops: [], xp: 1 },
+  cat: { animal: true, hw: 0.3, h: 0.7, eye: 0.55, health: 10, speed: 1.7, chase: 4, tameWith: 'fish', drops: [[ITEM.STRING, 0, 2]], xp: 1 },
+  cod: { water: true, school: true, hw: 0.25, h: 0.3, eye: 0.15, health: 3, speed: 2.2, drops: [[ITEM.RAW_COD, 1, 1], [ITEM.BONE_MEAL, 0, 0.05]], xp: 1 },
+  salmon: { water: true, school: true, hw: 0.35, h: 0.4, eye: 0.2, health: 3, speed: 2.6, drops: [[ITEM.RAW_SALMON, 1, 1]], xp: 1 },
+  tropical_fish: { water: true, school: true, hw: 0.25, h: 0.4, eye: 0.2, health: 3, speed: 2.2, drops: [[ITEM.TROPICAL_FISH, 1, 1]], xp: 1 },
+  pufferfish: { water: true, hw: 0.35, h: 0.35, eye: 0.2, health: 3, speed: 1.6, drops: [[ITEM.PUFFERFISH, 1, 1]], xp: 1 },
+  squid: { water: true, hw: 0.4, h: 0.8, eye: 0.4, health: 10, speed: 1.4, drops: [[ITEM.INK_SAC, 1, 3]], xp: 2 },
+  witch: {
+    hostile: true, hw: 0.3, h: 1.95, eye: 1.62, health: 26, speed: 1.7, chase: 2.1, follow: 16,
+    drops: [[ITEM.GLASS_BOTTLE, 0, 2], [ITEM.GLOWSTONE_DUST, 0, 2], [ITEM.GUNPOWDER, 0, 2], [ITEM.SPIDER_EYE, 0, 2], [ITEM.SUGAR, 0, 2], [ITEM.STICK, 0, 2]], xp: 5,
+  },
+  slime: { hostile: true, hw: 0.26, h: 0.52, eye: 0.3, health: 1, speed: 2.2, damage: 0, follow: 16, drops: [[ITEM.SLIME_BALL, 0, 2]], xp: 1 },
+  phantom: { hostile: true, undead: true, hw: 0.45, h: 0.5, eye: 0.25, health: 20, speed: 6, flies: 'swoop', damage: 3, burns: true, follow: 64, drops: [[ITEM.PHANTOM_MEMBRANE, 0, 1]], xp: 5 },
+  pillager: { hostile: true, illager: true, hw: 0.3, h: 1.95, eye: 1.62, health: 24, speed: 1.9, chase: 2.3, ranged: 'crossbow', follow: 24, held: ITEM.CROSSBOW, drops: [[ITEM.ARROW, 0, 2], [ITEM.CROSSBOW, 0, 0.08]], xp: 5 },
+  vindicator: { hostile: true, illager: true, hw: 0.3, h: 1.95, eye: 1.62, health: 24, speed: 1.9, chase: 3.1, damage: 8, reach: 1.3, follow: 20, held: ITEM.IRON_AXE, axe: true, drops: [[ITEM.EMERALD, 0, 1]], xp: 5 },
+  evoker: { hostile: true, illager: true, hw: 0.3, h: 1.95, eye: 1.62, health: 24, speed: 1.7, chase: 2.3, follow: 20, drops: [[ITEM.TOTEM_OF_UNDYING, 1, 1], [ITEM.EMERALD, 0, 1]], xp: 10 },
+  wither: { hostile: true, boss: true, undead: true, hw: 0.9, h: 3.5, eye: 3.0, health: 300, speed: 3, flies: 'wither', fireproof: true, follow: 64, drops: [[ITEM.NETHER_STAR, 1, 1]], xp: 50 },
+  wither_skeleton: {
+    hostile: true, undead: true, hw: 0.35, h: 2.4, eye: 2.1, health: 20, speed: 2.2, chase: 2.9, damage: 8, reach: 1.4, fireproof: true, follow: 20,
+    held: ITEM.STONE_SWORD, withers: true, drops: [[ITEM.COAL, 0, 1], [ITEM.BONE, 0, 2], [BLOCK.WITHER_SKELETON_SKULL, 0, 0.12]], xp: 5,
+  },
+  guardian: { hostile: true, water: true, hw: 0.45, h: 0.85, eye: 0.45, health: 30, speed: 2.4, laser: 6, follow: 16, drops: [[ITEM.PRISMARINE_SHARD, 0, 2], [ITEM.RAW_COD, 0, 1], [ITEM.PRISMARINE_CRYSTALS, 0, 0.4]], xp: 10 },
+  elder_guardian: { hostile: true, water: true, elder: true, persistent: true, hw: 1.0, h: 2.0, eye: 1.0, health: 80, speed: 1.2, laser: 8, follow: 16, drops: [[ITEM.PRISMARINE_SHARD, 0, 2], [ITEM.PRISMARINE_CRYSTALS, 1, 2], [ITEM.RAW_COD, 0, 1], [BLOCK.PRISMARINE_BRICKS, 1, 1]], xp: 10 },
+  shulker: { hostile: true, still: true, persistent: true, hw: 0.5, h: 1.0, eye: 0.5, health: 30, follow: 16, drops: [[ITEM.SHULKER_SHELL, 0, 0.5]], xp: 5 },
+  cave_spider: { hostile: true, hw: 0.35, h: 0.5, eye: 0.4, health: 12, speed: 3.0, chase: 3.6, damage: 2, reach: 1.2, follow: 16, climbs: true, poisons: 7, drops: [[ITEM.STRING, 0, 2], [ITEM.SPIDER_EYE, 0, 1]], xp: 5 },
+  horse: { animal: true, hw: 0.7, h: 1.6, eye: 1.5, health: 22, speed: 1.6, ride: true, step: 1.05, drops: [[ITEM.LEATHER, 0, 2]], xp: 1 },
+  boat: { vehicle: 'boat', hw: 0.7, h: 0.56, eye: 0.3, health: 3, seat: 0.25, drops: [[ITEM.OAK_BOAT, 1, 1]] },
+  minecart: { vehicle: 'minecart', hw: 0.49, h: 0.7, eye: 0.35, health: 4, seat: 0.35, drops: [[ITEM.MINECART, 1, 1]] },
+  tnt: { fixed: true, invulnerable: true, hw: 0.49, h: 0.98, eye: 0.5, health: 1, drops: [] },
+  evoker_fangs: { fixed: true, invulnerable: true, hw: 0.25, h: 0.8, eye: 0.4, health: 1, drops: [] },
+};
+// what each kind goes after besides players
+export const HUNTS = {
+  zombie: new Set(['villager', 'iron_golem']), pillager: new Set(['villager', 'iron_golem']), vindicator: new Set(['villager', 'iron_golem']),
+  evoker: new Set(['villager', 'iron_golem']), witch: new Set(), wither_skeleton: new Set(), guardian: new Set(['squid']),
 };
 
 export const HOSTILE_TYPES = ['zombie', 'creeper', 'skeleton', 'spider'];
@@ -115,15 +155,41 @@ export class Mob extends Entity {
     this.shootTime = 1 + rnd();
     this.variant = 0;
     this.lastSeen = 0;
+    this.effects = null;
+    this.home = null;
     if (type === 'sheep') this.variant = SHEEP_COLORS[Math.floor(rnd() * SHEEP_COLORS.length)];
+    else if (type === 'tropical_fish') this.variant = Math.floor(rnd() * FISH_COUNT);
+    else if (type === 'cat') this.variant = Math.floor(rnd() * CAT_COUNT);
+    else if (type === 'villager') this.variant = 1 + Math.floor(rnd() * (JOB_LIST.length - 1));
+    else if (type === 'horse') {
+      this.variant = Math.floor(rnd() * HORSE_COUNT);
+      this.stats = { speed: 7 + rnd() * 5, jump: 8 + rnd() * 3.5 };
+      this.health = 15 + Math.floor(rnd() * 16);
+    } else if (type === 'slime') this.setSize([1, 2, 4][Math.floor(rnd() * 3)]);
+    else if (type === 'wolf' && rnd() < 0.05) this.age = 0;
   }
+
+  setSize(n) {
+    this.size = n;
+    this.variant = n;
+    this.body.hw = 0.26 * n;
+    this.body.h = 0.52 * n;
+    this.health = n * n;
+    this.renderScale = n;
+  }
+
+  get maxHealth() { return this.type === 'slime' ? (this.size || 1) ** 2 : this.tamed && this.type === 'wolf' ? 20 : this.def.health; }
+  get baby() { return (this.growth || 0) < 0; }
 
   get hostile() { return !!this.def.hostile; }
   get eyePos() { return [this.body.pos[0], this.body.pos[1] + this.def.eye, this.body.pos[2]]; }
 
   hurt(amount, from, knock = 0.8) {
-    if (this.deathTime > 0) return false;
+    if (this.deathTime > 0 || this.def.invulnerable || this.charge > 0) return false;
     if (this.hurtTime > 0.35) return false; // brief invulnerability after a hit
+    if (this.type === 'shulker' && !this.open) amount *= 0.2; // shut tight in its shell
+    if (this.def.heavy) knock *= 0.1;
+    this.lastHurt = this.age;
     this.health -= amount;
     this.hurtTime = 0.5;
     if (from) {
@@ -133,8 +199,11 @@ export class Mob extends Entity {
       this.body.vel[2] += (dz / l) * 6 * knock;
       this.body.vel[1] = Math.max(this.body.vel[1], 4.5 * knock);
     }
-    if (!this.hostile && !this.def.neutral && !this.def.fixed) { this.panic = 5; this.path = null; }
-    if (this.health <= 0) { this.deathTime = 0.001; this.sim.onMobDeath(this); }
+    if (!this.hostile && !this.def.neutral && !this.def.fixed && !this.def.vehicle && this.type !== 'iron_golem' && !this.tamed) { this.panic = 5; this.path = null; }
+    if (this.health <= 0) {
+      if (this.def.vehicle) { this.removed = true; this.sim.onMobDeath(this); return true; }
+      this.deathTime = 0.001; this.sim.onMobDeath(this);
+    }
     else if (this.def.teleports && Math.random() < 0.7) this.teleportAway();
     return true;
   }
@@ -250,22 +319,87 @@ export class Mob extends Entity {
     return { wish, jump: this.body.hitWall };
   }
 
+  // Wander about (near `home`, when given), stand and look about now and then, graze.
+  idleWander({ home = null, radius = 0, speed = this.def.speed } = {}) {
+    const b = this.body;
+    let wish = null, jump = false;
+    this.modeTime -= TICK;
+    if (this.modeTime <= 0) {
+      if (this.mode === 'walk' || rnd() < 0.4) {
+        this.mode = 'idle';
+        this.modeTime = 2 + rnd() * 6;
+        this.goal = null;
+        this.headTarget = rnd() * Math.PI * 2;
+      } else {
+        this.mode = 'walk';
+        this.modeTime = 4 + rnd() * 5;
+        const a = rnd() * Math.PI * 2, r = 3 + rnd() * 7;
+        let gx = b.pos[0] + Math.cos(a) * r, gz = b.pos[2] + Math.sin(a) * r;
+        // tethered: back towards home when too far from it
+        if (home && radius && Math.hypot(gx - home[0], gz - home[2]) > radius) { gx = home[0] + (rnd() - 0.5) * 6; gz = home[2] + (rnd() - 0.5) * 6; }
+        this.goal = [gx, b.pos[1], gz];
+      }
+    }
+    if (this.mode === 'walk' && this.goal) {
+      const p = b.pos;
+      if (Math.hypot(this.goal[0] - p[0], this.goal[2] - p[2]) < 0.6) { this.mode = 'idle'; this.modeTime = 2 + rnd() * 4; }
+      else {
+        wish = this.walkTowards(this.goal[0], this.goal[2], speed);
+        const ax = Math.floor(p[0] + wish[0] * 0.6), az = Math.floor(p[2] + wish[1] * 0.6);
+        const w = this.sim.world;
+        const fy = Math.floor(p[1]);
+        const drop = !w.isSolidAt(ax, fy - 1, az) && !w.isSolidAt(ax, fy - 2, az) && !w.isSolidAt(ax, fy - 3, az);
+        const water = w.getBlock(ax, fy, az) === BLOCK.WATER || w.getBlock(ax, fy - 1, az) === BLOCK.WATER;
+        if (drop || (water && !b.inWater)) { this.mode = 'idle'; this.modeTime = 1 + rnd() * 2; wish = [0, 0]; }
+        jump = b.hitWall && b.blockedAhead(wish[0] / (speed || 1), wish[1] / (speed || 1));
+      }
+    } else if (this.headTarget !== undefined) {
+      const dd = Math.atan2(Math.sin(this.headTarget - this.headYaw), Math.cos(this.headTarget - this.headYaw));
+      this.headYaw += dd * 0.05;
+    }
+    return { wish, jump };
+  }
+
   // Brain ---------------------------------------------------------------------
   think(env) {
     const d = this.def;
     const b = this.body;
     let wish = null, jump = false;
     if (this.deathTime > 0) return { wish: null, jump: false };
+    const brain = BRAINS[this.type];
+    if (brain) return brain(this, env);
+    // a bred animal looks for its mate; any animal follows someone holding its food
+    if (this.love > 0 && this.mate && alive(this.mate)) {
+      const q = this.mate.body.pos;
+      this.mode = 'walk';
+      return { wish: this.walkTowards(q[0], q[2], d.speed * 1.2), jump: b.hitWall };
+    }
+    if (this.lure && this.lure.pos && !this.hostile) {
+      const q = this.lure.pos;
+      if (Math.hypot(q[0] - b.pos[0], q[2] - b.pos[2]) > 2.2) { this.mode = 'walk'; return { wish: this.walkTowards(q[0], q[2], d.speed * 1.3), jump: b.hitWall && b.blockedAhead(-Math.sin(this.yaw), -Math.cos(this.yaw)) }; }
+      this.faceTowards(q[0], q[2], 6);
+      return { wish: [0, 0], jump: false };
+    }
+    // creepers keep away from cats
+    if (this.type === 'creeper' && this.age >= (this.catCheck || 0)) {
+      this.catCheck = this.age + 0.5;
+      this.fearCat = this.sim.nearestMob(b.pos, 6, (e) => e.type === 'cat');
+    }
+    if (this.type === 'creeper' && this.fearCat && alive(this.fearCat)) {
+      this.fuse = Math.max(0, this.fuse - TICK);
+      const q = this.fearCat.body.pos;
+      return { wish: this.walkTowards(b.pos[0] * 2 - q[0], b.pos[2] * 2 - q[2], d.chase), jump: b.hitWall };
+    }
 
     if (this.hostile || this.angryAt) {
       let t;
       if (d.neutral) {
         // neutral creatures only go after whoever angered them, while they stay close
         const a = this.angryAt;
-        const ok = a && !a.dead && a.mode !== 'creative' && Math.hypot(a.pos[0] - b.pos[0], a.pos[2] - b.pos[2]) < d.follow && this.sim.players.get(a.id) === a;
+        const ok = a && alive(a) && Math.hypot(a.pos[0] - b.pos[0], a.pos[2] - b.pos[2]) < d.follow && (a.kind === 'mob' || this.sim.players.get(a.id) === a);
         t = ok ? a : null;
         if (!ok) this.angryAt = null;
-      } else t = this.sim.nearestTarget(this, d.follow);
+      } else t = this.sim.targetFor(this, d.follow);
       this.target = t;
       if (t) {
         const tp = t.pos;
@@ -303,8 +437,9 @@ export class Mob extends Entity {
           this.faceTowards(tp[0], tp[2], 12);
           this.shootTime -= TICK;
           if (sees && dist < 18 && this.shootTime <= 0) {
-            this.shootTime = 1.6 + rnd() * 0.9;
-            this.sim.mobShoot(this, t);
+            // a crossbow takes longer to load but hits harder
+            this.shootTime = d.ranged === 'crossbow' ? 2.4 + rnd() : 1.6 + rnd() * 0.9;
+            this.sim.mobShoot(this, t, d.ranged === 'crossbow' ? 1.5 : 1);
           }
         } else {
           const reach = (d.reach || 1.2) + d.hw;
@@ -333,6 +468,11 @@ export class Mob extends Entity {
     }
 
     if (d.flies) return this.flyIdle();
+    // sheep grow their wool back by eating grass
+    if (this.type === 'sheep' && this.sheared && this.mode === 'idle' && rnd() < 0.002) {
+      const w = this.sim.world, x = Math.floor(b.pos[0]), y = Math.floor(b.pos[1] - 0.1), z = Math.floor(b.pos[2]);
+      if (w.getBlock(x, y, z) === BLOCK.GRASS) { this.sheared = false; this.sim.emit({ type: 'graze', pos: [x, y, z] }); }
+    }
     // animals and idle monsters: wander, graze, panic when hurt
     if (this.panic > 0) {
       this.panic -= TICK;
@@ -346,39 +486,7 @@ export class Mob extends Entity {
       jump = this.body.hitWall;
       return { wish, jump };
     }
-    this.modeTime -= TICK;
-    if (this.modeTime <= 0) {
-      if (this.mode === 'walk' || rnd() < 0.4) {
-        this.mode = 'idle';
-        this.modeTime = 2 + rnd() * 6;
-        this.goal = null;
-        this.headTarget = rnd() * Math.PI * 2;
-      } else {
-        this.mode = 'walk';
-        this.modeTime = 4 + rnd() * 5;
-        const a = rnd() * Math.PI * 2, r = 3 + rnd() * 7;
-        this.goal = [b.pos[0] + Math.cos(a) * r, b.pos[1], b.pos[2] + Math.sin(a) * r];
-      }
-    }
-    if (this.mode === 'walk' && this.goal) {
-      const p = b.pos;
-      if (Math.hypot(this.goal[0] - p[0], this.goal[2] - p[2]) < 0.6) { this.mode = 'idle'; this.modeTime = 2 + rnd() * 4; }
-      else {
-        wish = this.walkTowards(this.goal[0], this.goal[2], d.speed);
-        // don't wander off cliffs or into water
-        const ax = Math.floor(p[0] + wish[0] * 0.6), az = Math.floor(p[2] + wish[1] * 0.6);
-        const w = this.sim.world;
-        const fy = Math.floor(p[1]);
-        const drop = !w.isSolidAt(ax, fy - 1, az) && !w.isSolidAt(ax, fy - 2, az) && !w.isSolidAt(ax, fy - 3, az);
-        const water = w.getBlock(ax, fy, az) === BLOCK.WATER || w.getBlock(ax, fy - 1, az) === BLOCK.WATER;
-        if (drop || (water && !b.inWater)) { this.mode = 'idle'; this.modeTime = 1 + rnd() * 2; wish = [0, 0]; }
-        jump = b.hitWall && b.blockedAhead(wish[0] / (d.speed || 1), wish[1] / (d.speed || 1));
-      }
-    } else if (this.headTarget !== undefined) {
-      const dd = Math.atan2(Math.sin(this.headTarget - this.headYaw), Math.cos(this.headTarget - this.headYaw));
-      this.headYaw += dd * 0.05;
-    }
-    return { wish, jump };
+    return this.idleWander({ home: this.home, radius: this.home ? 16 : 0 });
   }
 
   update(env) {
@@ -395,18 +503,40 @@ export class Mob extends Entity {
       if (this.deathTime > 1.0) this.removed = true;
       return;
     }
+    const ticker = TICKERS[this.type];
+    if (ticker && ticker(this, env)) return;
     if (this.def.fixed) { this.walkAmount = 0; return; }
-    b.gravity = this.def.flies ? 0 : 28;
-    const { wish, jump } = this.think(env);
+    tickMobEffects(this);
+    // babies grow up; animals in love look for a mate for a while
+    if (this.growth < 0) { this.growth = Math.min(0, this.growth + TICK); this.renderScale = this.growth < 0 ? 0.55 : 1; }
+    if (this.love > 0) this.love -= TICK;
+    if (this.breedCooldown > 0) this.breedCooldown -= TICK;
+    const d = this.def;
+    if (d.still) { this.think(env); b.step(TICK, null, false, {}); return; }
+    b.gravity = d.flies || (d.water && b.inWater) ? 0 : 28;
+    const { wish, jump, moved } = this.think(env);
+    if (moved) {
+      // (a minecart on its rails moved itself)
+      const hs = Math.hypot(b.vel[0], b.vel[2]);
+      this.walkAmount += (Math.min(1, hs / 2.5) - this.walkAmount) * 0.3;
+      this.walkPhase += hs * TICK * 2.6;
+      if (b.pos[1] < -20) this.removed = true;
+      return;
+    }
     if (!this.hostile || this.mode !== 'chase') {
       // the head follows the body when nothing holds its attention
       const dd = Math.atan2(Math.sin(this.yaw - this.headYaw), Math.cos(this.yaw - this.headYaw));
       this.headYaw += dd * 0.15;
       this.headPitch *= 0.9;
     }
-    const landed = b.step(TICK, wish, jump, { swim: !this.def.flies, jumpV: this.type === 'spider' ? 7 : 8.4, step: this.def.flies ? 0 : 0.6 });
+    let slow = 1;
+    if (this.effects && this.effects.slowness) slow = Math.max(0.2, 1 - 0.15 * (this.effects.slowness.amp + 1));
+    const w2 = wish && slow < 1 ? [wish[0] * slow, wish[1] * slow] : wish;
+    const landed = b.step(TICK, w2, jump, {
+      swim: !d.flies && !d.water && !d.vehicle, jumpV: this.jumpV || (this.type === 'spider' || this.type === 'cave_spider' ? 7 : 8.4), step: d.flies || d.vehicle ? 0 : d.step || 0.6,
+    });
     if (this.def.flutter && !b.onGround && b.vel[1] < -2) b.vel[1] = -2; // chickens glide down
-    else if (landed > 3.5 && !this.def.flutter && !this.def.flies) this.hurt(Math.floor(landed - 3), null);
+    else if (landed > (this.type === 'horse' ? 5.5 : 3.5) && !this.def.flutter && !this.def.flies && !d.vehicle && this.type !== 'slime' && this.type !== 'cat') this.hurt(Math.floor(landed - 3), null);
     const hs = Math.hypot(b.vel[0], b.vel[2]);
     this.walkAmount += ((b.onGround || b.inWater ? Math.min(1, hs / 2.5) : 0) - this.walkAmount) * 0.3;
     this.walkPhase += hs * TICK * 2.6;

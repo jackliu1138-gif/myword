@@ -10,13 +10,18 @@ import { materialOf } from './audio.js';
 import { EntityMesh } from '../render/entitymesh.js';
 import { buildSkins } from '../render/models.js';
 import { buildItemSprites } from '../world/itemsprites.js';
-import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_BED, TINT, MAT, WOOL_COLORS, MODEL_OF, MODELS_BY_NAME, COLLIDE_KIND } from '../world/blocks.js';
+import { BLOCK, BLOCKS, SHAPE, SHAPE_OF, FACE_TEX, IS_SOLID, IS_BED, TINT, MAT, WOOL_COLORS, MODEL_OF, MODELS_BY_NAME, COLLIDE_KIND, IS_RAIL } from '../world/blocks.js';
 import { newEndState } from './travel.js';
 import { t, itemName } from '../ui/i18n.js';
 import { PAD } from './gamepad.js';
 import { mat4 } from '../engine/math.js';
 
 const REACH_BLOCK = { creative: 6, survival: 4.8 };
+// what silk touch keeps whole, and the ores fortune multiplies
+const SILK = new Set([BLOCK.GRASS, BLOCK.SNOWY_GRASS, BLOCK.GLASS, BLOCK.GLASS_PANE, BLOCK.ICE, BLOCK.STONE, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE,
+  BLOCK.LAPIS_ORE, BLOCK.EMERALD_ORE, BLOCK.NETHER_QUARTZ_ORE, BLOCK.GLOWSTONE, BLOCK.MELON, BLOCK.BOOKSHELF, BLOCK.GRAVEL, BLOCK.CLAY, BLOCK.OAK_LEAVES, BLOCK.BIRCH_LEAVES,
+  BLOCK.SPRUCE_LEAVES, BLOCK.JUNGLE_LEAVES, BLOCK.ACACIA_LEAVES, BLOCK.DARK_OAK_LEAVES, BLOCK.CHERRY_LEAVES, BLOCK.COBWEB, BLOCK.VINE]);
+const FORTUNE = new Set([BLOCK.COAL_ORE, BLOCK.DIAMOND_ORE, BLOCK.LAPIS_ORE, BLOCK.EMERALD_ORE, BLOCK.NETHER_QUARTZ_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.GLOWSTONE, BLOCK.MELON]);
 const REACH_HIT = 3.6;
 const DEFAULT_CREATIVE = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE_BRICKS, BLOCK.OAK_PLANKS, BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, ITEM.DIAMOND_SWORD, ITEM.BOW];
 // a new survival world starts with the basics, so the first night is survivable
@@ -27,6 +32,9 @@ const TINT_RGB = {
 const MOB_SOUND = {
   zombie: 'zombie', skeleton: 'skeleton', spider: 'spider', cow: 'cow', pig: 'pig', sheep: 'sheep', chicken: 'chicken',
   zombified_piglin: 'zombified_piglin', ghast: 'ghast', blaze: 'blaze', enderman: 'enderman', ender_dragon: 'dragon', end_crystal: 'crystal',
+  villager: 'villager', iron_golem: 'golem', wolf: 'wolf', cat: 'cat', horse: 'horse', witch: 'witch', slime: 'slime', phantom: 'phantom',
+  pillager: 'pillager', vindicator: 'vindicator', evoker: 'evoker', wither: 'wither', wither_skeleton: 'skeleton', guardian: 'guardian',
+  elder_guardian: 'guardian', shulker: 'shulker', cave_spider: 'spider',
 };
 
 export function installPlay(Game) {
@@ -68,9 +76,14 @@ export function installPlay(Game) {
     this.fires = new Map();
     this.setupBlockEntities(data);
     this.scanWorldBlocks();
-    this.sim.pickup = (id, itemId, count, wear) => this.pickupItem(itemId, count, wear);
+    this.sim.pickup = (id, itemId, count, wear, ench) => this.pickupItem(itemId, count, wear, ench);
     const me = this.sim.addPlayer('local', { mode: this.mode });
     if (data && data.player && typeof data.player.health === 'number') { me.health = data.player.health; me.air = data.player.air ?? MAX_AIR; }
+    this.sim.pickupXp = (id, pts) => { if (id === 'local') this.gainXp(pts); };
+    this.sim.dayCount = this.dayCount || 0;
+    this.setupSurvival(data);
+    this.setupCreatures(data);
+    this.player.onWallHit = (lost) => { const d = Math.floor(lost / 2 - 3); if (d > 0 && !this.isCreative()) this.sim.damagePlayer('local', d, 'wall'); };
     this.spawnPoint = data && data.spawn ? data.spawn : null;
     this.breaking = null;
     this.attackCooldown = 0;
@@ -99,11 +112,11 @@ export function installPlay(Game) {
 
   P.vitals = function vitals(me) {
     if (this.isCreative()) return null;
-    return { health: me.health, max: MAX_HEALTH, air: me.air, maxAir: MAX_AIR, underwater: this.player.headInWater, armor: this.inventory.armorValues().points };
+    return { health: me.health, max: MAX_HEALTH, air: me.air, maxAir: MAX_AIR, underwater: this.player.headInWater, armor: this.inventory.armorValues().points, ...this.survivalVitals(me) };
   };
 
-  P.pickupItem = function pickupItem(itemId, count, wear) {
-    const left = this.inventory.add(itemId, count, wear);
+  P.pickupItem = function pickupItem(itemId, count, wear, ench) {
+    const left = this.inventory.add(itemId, count, wear, ench);
     if (left === count) {
       const now = performance.now();
       if (!this.fullToastAt || now - this.fullToastAt > 8000) { this.fullToastAt = now; this.ui.toast(t('inv.full')); }
@@ -174,7 +187,7 @@ export function installPlay(Game) {
   // Thrown items fly a few blocks and wait two seconds before anyone (the thrower too) can pick them up.
   P.throwStack = function throwStack(s) {
     const p = this.player, e = p.eye, f = p.forward();
-    this.sim.dropItem(s.id, s.count, e[0] + f[0] * 0.5, e[1] - 0.3, e[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], s.wear, { delay: 2 });
+    this.sim.dropItem(s.id, s.count, e[0] + f[0] * 0.5, e[1] - 0.3, e[2] + f[2] * 0.5, [f[0] * 5, 2.5 + f[1] * 4, f[2] * 5], s.wear, { delay: 2, ench: s.ench });
   };
 
   // Closing the screen: the held stack goes back into the inventory (what doesn't fit is dropped).
@@ -244,6 +257,12 @@ export function installPlay(Game) {
     this.vitalsTimer = (this.vitalsTimer || 0) - dt;
     if (this.vitalsTimer <= 0) { this.vitalsTimer = 0.1; if (me) this.ui.setVitals(this.vitals(me)); }
     if (playing) this.ambientCreatures(dt);
+    this.sim.dayCount = this.dayCount || 0;
+    this.updateSurvival(dt);
+    this.updateLures(dt);
+    this.updatePlates(dt);
+    this.updateFlight(dt);
+    this.updateGateways(dt);
     this.updateSleep(dt);
     this.updateBlocks(dt);
     this.updateFurnaces(dt);
@@ -333,6 +352,32 @@ export function installPlay(Game) {
         case 'playerDeath':
           if (e.id === 'local') this.deathCause = e.source;
           break;
+        case 'fireworkBurst': this.onFireworkBurst(e); break;
+        case 'fireworkTrail': this.onFireworkTrail(e); break;
+        case 'fireworkEnd': break;
+        case 'potionSplash': {
+          const c = e.color.map((v) => (v / 255) * 3);
+          for (let i = 0; i < 40; i++) {
+            const a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 3;
+            this.particles.spark(e.pos[0], e.pos[1] + 0.2, e.pos[2], Math.cos(a) * sp, 1 + Math.random() * 2, Math.sin(a) * sp, c, { life: 0.8 + Math.random() * 0.6, size: 0.06, gravity: 3, drag: 1.5 });
+          }
+          break;
+        }
+        case 'xp': break;
+        case 'shieldBlock': if (e.id === 'local') this.shieldBlocked(e); break;
+        case 'totem': if (e.id === 'local') this.onTotem(); break;
+        case 'launch': if (e.id === 'local') this.player.vel[1] = Math.max(this.player.vel[1], e.v); break;
+        case 'bite': if (e.owner === 'local') { this.audio.sfx('bite', 0.8, 0); this.particles.burst(Math.floor(e.pos[0]), Math.floor(e.pos[1]), Math.floor(e.pos[2]), BLOCK.WHITE_WOOL, 1, 0.4, 6); } break;
+        case 'tamed': this.audio.sfx('horse', 0.8, 0); this.ui.toast(t('toast.tamed', { name: t('mob.' + e.entity.type) }), 2200); break;
+        case 'buck': if (this.player.riding === e.entity) { this.dismount(); this.player.vel[1] = 5; this.audio.sfx('horse', 0.9, 0); } break;
+        case 'bred': for (let i = 0; i < 6; i++) this.particles.burst(Math.floor(e.pos[0]), Math.floor(e.pos[1]), Math.floor(e.pos[2]), BLOCK.RED_WOOL, 1, 1, 2); this.audio.sfx('heart', 0.6, 0); break;
+        case 'elderCurse': if (e.id === 'local') { this.ui.toast(t('toast.elderCurse'), 3000); this.audio.sfx('guardian', 0.9, 0); } break;
+        case 'patrol': break;
+        case 'spawnerFx': for (let i = 0; i < 6; i++) this.particles.spark(e.pos[0] + (Math.random() - 0.5), e.pos[1] + (Math.random() - 0.5), e.pos[2] + (Math.random() - 0.5), 0, 0.8, 0, [3, 1, 0.3], { life: 0.6, size: 0.06 }); break;
+        case 'petDied': if (e.owner === ((this.me() && (this.me().name || this.me().id)) || 'local')) this.ui.toast(t('toast.petDied', { name: t('mob.' + e.entity.type) }), 3500); break;
+        case 'graze': this.world.setBlock(e.pos[0], e.pos[1], e.pos[2], BLOCK.DIRT); break;
+        case 'bulletPop': this.particles.burst(Math.floor(e.pos[0]), Math.floor(e.pos[1]), Math.floor(e.pos[2]), BLOCK.WHITE_WOOL, 1, 1, 6); break;
+        case 'effect': case 'effectEnd': this.vitalsTimer = 0; break;
         default: break;
       }
     }
@@ -373,11 +418,13 @@ export function installPlay(Game) {
     if (this.sleeping) this.wakeUp();
     const spill = (s) => {
       const v = [(Math.random() - 0.5) * 4, 3 + Math.random() * 2, (Math.random() - 0.5) * 4];
-      this.sim.dropItem(s.id, s.count, p[0], p[1] + 1, p[2], v, s.wear);
+      this.sim.dropItem(s.id, s.count, p[0], p[1] + 1, p[2], v, s.wear, { ench: s.ench });
     };
     const inv = this.inventory;
     inv.slots.forEach((s, i) => { if (s) { spill(s); inv.slots[i] = null; } });
     inv.armor.forEach((s, i) => { if (s) { spill(s); inv.armor[i] = null; } });
+    if (inv.offhand) { spill(inv.offhand); inv.offhand = null; }
+    this.onDeathSurvival();
     if (inv.cursor) { spill(inv.cursor); inv.cursor = null; }
     inv.changed();
     this.input.exitLock();
@@ -469,6 +516,7 @@ export function installPlay(Game) {
       if (attackPressed && this.attackCooldown <= 0) { this.swing = 1; this.attackCooldown = 0.25; this.audio.sfx('swing', 0.5, 0); }
     }
 
+    this.updateShield(useHeld, def);
     // ---- use: creatures first (milking), buckets, then things done to a block (doors, chests,
     // sleeping, tilling, planting, fire, eyes, beds), then bows, food, thrown things and placing blocks
     if (usePressed && aimMob && this.useOnMob(aimMob, def)) {
@@ -493,16 +541,14 @@ export function installPlay(Game) {
         this.bowDraw = 0;
       } else this.bowDraw = 0;
       tc.tap = false;
-    } else if (def && def.kind === 'food') {
-      const me = this.me();
-      if ((usePressed || (useHeld && this.useCooldown <= 0)) && this.useCooldown <= 0 && me && (me.health < MAX_HEALTH || creative)) {
-        this.useCooldown = 0.9;
-        this.sim.healPlayer('local', def.heal);
-        if (!creative) this.inventory.consume(this.selected);
-        this.audio.sfx('eat', 0.8, 0);
-        this.swing = 1;
+    } else if (def && (def.kind === 'boat' || def.kind === 'minecart')) {
+      if (usePressed || tc.tap) {
+        tc.tap = false;
+        const vh = def.kind === 'boat' ? raycast(this.world, eye, dir, reach, { liquids: true }) || hit : hit;
+        this.placeVehicle(vh, def);
       }
-      tc.tap = false;
+    } else if (def && this.useHeld(def, { hit, aimMob, useHeld, usePressed, dt, tc })) {
+      // (food, potions, crossbows, rods, fireworks, spawn eggs...)
     } else {
       this.placeTimer -= dt;
       if (input.clicked.has(2)) this.placeTimer = 0;
@@ -529,7 +575,16 @@ export function installPlay(Game) {
 
   P.attack = function attack(mob, def) {
     const p = this.player;
-    const base = def && def.damage ? def.damage : 1;
+    const held = this.heldSlot();
+    let base = def && def.damage ? def.damage : 1;
+    // sharpness on anything; smite against the undead
+    const sharp = held && held.ench ? held.ench.sharpness || 0 : 0, smite = held && held.ench ? held.ench.smite || 0 : 0;
+    if (sharp) base += 0.5 * sharp + 0.5;
+    if (smite && mob.def && mob.def.undead) base += 2.5 * smite;
+    const me = this.me();
+    const fx = (me && me.effects) || {};
+    if (fx.strength) base += 3 * (fx.strength.amp + 1);
+    if (fx.weakness) base = Math.max(0, base - 4);
     const crit = !p.onGround && p.vel[1] < -0.5 && !p.inWater;
     const dmg = this.isCreative() ? Math.max(base, 20) : base;
     this.sim.playerAttack('local', mob, dmg, crit);
@@ -550,12 +605,18 @@ export function installPlay(Game) {
   P.shootBow = function shootBow(charge) {
     if (charge < 0.1) return;
     const creative = this.isCreative();
-    if (!creative && this.inventory.take(ITEM.ARROW, 1) < 1) return;
+    const bowStack = this.heldSlot();
+    const ench = (bowStack && bowStack.ench) || {};
+    const infinite = creative || (ench.infinity && this.inventory.has(ITEM.ARROW));
+    if (!infinite && this.inventory.take(ITEM.ARROW, 1) < 1) return;
     const p = this.player;
     const e = p.eye, f = p.forward();
     const speed = 12 + 30 * charge;
-    const dmg = 1 + 8 * charge * charge;
-    this.sim.shootArrow('local', [e[0] + f[0] * 0.4, e[1] - 0.1, e[2] + f[2] * 0.4], f, speed, dmg, !creative);
+    let dmg = 1 + 8 * charge * charge;
+    if (ench.power) dmg *= 1 + 0.25 * (ench.power + 1);
+    const arrow = this.sim.shootArrow('local', [e[0] + f[0] * 0.4, e[1] - 0.1, e[2] + f[2] * 0.4], f, speed, dmg, !infinite);
+    arrow.punch = ench.punch || 0;
+    arrow.flame = !!ench.flame;
     const bow = this.heldSlot();
     if (!creative && bow && this.inventory.wear(this.selected, 1)) this.toolBroke(itemDef(bow.id) || itemDef(ITEM.BOW));
     this.swing = 0.6;
@@ -566,7 +627,15 @@ export function installPlay(Game) {
     const b = this.breaking;
     if (!b || b.x !== hit.x || b.y !== hit.y || b.z !== hit.z) {
       const info = breakInfo(hit.block, def ? def.id : 0);
-      this.breaking = { x: hit.x, y: hit.y, z: hit.z, block: hit.block, progress: 0, time: info.time, drops: info.drops, tick: 0 };
+      let time = info.time;
+      const held = this.heldSlot();
+      const eff = held && held.ench ? held.ench.efficiency || 0 : 0;
+      if (eff && def && def.speed) time /= 1 + (eff * eff + 1) / def.speed;
+      const me = this.me();
+      if (me && me.effects && me.effects.mining_fatigue) time *= [3.3, 11, 90, 300][Math.min(3, me.effects.mining_fatigue.amp)];
+      if (this.player.inWater && !(this.inventory.armor[0] && this.inventory.armor[0].ench && this.inventory.armor[0].ench.aqua_affinity)) time *= this.player.headInWater ? 5 : 1;
+      if (!this.player.onGround && !this.player.inWater && !this.player.flying && !this.player.riding) time *= 5;
+      this.breaking = { x: hit.x, y: hit.y, z: hit.z, block: hit.block, progress: 0, time, drops: info.drops, tick: 0 };
     }
     const br = this.breaking;
     if (!Number.isFinite(br.time)) return;
@@ -601,7 +670,20 @@ export function installPlay(Game) {
     if (this.touch) this.touch.vibrate(14);
     if (this.settings.padVibration && this.pads.connected) this.pads.rumble(0.25, 0.4, 60);
     if (!this.isCreative() && drops) {
-      for (const [id, n] of blockDrops(block)) this.sim.dropItem(id, n, x + 0.5, y + 0.4, z + 0.5);
+      const held = this.heldSlot();
+      const silk = held && held.ench && held.ench.silk_touch;
+      const fortune = held && held.ench ? held.ench.fortune || 0 : 0;
+      if (silk && SILK.has(block)) this.sim.dropItem(block, 1, x + 0.5, y + 0.4, z + 0.5);
+      else {
+        for (const [id, n] of blockDrops(block)) {
+          // fortune: ores give more
+          const extra = fortune && FORTUNE.has(block) ? Math.max(0, Math.floor(Math.random() * (fortune + 2)) - 1) : 0;
+          this.sim.dropItem(id, n * (1 + extra), x + 0.5, y + 0.4, z + 0.5);
+        }
+        this.oreXp(block, x, y, z);
+      }
+      const me = this.me();
+      if (me) me.exhaust = (me.exhaust || 0) + 0.005;
     }
   };
 
@@ -635,7 +717,11 @@ export function installPlay(Game) {
     if ((shape === SHAPE.CROSS || shape === SHAPE.TORCH || id === BLOCK.CACTUS) && !IS_SOLID[this.world.getBlock(x, y - 1, z)]) return;
     const place = this.placementFor(id, hit, x, y, z);
     if (!place) return;
-    if (this.world.setBlock(x, y, z, place.id, { state: place.state })) placed();
+    if (this.world.setBlock(x, y, z, place.id, { state: place.state })) {
+      placed();
+      if (IS_RAIL[place.id]) this.afterRailPlaced(x, y, z);
+      this.checkSummon(x, y, z, place.id);
+    }
   };
 
   P.pickFromWorld = function pickFromWorld(block) {
@@ -699,6 +785,8 @@ export function installPlay(Game) {
       inventory: this.inventory ? this.inventory.serialize() : [],
       spawn: this.spawnPoint,
       blockEntities: this.serializeBlockEntities(),
+      survival: this.serializeSurvival(),
+      ...this.serializeCreatures(),
     };
   };
 

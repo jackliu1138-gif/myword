@@ -97,7 +97,7 @@ export class Input {
     }
     if (this.enabled) {
       // keep the page from scrolling / browser shortcuts stealing game keys
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F3', 'Tab', 'Slash', 'Quote'].includes(code)) e.preventDefault();
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F3', 'F5', 'Tab', 'Slash', 'Quote'].includes(code)) e.preventDefault();
     }
   }
 

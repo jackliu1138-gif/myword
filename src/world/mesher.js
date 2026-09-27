@@ -5,7 +5,7 @@
 import {
   CHUNK_SIZE, WORLD_HEIGHT, SHAPE, LAYER, BLOCKS, BLOCK, WAVE,
   IS_OPAQUE, LIGHT_OPACITY, EMISSION, SHAPE_OF, LAYER_OF, CULL_SELF, FACE_TEX, BOX_SHAPES, IS_BED, BED_PARTNER,
-  HAS_FRONT, FACING_FACE, NEIGHBOUR_LIGHT, blockBoxes, liquidHeight,
+  HAS_FRONT, FACING_FACE, NEIGHBOUR_LIGHT, blockBoxes, liquidHeight, RAIL_SHAPES,
 } from './blocks.js';
 import { hash2 } from './noise.js';
 
@@ -111,7 +111,7 @@ export class ChunkMesher {
     this.states = new Uint8Array(REGION);
     this.sky = new Uint8Array(REGION);
     this.blk = new Uint8Array(REGION);
-    this.queue = new Int32Array(1 << 19);
+    this.queue = new Int32Array(1 << 20);
     this.buffers = [new VertexBuffer(1 << 21), new VertexBuffer(1 << 20), new VertexBuffer(1 << 18)];
     this.climate = new Uint8Array(CS * CS * 2);
     this.grass = new Uint8Array(MAX_GRASS * GRASS_BYTES);
@@ -121,15 +121,22 @@ export class ChunkMesher {
 
   // chunks: array of 9 Uint8Arrays, index (dz+1)*3 + (dx+1); states: the same for block states
   // (null entries, or no array at all, for chunks without any)
+  // Chunks may come cut off above their highest block: everything higher is air. Only the layers
+  // up to this.yMax (one above the region's highest block, or more) are filled in and worked on.
   loadRegion(chunks, states = null) {
     const R = this.blocks, S = this.states;
-    S.fill(0);
+    let layers = 41;
+    for (let n = 0; n < 9; n++) if (chunks[n]) layers = Math.max(layers, chunks[n].length >> 8);
+    this.yMax = Math.min(H - 1, layers + 1);
+    const end = (this.yMax + 1) * RSY;
+    R.fill(0, 0, end);
+    S.fill(0, 0, end);
     for (let n = 0; n < 9; n++) {
       const src = chunks[n];
       const ox = (n % 3) * CS, oz = Math.floor(n / 3) * CS;
       const st = states && states[n];
       if (st) {
-        for (let y = 0; y < H; y++) {
+        for (let y = 0, ny = Math.min(this.yMax, st.length >> 8); y < ny; y++) {
           for (let z = 0; z < CS; z++) {
             const s = (y << 8) | (z << 4);
             S.set(st.subarray(s, s + CS), ox + (oz + z) * RSZ + y * RSY);
@@ -138,13 +145,12 @@ export class ChunkMesher {
       }
       if (!src) {
         // missing neighbour: treat as solid below sea level, air above, so borders look sane
-        for (let y = 0; y < H; y++) {
-          const fill = y < 40 ? BLOCK.STONE : 0;
-          for (let z = 0; z < CS; z++) R.fill(fill, ox + (oz + z) * RSZ + y * RSY, ox + (oz + z) * RSZ + y * RSY + CS);
+        for (let y = 0; y < 40; y++) {
+          for (let z = 0; z < CS; z++) R.fill(BLOCK.STONE, ox + (oz + z) * RSZ + y * RSY, ox + (oz + z) * RSZ + y * RSY + CS);
         }
         continue;
       }
-      for (let y = 0; y < H; y++) {
+      for (let y = 0, ny = Math.min(this.yMax, src.length >> 8); y < ny; y++) {
         for (let z = 0; z < CS; z++) {
           const s = (y << 8) | (z << 4);
           R.set(src.subarray(s, s + CS), ox + (oz + z) * RSZ + y * RSY);
@@ -156,8 +162,9 @@ export class ChunkMesher {
   computeLight() {
     const R = this.blocks, sky = this.sky, blk = this.blk, q = this.queue;
     const QM = q.length - 1;
-    sky.fill(0);
-    blk.fill(0);
+    const YM = this.yMax, end = (YM + 1) * RSY;
+    sky.fill(0, 0, end);
+    blk.fill(0, 0, end);
     let head = 0, tail = 0;
 
     // --- sky light: straight down, attenuated by semi-transparent blocks
@@ -166,8 +173,8 @@ export class ChunkMesher {
       for (let x = 0; x < RW; x++) {
         let level = 15;
         let top = -1;
-        let i = x + z * RSZ + (H - 1) * RSY;
-        for (let y = H - 1; y >= 0; y--, i -= RSY) {
+        let i = x + z * RSZ + YM * RSY;
+        for (let y = YM; y >= 0; y--, i -= RSY) {
           const op = LIGHT_OPACITY[R[i]];
           if (op) {
             if (top < 0) top = y;
@@ -188,7 +195,7 @@ export class ChunkMesher {
         if (z > 0) maxN = Math.max(maxN, topOpaque[x + (z - 1) * RW]);
         if (z < RW - 1) maxN = Math.max(maxN, topOpaque[x + (z + 1) * RW]);
         const own = topOpaque[x + z * RW];
-        const yMax = Math.min(H - 1, maxN);
+        const yMax = Math.min(YM, maxN);
         for (let y = Math.max(0, own - 15); y <= yMax; y++) {
           const i = x + z * RSZ + y * RSY;
           if (sky[i] > 1) { q[tail] = i; tail = (tail + 1) & QM; }
@@ -199,7 +206,7 @@ export class ChunkMesher {
 
     // --- block light from emitters
     head = 0; tail = 0;
-    for (let i = 0; i < REGION; i++) {
+    for (let i = 0; i < end; i++) {
       const e = EMISSION[R[i]];
       if (e) { blk[i] = e; q[tail] = i; tail = (tail + 1) & QM; }
     }
@@ -207,7 +214,7 @@ export class ChunkMesher {
 
     // slabs and stairs stop light but show the light around them (and creatures standing in
     // them are lit like their surroundings)
-    for (let i = RSY; i < REGION - RSY; i++) {
+    for (let i = RSY; i < end - RSY; i++) {
       if (!NEIGHBOUR_LIGHT[R[i]]) continue;
       const x = i % RW;
       const z = ((i - x) / RW) % RW;
@@ -224,7 +231,7 @@ export class ChunkMesher {
   }
 
   flood(L, head, tail) {
-    const R = this.blocks, q = this.queue, QM = q.length - 1;
+    const R = this.blocks, q = this.queue, QM = q.length - 1, YM = this.yMax;
     while (head !== tail) {
       const i = q[head]; head = (head + 1) & QM;
       const level = L[i];
@@ -239,26 +246,34 @@ export class ChunkMesher {
       if (z > 0) { const j = i - RSZ; const op = LIGHT_OPACITY[R[j]]; if (op < 15) { const nl = level - (op || 1); if (nl > L[j]) { L[j] = nl; q[tail] = j; tail = (tail + 1) & QM; } } }
       if (z < RW - 1) { const j = i + RSZ; const op = LIGHT_OPACITY[R[j]]; if (op < 15) { const nl = level - (op || 1); if (nl > L[j]) { L[j] = nl; q[tail] = j; tail = (tail + 1) & QM; } } }
       if (y > 0) { const j = i - RSY; const op = LIGHT_OPACITY[R[j]]; if (op < 15) { const nl = level - (op || 1); if (nl > L[j]) { L[j] = nl; q[tail] = j; tail = (tail + 1) & QM; } } }
-      if (y < H - 1) { const j = i + RSY; const op = LIGHT_OPACITY[R[j]]; if (op < 15) { const nl = level - (op || 1); if (nl > L[j]) { L[j] = nl; q[tail] = j; tail = (tail + 1) & QM; } } }
+      if (y < YM) { const j = i + RSY; const op = LIGHT_OPACITY[R[j]]; if (op < 15) { const nl = level - (op || 1); if (nl > L[j]) { L[j] = nl; q[tail] = j; tail = (tail + 1) & QM; } } }
     }
   }
 
   computeClimate(cx, cz) {
     const R = this.blocks;
+    // the newer terrain knows its biomes' colours; for the first, temperature and humidity (cooled
+    // with height), kept off the ends of the range where the shaders paint swamps and badlands
+    const tint = this.gen && this.gen.tintChunk ? this.gen.tintChunk(cx, cz) : null;
     for (let z = 0; z < CS; z++) {
       for (let x = 0; x < CS; x++) {
+        const ci = (z * CS + x) * 2;
+        if (tint) {
+          this.climate[ci] = Math.round(tint[ci] * 255);
+          this.climate[ci + 1] = Math.round(tint[ci + 1] * 255);
+          continue;
+        }
         const wx = cx * CS + x, wz = cz * CS + z;
         let t = 0.3, h = 0.3;
         if (this.gen) {
           [t, h] = this.gen.climate(wx, wz);
-          // altitude cools things down (use the column's top)
-          let y = H - 1;
+          let y = this.yMax;
           const base = x + CS + (z + CS) * RSZ;
           while (y > 0 && !IS_OPAQUE[R[base + y * RSY]]) y--;
           t -= Math.max(0, y - 70) * 0.012;
         }
-        this.climate[(z * CS + x) * 2] = Math.round(Math.max(0, Math.min(1, t * 0.5 + 0.5)) * 255);
-        this.climate[(z * CS + x) * 2 + 1] = Math.round(Math.max(0, Math.min(1, h * 0.5 + 0.5)) * 255);
+        this.climate[ci] = Math.round(Math.max(0, Math.min(0.9, t * 0.5 + 0.5)) * 255);
+        this.climate[ci + 1] = Math.round(Math.max(0, Math.min(0.88, h * 0.5 + 0.5)) * 255);
       }
     }
   }
@@ -275,7 +290,7 @@ export class ChunkMesher {
     this.grassCount = 0;
     let minY = H, maxY = 0;
 
-    for (let y = 0; y < H; y++) {
+    for (let y = 0; y < this.yMax; y++) {
       for (let z = 0; z < CS; z++) {
         for (let x = 0; x < CS; x++) {
           const ri = (x + CS) + (z + CS) * RSZ + y * RSY;
@@ -306,6 +321,9 @@ export class ChunkMesher {
           } else if (shape === SHAPE.MODEL) {
             this.model(ri, b, x, y, z, temp, hum);
             emitted = true;
+          } else if (shape === SHAPE.RAIL) {
+            this.rail(ri, b, x, y, z, temp, hum);
+            emitted = true;
           }
           if (emitted) {
             if (y < minY) minY = y;
@@ -316,7 +334,8 @@ export class ChunkMesher {
     }
     // packed light of the centre chunk (sky << 4 | block) for gameplay queries on the main thread
     const light = new Uint8Array(CS * CS * H);
-    for (let y = 0; y < H; y++) {
+    light.fill(15 << 4, (this.yMax + 1) << 8); // open sky above
+    for (let y = 0; y <= this.yMax; y++) {
       for (let z = 0; z < CS; z++) {
         const ro = CS + (z + CS) * RSZ + y * RSY;
         const lo = (y << 8) | (z << 4);
@@ -493,6 +512,45 @@ export class ChunkMesher {
       }
     }
     return any;
+  }
+
+  // Rails: a textured sheet just above the block below (or sloping up a block), turned to its
+  // shape (the state); curves use the corner texture.
+  rail(ri, b, x, y, z, temp, hum) {
+    const S = this.states;
+    const buf = this.buffers[LAYER.CUTOUT];
+    const shape = RAIL_SHAPES[S[ri] % RAIL_SHAPES.length] ? S[ri] % RAIL_SHAPES.length : 0;
+    const curve = shape >= 6;
+    const tex = curve ? FACE_TEX[b * 4 + 3] : FACE_TEX[b * 4];
+    const s = Math.round(this.sky[ri] * 17), k = Math.round(this.blk[ri] * 17);
+    const mat = MAT_OF[b];
+    // texture coordinates for a corner (cx, cz in 0..1): straight rails run along v in the image,
+    // the corner texture joins the bottom (south) and right (east) edges
+    const uvOf = (cx, cz) => {
+      switch (shape) {
+        case 1: case 2: case 3: return [cz, 1 - cx];
+        case 6: return [cx, cz];
+        case 7: return [1 - cx, cz];
+        case 8: return [1 - cx, 1 - cz];
+        case 9: return [cx, 1 - cz];
+        default: return [cx, cz];
+      }
+    };
+    const r = RAIL_SHAPES[shape];
+    const hOf = (cx, cz) => {
+      if (r.up === undefined) return 1;
+      const high = r.up === 1 ? cx : r.up === 3 ? 1 - cx : r.up === 0 ? 1 - cz : cz;
+      return 1 + high * 16;
+    };
+    const corners = [[0, 1], [1, 1], [1, 0], [0, 0]];
+    buf.ensure(8);
+    for (const order of [[0, 1, 2, 3], [1, 0, 3, 2]]) {
+      for (const vi of order) {
+        const [cx, cz] = corners[vi];
+        const [u, v] = uvOf(cx, cz);
+        buf.push((x + cx) * 16, y * 16 + hOf(cx, cz), (z + cz) * 16, u * 16, v * 16, tex, 2, 3 | (mat << 3), s, k, temp, hum);
+      }
+    }
   }
 
   // Slabs, stairs, doors, fences, panes, ladders, signs, chests: boxes from the block's state and

@@ -1101,7 +1101,7 @@ function saplingSprite(t, leaf, stem, spruce = false) {
       const half = spruce ? Math.floor((y - 1) * 0.55) + 1 : Math.round(3.6 - Math.abs(y - 5) * 0.75);
       for (let x = 7 - half; x <= 8 + half; x++) {
         if (rand() < 0.2) continue;
-        t.set(x, y, scalec(leaf, 0.8 + rand() * 0.4), 1);
+        t.set(x, y, scalec(leaf, 0.8 + rand() * 0.4).map((v) => Math.min(255, v)), 1);
       }
     }
   });
@@ -1183,6 +1183,254 @@ Object.assign(GEN, {
     t.normalStrength = 1.3;
   },
 });
+
+// ---------- the 384-high world: new woods, badlands, crops, rails, structures ----------
+const WOOD2 = {
+  jungle: { light: [170, 122, 84], dark: [138, 96, 62], seam: [90, 60, 38], bark: [92, 72, 40], barkDark: [70, 54, 28], groove: [50, 38, 18], ringLight: [178, 132, 90], ringDark: [148, 106, 70] },
+  acacia: { light: [196, 104, 58], dark: [164, 84, 44], seam: [110, 56, 28], bark: [112, 104, 96], barkDark: [86, 80, 72], groove: [64, 58, 52], ringLight: [196, 110, 64], ringDark: [168, 88, 48] },
+  dark_oak: { light: [96, 66, 38], dark: [74, 50, 28], seam: [44, 30, 16], bark: [66, 52, 34], barkDark: [48, 36, 22], groove: [32, 24, 14], ringLight: [104, 74, 44], ringDark: [80, 56, 32] },
+  cherry: { light: [232, 196, 190], dark: [212, 168, 162], seam: [160, 110, 110], bark: [58, 36, 44], barkDark: [42, 26, 32], groove: [28, 16, 22], ringLight: [220, 170, 166], ringDark: [190, 136, 136] },
+};
+for (const [w, pal] of Object.entries(WOOD2)) {
+  GEN[w + '_planks'] = (t) => planks(t, pal);
+  GEN[w + '_log'] = (t) => bark(t, { light: pal.bark, dark: pal.barkDark, groove: pal.groove });
+  GEN[w + '_log_top'] = (t) => logTop(t, { bark: pal.bark, ringLight: pal.ringLight, ringDark: pal.ringDark });
+}
+GEN.jungle_leaves = (t) => leaves(t, { density: 0.9, cells: 6 });
+GEN.acacia_leaves = (t) => leaves(t, { density: 0.72, cells: 5 });
+GEN.dark_oak_leaves = (t) => {
+  // denser and darker than oak: dark forests are dim under their canopy
+  leaves(t, { density: 0.92, cells: 5 });
+  for (let i = 0; i < t.albedo.length; i += 4) { t.albedo[i] *= 0.62; t.albedo[i + 1] *= 0.7; t.albedo[i + 2] *= 0.6; }
+};
+GEN.cherry_leaves = (t) => {
+  leaves(t, { density: 0.82, cells: 5 });
+  // pink blossom (drawn in colour: cherry leaves are not tinted)
+  t.each((x, y, i) => {
+    const a = t.albedo[i * 4 + 3];
+    if (a < 0.5) return;
+    const g = t.albedo[i * 4] / 255;
+    const c = mixc([236, 150, 196], [255, 214, 236], clamp01((g - 0.35) * 1.8));
+    t.set(x, y, pnoise(x, y, t.seed + 21) > 0.93 ? [255, 240, 248] : c, 1);
+  });
+};
+GEN.jungle_sapling = (t) => saplingSprite(t, [60, 150, 40], [110, 80, 44]);
+GEN.acacia_sapling = (t) => saplingSprite(t, [110, 150, 40], [120, 110, 100]);
+GEN.dark_oak_sapling = (t) => saplingSprite(t, [50, 110, 36], [74, 54, 30]);
+GEN.cherry_sapling = (t) => saplingSprite(t, [240, 160, 200], [70, 44, 52]);
+GEN.red_sand = (t) => sandLike(t, [190, 102, 42]);
+const TERRA = { white: [210, 178, 160], orange: [162, 84, 38], yellow: [186, 134, 36], brown: [78, 52, 36], red: [144, 62, 48], light_gray: [136, 108, 98] };
+for (const [c, rgb] of Object.entries(TERRA)) GEN[c + '_terracotta'] = (t) => sandLike(t, rgb, { rough: 0.75, normal: 0.45 });
+Object.assign(GEN, {
+  vine: (t) => plantSprite(t, (t) => {
+    const rand = mulberry32(t.seed);
+    for (let k = 0; k < 7; k++) {
+      let x = Math.floor(rand() * S), y = 0;
+      while (y < S) {
+        t.set(x, y, [120 + rand() * 40, 120 + rand() * 40, 120 + rand() * 40], 1);
+        if (rand() < 0.35) t.set(wrap(x + 1, S), y, [150, 150, 150], 1);
+        y++;
+        if (rand() < 0.3) x = wrap(x + (rand() < 0.5 ? -1 : 1), S);
+      }
+    }
+  }),
+  lily_pad: (t) => plantSprite(t, (t) => {
+    const c = 7.5;
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const dx = x - c, dy = y - c;
+      const r = Math.hypot(dx, dy);
+      const notch = Math.abs(Math.atan2(dy, dx) - 0.6) < 0.35 && r > 1;
+      if (r < 7.2 && !notch) t.set(x, y, [110 + pnoise(x, y, 3) * 40, 110 + pnoise(x, y, 4) * 40, 110], 1);
+    }
+  }),
+  sugar_cane: (t) => plantSprite(t, (t) => {
+    for (const x0 of [3, 8, 12]) for (let y = 0; y < S; y++) {
+      const joint = (y + x0) % 5 === 0;
+      t.set(x0, y, joint ? [160, 200, 110] : [120, 176, 80], 1);
+      t.set(x0 + 1, y, joint ? [140, 180, 96] : [100, 156, 66], 1);
+      if (y % 7 === x0 % 7) t.set(x0 + 2, y, [110, 170, 70], 1);
+    }
+  }),
+  melon_side: (t) => t.each((x, y, i) => {
+    const stripe = Math.floor((x + Math.sin(y * 0.8) * 0.8) / 3) % 2;
+    t.set(x, y, scalec(stripe ? [96, 150, 36] : [132, 180, 44], 0.9 + pnoise(x, y, t.seed) * 0.2));
+    t.height[i] = stripe ? 0.4 : 0.6; t.rough[i] = 0.55;
+  }),
+  melon_top: (t) => t.each((x, y, i) => {
+    const r = Math.hypot(x - 7.5, y - 7.5);
+    const c = r < 1.5 ? [110, 92, 30] : Math.floor(r) % 3 === 0 ? [96, 150, 36] : [132, 180, 44];
+    t.set(x, y, scalec(c, 0.9 + pnoise(x, y, t.seed) * 0.2)); t.height[i] = 0.5; t.rough[i] = 0.55;
+  }),
+  pink_petals: (t) => plantSprite(t, (t) => {
+    const rand = mulberry32(t.seed);
+    for (let k = 0; k < 9; k++) {
+      const cx = Math.floor(rand() * 14) + 1, cy = Math.floor(rand() * 14) + 1;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1]]) t.set(cx + dx, cy + dy, dx || dy ? [246, 170, 206] : [255, 226, 120], 1);
+    }
+    for (let k = 0; k < 6; k++) t.set(Math.floor(rand() * S), Math.floor(rand() * S), [90, 150, 50], 1);
+  }),
+  dirt_path_top: (t) => sandLike(t, [150, 124, 72], { rough: 0.85 }),
+  dirt_path_side: (t) => {
+    dirtLike(t);
+    t.each((x, y, i) => { if (y < 2) { t.set(x, y, scalec([150, 124, 72], 0.9 + pnoise(x, y, t.seed) * 0.2)); t.height[i] = 0.6; } });
+  },
+  hay_side: (t) => t.each((x, y, i) => {
+    const band = y === 3 || y === 12;
+    const c = band ? [130, 60, 30] : scalec([206, 170, 50], 0.8 + pnoise(x, y, t.seed) * 0.3 + (x % 2) * 0.05);
+    t.set(x, y, c); t.height[i] = band ? 0.3 : 0.5 + (x % 2) * 0.2; t.rough[i] = 0.95;
+  }),
+  hay_top: (t) => t.each((x, y, i) => {
+    t.set(x, y, scalec([210, 176, 56], 0.75 + pnoise(x, y, t.seed) * 0.4)); t.height[i] = pnoise(x, y, t.seed + 1); t.rough[i] = 0.95;
+  }),
+  lantern: (t) => t.each((x, y, i) => {
+    const frame = x < 2 || x > 13 || y < 2 || y > 13 || x === 7 || x === 8;
+    if (frame) { t.set(x, y, [70, 70, 78]); t.metal[i] = 1; t.rough[i] = 0.4; t.height[i] = 0.8; }
+    else { t.set(x, y, mixc([255, 214, 120], [255, 170, 60], pnoise(x, y, t.seed))); t.emit[i] = 1; t.height[i] = 0.4; t.rough[i] = 0.3; }
+  }),
+  rail: (t) => railTex(t, false, false),
+  rail_corner: (t) => railTex(t, true, false),
+  powered_rail: (t) => railTex(t, false, true),
+  iron_door_top: (t) => ironDoor(t, true),
+  iron_door_bottom: (t) => ironDoor(t, false),
+  tnt_side: (t) => t.each((x, y, i) => {
+    const band = y >= 5 && y <= 10;
+    let c = band ? [236, 232, 224] : (x % 4 === 0 ? [150, 40, 30] : [206, 58, 42]);
+    if (band && y >= 6 && y <= 9) { const txt = ['.###.#..#.###.', '..#..##.#..#..', '..#..#.##..#..', '..#..#..#..#..'][y - 6]; if (txt[x - 1] === '#') c = [30, 30, 30]; }
+    t.set(x, y, c); t.height[i] = band ? 0.6 : 0.5; t.rough[i] = 0.8;
+  }),
+  tnt_top: (t) => t.each((x, y, i) => {
+    const hole = Math.hypot(x - 7.5, y - 7.5) < 2;
+    t.set(x, y, hole ? [40, 36, 30] : scalec([206, 58, 42], 0.9 + pnoise(x, y, t.seed) * 0.2)); t.height[i] = hole ? 0.2 : 0.6;
+  }),
+  tnt_bottom: (t) => t.each((x, y, i) => { t.set(x, y, scalec([190, 52, 38], 0.9 + pnoise(x, y, t.seed) * 0.2)); t.height[i] = 0.5; }),
+  cobweb: (t) => plantSprite(t, (t) => {
+    for (let k = 0; k < S; k++) { t.set(k, k, [236, 236, 236], 1); t.set(S - 1 - k, k, [236, 236, 236], 1); t.set(7, k, [220, 220, 220], 1); t.set(k, 8, [220, 220, 220], 1); }
+    for (const r of [3, 6]) for (let a = 0; a < 32; a++) { const ang = (a / 32) * Math.PI * 2; t.set(Math.round(7.5 + Math.cos(ang) * r), Math.round(7.5 + Math.sin(ang) * r), [210, 210, 210], 1); }
+  }),
+  spawner: (t) => {
+    t.cutout = true;
+    t.each((x, y, i) => {
+      const bar = x % 5 === 0 || y % 5 === 0 || x === S - 1 || y === S - 1;
+      t.set(x, y, bar ? mixc([40, 44, 56], [70, 78, 96], pnoise(x, y, t.seed)) : [0, 0, 0], bar ? 1 : 0);
+      t.metal[i] = 1; t.rough[i] = 0.4; t.height[i] = 0.8;
+    });
+  },
+  prismarine: (t) => t.each((x, y, i) => {
+    const n = tfbm(x / S, y / S, 3, 3, t.seed);
+    t.set(x, y, mixc([70, 140, 130], [110, 180, 160], clamp01(n * 1.3 + pnoise(x, y, t.seed) * 0.2)));
+    t.height[i] = n; t.rough[i] = 0.35;
+  }),
+  prismarine_bricks: (t) => bricksPattern(t, { brick: [100, 172, 150], mortar: [60, 110, 96] }, 8, 4, { rough: 0.35 }),
+  dark_prismarine: (t) => bricksPattern(t, { brick: [52, 92, 76], mortar: [30, 56, 46] }, 8, 8, { rough: 0.35 }),
+  purpur_block: (t) => bricksPattern(t, { brick: [168, 122, 168], mortar: [126, 88, 126] }, 8, 8),
+  purpur_pillar: (t) => t.each((x, y, i) => {
+    const groove = x === 2 || x === 13;
+    t.set(x, y, scalec(groove ? [130, 92, 130] : [170, 124, 170], 0.92 + pnoise(x, y, t.seed) * 0.14)); t.height[i] = groove ? 0.2 : 0.6;
+  }),
+  purpur_pillar_top: (t) => t.each((x, y, i) => {
+    const edge = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
+    t.set(x, y, scalec(edge > 5 ? [150, 108, 150] : [174, 128, 174], 0.92 + pnoise(x, y, t.seed) * 0.12)); t.height[i] = edge > 5 ? 0.4 : 0.6;
+  }),
+  end_rod: (t) => t.each((x, y, i) => {
+    t.set(x, y, mixc([240, 232, 230], [255, 255, 250], pnoise(x, y, t.seed))); t.emit[i] = 1; t.height[i] = 0.6; t.rough[i] = 0.3;
+  }),
+  enchanting_table_top: (t) => t.each((x, y, i) => {
+    const edge = x < 2 || x > 13 || y < 2 || y > 13;
+    let c = edge ? [150, 30, 36] : [40, 26, 60];
+    if (!edge && (x + y) % 5 === 0) c = [70, 190, 210];
+    if (!edge && Math.abs(x - y) < 1) c = [230, 200, 150];
+    t.set(x, y, c); t.height[i] = edge ? 0.7 : 0.4; t.rough[i] = 0.5;
+  }),
+  enchanting_table_side: (t) => t.each((x, y, i) => {
+    const top = y < 4;
+    t.set(x, y, top ? (y === 3 ? [110, 20, 26] : [150, 30, 36]) : mixc([22, 16, 30], [40, 30, 56], pnoise(x, y, t.seed)));
+    if (!top && (x * 7 + y * 3) % 11 === 0) t.set(x, y, [120, 60, 200]);
+    t.height[i] = top ? 0.7 : 0.4; t.rough[i] = top ? 0.7 : 0.25;
+  }),
+  brewing_stand: (t) => plantSprite(t, (t) => {
+    for (let y = 1; y < S; y++) { t.set(7, y, [150, 120, 70], 1); t.set(8, y, [120, 96, 56], 1); }
+    for (const [x, y] of [[3, 6], [12, 6], [5, 11], [10, 11]]) { t.set(x, y, [200, 200, 220], 1); t.set(x, y + 1, [120, 80, 180], 1); }
+  }),
+  brewing_stand_base: (t) => stoneLike(t, { base: [110, 110, 112] }),
+  lapis_ore: (t) => oreFlecks(t, [36, 80, 200], { rough: 0.4, clusters: 5 }),
+  lapis_block: (t) => t.each((x, y, i) => {
+    const n = tfbm(x / S, y / S, 3, 3, t.seed);
+    t.set(x, y, mixc([26, 58, 160], [60, 100, 220], clamp01(n * 1.2 + pnoise(x, y, t.seed) * 0.25))); t.height[i] = n; t.rough[i] = 0.4;
+  }),
+  emerald_ore: (t) => oreFlecks(t, [40, 220, 100], { rough: 0.15, clusters: 3 }),
+  wither_skull: (t) => t.each((x, y, i) => { t.set(x, y, scalec([46, 46, 46], 0.85 + pnoise(x, y, t.seed) * 0.3)); t.height[i] = 0.5; }),
+  wither_skull_top: (t) => t.each((x, y, i) => { t.set(x, y, scalec([52, 52, 52], 0.85 + pnoise(x, y, t.seed) * 0.3)); t.height[i] = 0.5; }),
+  wither_skull_face: (t) => t.each((x, y, i) => {
+    let c = scalec([46, 46, 46], 0.85 + pnoise(x, y, t.seed) * 0.3);
+    if (y >= 6 && y <= 8 && ((x >= 4 && x <= 6) || (x >= 9 && x <= 11))) c = [10, 10, 10];
+    if (y === 12 && x >= 5 && x <= 10 && x % 2 === 0) c = [14, 14, 14];
+    t.set(x, y, c); t.height[i] = 0.5;
+  }),
+});
+// crops: carrots and potatoes (4 stages), nether wart (3)
+for (let stage = 0; stage < 4; stage++) {
+  GEN['carrots_stage_' + stage] = (t) => plantSprite(t, (t) => cropSprite(t, stage, [70, 150, 44], stage === 3 ? [240, 130, 30] : null));
+  GEN['potatoes_stage_' + stage] = (t) => plantSprite(t, (t) => cropSprite(t, stage, [80, 150, 50], stage === 3 ? [210, 176, 100] : null));
+}
+for (let stage = 0; stage < 3; stage++) {
+  GEN['nether_wart_stage_' + stage] = (t) => plantSprite(t, (t) => {
+    const h = [4, 7, 10][stage];
+    for (const x0 of [3, 7, 11]) for (let k = 0; k < h; k++) {
+      const y = S - 1 - k, x = x0 + (k % 3 === 1 ? 1 : 0);
+      t.set(x, y, k > h - 3 ? [170, 30, 40] : [130, 20, 30], 1);
+      if (k === h - 1) { t.set(x - 1, y, [190, 40, 50], 1); t.set(x + 1, y, [190, 40, 50], 1); }
+    }
+  });
+}
+function cropSprite(t, stage, green, fruit) {
+  const h = [3, 6, 9, 11][stage];
+  for (const x0 of [2, 6, 10, 13]) {
+    for (let k = 0; k < h; k++) {
+      const y = S - 1 - k, x = x0 + (k > h / 2 && x0 % 2 ? 1 : 0);
+      t.set(x, y, scalec(green, 0.85 + pnoise(x, y, t.seed) * 0.3), 1);
+      if (k > 1 && k % 2 === 0) t.set(x + 1, y, scalec(green, 1.1), 1);
+    }
+    if (fruit) { t.set(x0, S - 1, fruit, 1); t.set(x0 + 1, S - 1, fruit, 1); t.set(x0, S - 2, scalec(fruit, 0.85), 1); }
+  }
+}
+function railTex(t, corner, powered) {
+  plantSprite(t, (t) => {
+    const tie = [110, 84, 50], railC = powered ? [214, 170, 50] : [168, 168, 172];
+    // wooden ties across, two rails along
+    for (let y = 1; y < S; y += 3) for (let x = 1; x < S - 1; x++) {
+      if (corner && Math.hypot(x - 15, y - 15) > 13.5) continue;
+      t.set(x, y, scalec(tie, 0.9 + pnoise(x, y, t.seed) * 0.2), 1);
+      t.set(x, y + 1, scalec(tie, 0.7), 1);
+    }
+    if (!corner) {
+      for (let y = 0; y < S; y++) for (const x of [2, 3, 12, 13]) t.set(x, y, x === 2 || x === 12 ? railC : scalec(railC, 0.75), 1);
+      if (powered) for (let y = 1; y < S; y += 4) { t.set(7, y, [230, 40, 30], 1); t.set(8, y, [230, 40, 30], 1); }
+    } else {
+      // the rails curve from the bottom edge to the right edge, around the bottom-right corner
+      for (let a = 0; a <= 64; a++) {
+        const ang = Math.PI + (a / 64) * (Math.PI / 2);
+        for (const [r, c] of [[12.5, railC], [11.5, scalec(railC, 0.75)], [2.5, railC], [3.5, scalec(railC, 0.75)]]) {
+          const x = Math.round(16 + Math.cos(ang) * r), y = Math.round(16 + Math.sin(ang) * r);
+          if (x >= 0 && x < S && y >= 0 && y < S) t.set(x, y, c, 1);
+        }
+      }
+    }
+  });
+  t.each((x, y, i) => { t.metal[i] = t.albedo[i * 4 + 1] > 150 ? 1 : 0; });
+}
+function ironDoor(t, top) {
+  t.each((x, y, i) => {
+    const edge = x <= 1 || x >= 14 || (top ? y <= 1 : y >= 14);
+    let c = mixc([176, 176, 182], [210, 210, 216], pnoise(x, y, t.seed));
+    if (edge) c = [120, 120, 128];
+    if (!edge && (x === 5 || x === 10)) c = [150, 150, 158];
+    if (top && y >= 3 && y <= 7 && x >= 3 && x <= 12 && !(x === 5 || x === 10 || x === 7 || x === 8)) c = [60, 60, 66];
+    if (!top && y >= 2 && y <= 3 && x >= 11 && x <= 12) c = [90, 90, 96];
+    t.set(x, y, c);
+    t.height[i] = edge ? 0.4 : 0.7; t.metal[i] = 1; t.rough[i] = 0.35;
+  });
+  t.normalStrength = 1.2;
+}
 
 // One pixel-pack texture by name (the HD pack falls back on these for textures it has no
 // detailed version of).

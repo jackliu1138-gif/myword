@@ -249,6 +249,9 @@ vec3 grassTint(float t, float h) {
   vec3 c = mix(cold, temperate, smoothstep(0.15, 0.45, t));
   c = mix(c, lush, smoothstep(0.55, 0.8, h) * smoothstep(0.3, 0.6, t));
   c = mix(c, dry, smoothstep(0.62, 0.85, t) * (1.0 - smoothstep(0.4, 0.7, h)));
+  // the ends of the range: swamps (murky) and badlands (dusty olive)
+  c = mix(c, vec3(0.40, 0.44, 0.22), smoothstep(0.9, 0.97, h));
+  c = mix(c, vec3(0.58, 0.52, 0.30), smoothstep(0.92, 0.98, t) * (1.0 - smoothstep(0.05, 0.12, h)));
   return c;
 }
 vec3 foliageTint(float t, float h) {

@@ -83,7 +83,7 @@ test('inventory saves armour and loads older 36-slot saves', () => {
   inv.add(BLOCK.STONE, 10);
   inv.armor[3] = { id: ITEM.NETHERITE_BOOTS, count: 1, wear: 7 };
   const data = inv.serialize();
-  assert.equal(data.length, 49);
+  assert.equal(data.length, 50); // 45 slots, 4 armour, the offhand
   const b = new Inventory();
   b.load(data);
   assert.deepEqual(b.armor[3], { id: ITEM.NETHERITE_BOOTS, count: 1, wear: 7 });

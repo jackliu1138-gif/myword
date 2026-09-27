@@ -5,6 +5,7 @@
 import { BLOCKS, FACE_TEX, TINT, LAYER, SHAPE } from '../world/blocks.js';
 import { hash2 } from '../world/noise.js';
 import { itemDef, isBlockItem } from '../sim/items.js';
+import { NEW_SKINS, NEW_MODELS, SKIN_VARIANTS, newPose, VILLAGER_JOBS, CAT_COLORS, HORSE_COLORS, FISH_COLORS } from './mobmodels.js';
 
 const SKIN = 64;
 const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
@@ -215,6 +216,8 @@ const SKINS = {
   },
 };
 
+Object.assign(SKINS, NEW_SKINS);
+
 // armour colours: base, rim, highlight
 const ARMOR_COLORS = {
   leather: [[150, 94, 58], [104, 62, 36], [182, 124, 82]],
@@ -408,6 +411,26 @@ export const MODELS = {
   },
 };
 
+for (const [k, m] of Object.entries(NEW_MODELS)) MODELS[k] = m.model ? { ...m, parts: MODELS[m.model].parts } : m;
+MODELS.elder_guardian = { model: 'guardian', scale: 2.3, parts: MODELS.guardian.parts, skinKey: 'guardian:elder' };
+
+// variants (numbers in snapshots) -> their skins
+const JOB_KEYS = Object.keys(VILLAGER_JOBS), CAT_KEYS = Object.keys(CAT_COLORS), HORSE_KEYS = Object.keys(HORSE_COLORS), FISH_KEYS = Object.keys(FISH_COLORS);
+export { JOB_KEYS, CAT_KEYS, HORSE_KEYS, FISH_KEYS };
+// The skin layer a creature is drawn with.
+export function skinKeyOf(e) {
+  const v = e.variant | 0;
+  switch (e.type) {
+    case 'sheep': return v ? 'sheep:' + v : 'sheep';
+    case 'villager': return 'villager:' + (JOB_KEYS[v] || 'none');
+    case 'cat': return 'cat:' + (CAT_KEYS[v] || 'tabby');
+    case 'horse': return 'horse:' + (HORSE_KEYS[v] || 'brown');
+    case 'tropical_fish': return 'tropical_fish:' + (FISH_KEYS[v] || 'orange');
+    case 'wolf': return 'wolf:' + (e.flags & 512 || e.mode === 'chase' ? 'angry' : e.flags & 128 ? 'tame' : 'wild');
+    default: return (MODELS[e.type] && MODELS[e.type].skinKey) || e.type;
+  }
+}
+
 // ---------- skin atlas: every face of every part gets its own rect ----------
 export function buildSkins(woolColors = {}) {
   const types = Object.keys(MODELS);
@@ -438,12 +461,13 @@ export function buildSkins(woolColors = {}) {
       (model.rects[r.name] ||= {})[r.f] = [sh.x, sh.y, r.w, r.h];
       sh.x += r.w;
     }
+    const painter = SKINS[model.skin || type] || SKINS[model.model] || SKINS.zombie;
     for (const [name] of model.parts) {
       for (const f of FACES) {
         const [cx, cy, fw, fh] = model.rects[name][f];
         for (let v = 0; v < fh; v++) {
           for (let u = 0; u < fw; u++) {
-            const c = SKINS[type](name, f, u, v, fw, fh);
+            const c = painter(name, f, u, v, fw, fh, model.skin ? type : undefined);
             const o = ((cy + v) * SKIN + cx + u) * 4;
             if (!c) continue;
             px[o] = Math.max(0, Math.min(255, c[0])); px[o + 1] = Math.max(0, Math.min(255, c[1])); px[o + 2] = Math.max(0, Math.min(255, c[2])); px[o + 3] = 255;
@@ -488,6 +512,27 @@ export function buildSkins(woolColors = {}) {
     }
     layerOf['armor:' + variant] = layers.length;
     layers.push(px);
+  }
+  // creatures that come in several looks (villagers' jobs, cats' and horses' coats...)
+  for (const [type, variants] of Object.entries(SKIN_VARIANTS)) {
+    const model = MODELS[type];
+    if (!model) continue;
+    for (const variant of variants) {
+      const px = new Uint8Array(SKIN * SKIN * 4);
+      for (const [name] of model.parts) {
+        for (const f of FACES) {
+          const [cx, cy, fw, fh] = model.rects[name][f];
+          for (let v = 0; v < fh; v++) for (let u = 0; u < fw; u++) {
+            const c = SKINS[type](name, f, u, v, fw, fh, variant);
+            if (!c) continue;
+            const o = ((cy + v) * SKIN + cx + u) * 4;
+            px[o] = Math.max(0, Math.min(255, c[0])); px[o + 1] = Math.max(0, Math.min(255, c[1])); px[o + 2] = Math.max(0, Math.min(255, c[2])); px[o + 3] = 255;
+          }
+        }
+      }
+      layerOf[type + ':' + variant] = layers.length;
+      layers.push(px);
+    }
   }
   // coloured sheep: the same skin with the wool repainted
   for (const [key, color] of Object.entries(woolColors)) {
@@ -650,7 +695,11 @@ function pose(e, type, t) {
     const flap = e.onGround === false ? Math.abs(Math.sin(t * 22)) * 1.1 : 0;
     r.wingR = [0, 0, -flap];
     r.wingL = [0, 0, flap];
-  }
+  } else newPose(r, e, type, t, { sw, walk, amt, headYaw, headPitch });
+  if (type === 'sheep' && e.flags & 64) r.__hide = new Set(['wool', 'headWool']); // sheared
+  if (type === 'player' && e.sitting) { r.rightLeg = [-1.4, 0.15, 0]; r.leftLeg = [-1.4, -0.15, 0]; }
+  if (type === 'player' && e.gliding) { r.rightArm = [0.1, 0, 0.35]; r.leftArm = [0.1, 0, -0.35]; r.rightLeg = [0.05, 0, 0.08]; r.leftLeg = [0.05, 0, -0.08]; }
+  if ((type === 'player' || type === 'zombie' || type === 'skeleton') && e.blocking) r.leftArm = [1.1, 0.5, 0];
   return r;
 }
 
@@ -700,7 +749,11 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   }
   let swell = 1;
   if (type === 'creeper' && e.fuse > 0) swell = 1 + (e.fuse / 1.5) * 0.25 + Math.sin(e.fuse * 40) * 0.02;
+  if (type === 'tnt' && e.fuse > 0 && e.fuse < 0.6) swell = 1 + (0.6 - e.fuse) * 0.25;
   if (model.scale) scale *= model.scale;
+  if (e.renderScale) scale *= e.renderScale;
+  if (e.gliding) root = mul(root, mat(-Math.PI / 2 + (e.glidePitch || 0), 0, 0, 0, 0.9, 0.0));
+  const hide = rots.__hide;
   const byName = {};
   for (const part of model.parts) {
     const [name, pivot, box, , parent] = part;
@@ -710,8 +763,11 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
       ? mul(byName[parent], mat(rot[0], rot[1], rot[2], pivot[0], pivot[1], pivot[2], 1))
       : mul(root, mat(rot[0], rot[1], rot[2], pivot[0] * scale * swell, pivot[1] * scale * swell, pivot[2] * scale * swell, scale * swell));
     byName[name] = m;
+    if (hide && hide.has(name)) continue;
     o = emitBox(out, o, m, box, model.rects[name], layer, light, tint);
   }
+  if (gear && gear.wings && byName.body) o = emitWings(out, o, byName.body, e, skins, light, tint, t);
+  if (gear && gear.offhand && byName.leftArm) o = emitOffhand(out, o, byName.leftArm, gear, light, e);
   if (!gear) return o;
   // armour over the body parts it covers
   if (gear.armor && byName.head) {
@@ -750,6 +806,37 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
     }
   }
   return o;
+}
+
+// Elytra on a player's back: folded down, or spread out while gliding.
+function emitWings(out, o, bodyM, e, skins, light, tint, t) {
+  const model = MODELS.elytra;
+  const layer = skins.layerOf.elytra;
+  if (layer === undefined || !model.rects) return o;
+  const spread = e.gliding ? 1.25 + Math.sin(t * 9) * 0.03 : 0.22;
+  const back = e.gliding ? 0.1 : 0.2;
+  for (const [name, pivot, box] of model.parts) {
+    const side = name === 'wingR' ? 1 : -1;
+    const m = mul(bodyM, mat(back, side * (e.gliding ? 0.15 : 0.08), side * spread, pivot[0], pivot[1], pivot[2], 1));
+    o = emitBox(out, o, m, box, model.rects[name], layer, light, tint);
+  }
+  return o;
+}
+
+// What is in the other hand: a shield (raised in front while blocking) or an item's sprite.
+function emitOffhand(out, o, armM, gear, light, e) {
+  const id = gear.offhand;
+  const d = itemDef(id);
+  if (!d) return o;
+  if (d.kind === 'shield' && gear.skins && gear.skins.layerOf.shield !== undefined) {
+    const model = MODELS.shield;
+    const m = mul(armM, e.blocking ? mat(-1.2, -0.5, 0, 1, -9, -3, 1) : mat(0, Math.PI / 2, 0, 2.5, -9, 0, 1));
+    return emitBox(out, o, m, model.parts[0][2], model.rects.plate, gear.skins.layerOf.shield, light, [0, 0, 0, 0]);
+  }
+  if (isBlockItem(id)) return emitBlockCubeM(out, o, id, mul(armM, mat(0, 0.6, 0, 0, -11.5, -2.5, 6)), light);
+  const sl = gear.sprites && gear.sprites.index.get(id);
+  if (sl === undefined) return o;
+  return emitSpriteM(out, o, sl, mul(armM, mat(-0.2, Math.PI / 2, 0, 0, -12.5, -1.5, 7)), light);
 }
 
 export function modelVertexCount(type) {

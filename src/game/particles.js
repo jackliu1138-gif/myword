@@ -43,6 +43,28 @@ export class Particles {
     });
   }
 
+  // A glowing spark (fireworks, elytra trails, potion swirls, enchanting): additive, lit by itself.
+  // color: linear-ish rgb 0..1 (more than 1 blooms); gravity and drag in blocks/s.
+  spark(x, y, z, vx, vy, vz, color, { life = 1, size = 0.06, gravity = 0, drag = 0, twinkle = false, fade = true } = {}) {
+    if (this.list.length > 2400) return;
+    this.list.push({ kind: 'spark', x, y, z, vx, vy, vz, life, max: life, size, color, gravity, drag, twinkle, fade, sky: 1, block: 1, layer: 0, u: 0, v: 0, angle: 0, spin: 0 });
+  }
+
+  // A firework's burst: a ball of stars in its colours that fall and fade, with a few crackles.
+  fireworkBurst(pos, colors) {
+    const n = 110;
+    for (let i = 0; i < n; i++) {
+      const c = colors[i % colors.length];
+      const col = [c[0] / 255 * 5, c[1] / 255 * 5, c[2] / 255 * 5];
+      // points on a sphere, a little uneven
+      const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u);
+      const sp = 7 + Math.random() * 2.5;
+      this.spark(pos[0], pos[1], pos[2], r * Math.cos(th) * sp, u * sp, r * Math.sin(th) * sp, col, { life: 1.3 + Math.random() * 0.9, size: 0.09, gravity: 3, drag: 1.6, twinkle: Math.random() < 0.4 });
+    }
+    // a white flash at the heart of it
+    for (let i = 0; i < 10; i++) this.spark(pos[0], pos[1], pos[2], (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, [8, 8, 7], { life: 0.25, size: 0.5, drag: 3 });
+  }
+
   update(dt, wind = [1.2, 0.4], time = 0) {
     const w = this.world;
     const out = [];
@@ -50,6 +72,14 @@ export class Particles {
     for (const p of this.list) {
       p.life -= dt;
       if (p.life <= 0) continue;
+      if (p.kind === 'spark') {
+        const k = Math.exp(-p.drag * dt);
+        p.vx *= k; p.vy *= k; p.vz *= k;
+        p.vy -= p.gravity * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        out.push(p);
+        continue;
+      }
       if (p.kind === 'leaf') {
         leaves++;
         if (p.landed > 0) { p.landed += dt; out.push(p); continue; }

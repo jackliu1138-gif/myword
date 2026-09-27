@@ -5,7 +5,7 @@
 // helps). Installed as methods on Game.prototype.
 
 import {
-  BLOCK, BLOCKS, IS_SOLID, IS_OPAQUE, IS_LIQUID, SHAPE, SHAPE_OF, MODEL_OF, MODELS_BY_NAME, FACING, facingOf, opposite, COLLIDE_KIND,
+  BLOCK, BLOCKS, IS_SOLID, IS_OPAQUE, IS_LIQUID, SHAPE, SHAPE_OF, MODEL_OF, MODELS_BY_NAME, FACING, facingOf, opposite, COLLIDE_KIND, WORLD_HEIGHT,
 } from '../world/blocks.js';
 import { ITEM, blockDrops } from '../sim/items.js';
 import { newEntity, entityKey, parseKey, tickFurnace, furnaceLit, contentsOf, serializeEntity, loadEntity, loadEntities, serializeEntities } from '../sim/containers.js';
@@ -74,7 +74,7 @@ export function installBuilding(Game) {
     if (!e || entityKindOf(id) === e.kind) return;
     m.delete(k);
     if (this.openBlock && this.openBlock.key === k) this.closeInventory();
-    if (!this.mp) for (const [item, n, wear] of contentsOf(e)) this.sim.dropItem(item, n, x + 0.5, y + 0.5, z + 0.5, null, wear);
+    if (!this.mp) for (const [item, n, wear, ench] of contentsOf(e)) this.sim.dropItem(item, n, x + 0.5, y + 0.5, z + 0.5, null, wear, { ench });
   };
 
   // ---------------------------------------------------------------- chests and furnaces
@@ -524,7 +524,7 @@ export function installBuilding(Game) {
     const rnd = mulberry32((hash3(x, y, z, 777) * 4294967296) >>> 0);
     // trees only grow into air, plants and leaves (and their trunk through the sapling and the soil)
     const set = (wx, wy, wz, b, replaceSolid = false) => {
-      if (wy < 1 || wy > 126) return;
+      if (wy < 1 || wy > WORLD_HEIGHT - 2) return;
       const cur = w.getBlock(wx, wy, wz);
       const soft = cur === 0 || (BLOCKS[cur].replaceable && !IS_LIQUID[cur]) || LEAVES.has(cur) || SAPLINGS.has(cur);
       if (soft || (replaceSolid && SOIL.has(cur))) w.setBlock(wx, wy, wz, b);

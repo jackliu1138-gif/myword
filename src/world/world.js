@@ -1,8 +1,8 @@
 // Chunk storage, streaming around the player, and the generation/meshing worker pool.
 
-import { CHUNK_SIZE, WORLD_HEIGHT, BLOCK, IS_SOLID, IS_LIQUID, BLOCKS, COLLIDE_KIND, TALL_COLLIDE, collisionBoxes } from './blocks.js';
+import { CHUNK_SIZE, WORLD_HEIGHT, BLOCK, IS_SOLID, IS_LIQUID, BLOCKS, COLLIDE_KIND, TALL_COLLIDE, collisionBoxes, layerTop } from './blocks.js';
 import { ChunkMesher } from './mesher.js';
-import { createGenerator } from './dimensions.js';
+import { createGenerator, generate } from './dimensions.js';
 import { Fluids } from './fluids.js';
 
 const CS = CHUNK_SIZE;
@@ -20,8 +20,9 @@ function createWorker() {
 }
 
 class WorkerPool {
-  constructor(seed, count, onResult, dimension = 0) {
+  constructor(seed, count, onResult, dimension = 0, genVersion = 1) {
     this.dimension = dimension;
+    this.genVersion = genVersion;
     this.onResult = onResult;
     this.workers = [];
     this.inflight = [];
@@ -38,7 +39,7 @@ class WorkerPool {
           console.warn('Worker failed, falling back to main thread', e.message || e);
           this.useFallback(seed);
         };
-        w.postMessage({ type: 'init', seed, dimension });
+        w.postMessage({ type: 'init', seed, dimension, gen: genVersion });
         this.workers.push(w);
         this.inflight.push(0);
       }
@@ -54,7 +55,7 @@ class WorkerPool {
     for (const w of this.workers) w.terminate();
     this.workers = [];
     this.inflight = [];
-    const gen = createGenerator(seed, this.dimension);
+    const gen = createGenerator(seed, this.dimension, this.genVersion);
     this.fallback = { gen, mesher: new ChunkMesher(gen) };
     // anything that was in flight is lost; the world re-requests pending chunks
     this.lost = true;
@@ -85,7 +86,7 @@ class WorkerPool {
     while (this.localQueue.length && performance.now() - t0 < budgetMs) {
       const msg = this.localQueue.shift();
       if (msg.type === 'gen') {
-        this.onResult({ id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, blocks: this.fallback.gen.generateChunk(msg.cx, msg.cz) });
+        this.onResult({ id: msg.id, type: 'gen', cx: msg.cx, cz: msg.cz, ...generate(this.fallback.gen, msg.cx, msg.cz) });
       } else if (msg.type === 'mesh') {
         const m = this.fallback.mesher.mesh(msg.cx, msg.cz, msg.chunks, msg.options, msg.states);
         m.type = 'mesh';
@@ -107,6 +108,8 @@ class Chunk {
     this.key = chunkKey(cx, cz);
     this.blocks = null;
     this.states = null; // block states (facing, open, liquid level...), made when the first one is set
+    this.top = H - 1; // the highest layer with anything in it
+    this.features = null; // from its generator: creatures that live there, monster spawners
     this.genRequested = false;
     this.version = 0; // bumps on every block change
     this.meshedVersion = -1;
@@ -118,21 +121,24 @@ class Chunk {
 
 export class World {
   // dimension: 0 the overworld, 1 the nether, 2 the end (see dimensions.js)
-  constructor(seed, { renderDistance = 8, workers = 3, edits = null, meshOptions = null, dimension = 0 } = {}) {
+  // genVersion: which terrain generator the world was made with (see dimensions.js)
+  constructor(seed, { renderDistance = 8, workers = 3, edits = null, meshOptions = null, dimension = 0, genVersion = 1 } = {}) {
     this.seed = seed;
     this.dimension = dimension;
+    this.genVersion = genVersion;
     this.meshOptions = meshOptions || { fancyLeaves: true };
-    this.generator = createGenerator(seed, dimension);
+    this.generator = createGenerator(seed, dimension, genVersion);
     this.chunks = new Map();
     // chunkKey -> Map(index -> id | state << 8): every block changed since generation
     this.edits = edits || new Map();
     this.renderDistance = renderDistance;
     this.meshQueue = []; // results waiting for upload
-    this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r), dimension);
+    this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r), dimension, genVersion);
     this.jobId = 0;
     this.lastCx = null;
     this.lastCz = null;
     this.onChunkUnload = null;
+    this.onFeatures = null; // (chunk, features) when a chunk comes from its generator
     this.onEdit = null; // (x, y, z, id | state << 8) for edits made here (multiplayer sends them on)
     this.onBlockChanged = null; // (x, y, z, id, state) for every change, here or from another player
     this.stats = { generated: 0, meshed: 0 };
@@ -245,6 +251,7 @@ export class World {
     c.blocks[i] = id;
     if (state && !c.states) c.states = new Uint8Array(CS * CS * H);
     if (c.states) c.states[i] = state;
+    if (id && y > c.top) c.top = y;
     if (record) {
       let e = this.edits.get(c.key);
       if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -293,6 +300,8 @@ export class World {
       const c = this.getChunk(r.cx, r.cz);
       if (!c) return; // unloaded meanwhile
       c.blocks = r.blocks;
+      c.states = r.states || null;
+      c.top = r.top ?? layerTop(r.blocks);
       const e = this.edits.get(c.key);
       if (e) {
         for (const [i, v] of e) {
@@ -301,7 +310,12 @@ export class World {
             if (!c.states) c.states = new Uint8Array(CS * CS * H);
             c.states[i] = v >> 8;
           } else if (c.states) c.states[i] = 0;
+          if (v & 255 && i >> 8 > c.top) c.top = i >> 8;
         }
+      }
+      if (r.features) {
+        c.features = r.features;
+        if (this.onFeatures) this.onFeatures(c, r.features);
       }
       this.stats.generated++;
     } else if (r.type === 'mesh') {
@@ -337,8 +351,10 @@ export class World {
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
         const n = this.getChunk(c.cx + dx, c.cz + dz);
-        chunks.push(n.blocks.slice());
-        states.push(n.states ? n.states.slice() : null);
+        // only up to the highest layer anything is in (and one of sky over it)
+        const end = Math.min(H, n.top + 2) << 8;
+        chunks.push(n.blocks.slice(0, end));
+        states.push(n.states ? n.states.slice(0, end) : null);
       }
     }
     c.meshInFlight = true;
@@ -481,9 +497,15 @@ export class World {
     return y - 40;
   }
 
+  // The highest layer anything is in around (x, z): nothing above it but sky.
+  columnTop(x, z) {
+    const c = this.getChunk(Math.floor(x / CS), Math.floor(z / CS));
+    return c && c.blocks ? Math.min(H - 1, c.top + 1) : H - 1;
+  }
+
   // Height of the highest solid (or liquid) block in a column, ignoring tree canopies.
   surfaceHeight(x, z, { skipFoliage = true } = {}) {
-    for (let y = H - 1; y > 0; y--) {
+    for (let y = this.columnTop(x, z); y > 0; y--) {
       const b = this.getBlock(x, y, z);
       if (skipFoliage && (BLOCKS[b].wave === 1 || BLOCKS[b].key.endsWith('_log'))) continue;
       if (IS_SOLID[b] || IS_LIQUID[b]) return y;

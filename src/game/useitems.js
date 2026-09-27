@@ -3,7 +3,7 @@
 // fires and nether portals with flint and steel, throwing ender pearls and eyes of ender, and
 // putting eyes into end portal frames. Installed as methods on Game.prototype.
 
-import { BLOCK, BLOCKS, IS_BED, BED_PARTNER, IS_SOLID, IS_LIQUID } from '../world/blocks.js';
+import { BLOCK, BLOCKS, IS_BED, BED_PARTNER, IS_SOLID, IS_LIQUID, WORLD_HEIGHT } from '../world/blocks.js';
 import { SAPLINGS } from './building.js';
 import { ITEM, itemDef, BED_ITEMS } from '../sim/items.js';
 import { ARMOR_REF } from '../sim/inventory.js';
@@ -233,7 +233,7 @@ export function installUse(Game) {
           const [x, y, z] = e.pos;
           // land on top of whatever the pearl hit
           let ty = Math.floor(y);
-          while (ty < 127 && (IS_SOLID[this.world.getBlock(Math.floor(x), ty, Math.floor(z))] || IS_SOLID[this.world.getBlock(Math.floor(x), ty + 1, Math.floor(z))])) ty++;
+          while (ty < WORLD_HEIGHT - 1 && (IS_SOLID[this.world.getBlock(Math.floor(x), ty, Math.floor(z))] || IS_SOLID[this.world.getBlock(Math.floor(x), ty + 1, Math.floor(z))])) ty++;
           p.pos = [x, ty + 0.01, z];
           p.vel = [0, 0, 0];
           this.audio.sfx('teleport', 0.8, 0);

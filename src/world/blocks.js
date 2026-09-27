@@ -1,13 +1,24 @@
 // Block registry. Pure data so it can be shared by the main thread and workers.
 
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 128;
-export const SEA_LEVEL = 50;
+// Blocks are stored 384 high (as in Minecraft today). Worlds made before that keep the terrain
+// they were generated with (128 high, sea at 50); newer worlds are generated to the full height.
+export const WORLD_HEIGHT = 384;
+// The highest layer of a chunk's blocks with anything in it (0 when empty): everything above is
+// open sky, which the mesher and the chunk transfers leave out.
+export function layerTop(blocks) {
+  const w = new Uint32Array(blocks.buffer, blocks.byteOffset, blocks.length >> 2);
+  for (let y = (blocks.length >> 8) - 1; y > 0; y--) {
+    for (let k = y << 6, e = k + 64; k < e; k++) if (w[k]) return y;
+  }
+  return 0;
+}
+export const SEA_LEVEL = 50; // the first generator's sea level (see generator2.js for the newer one)
 
 // BOXES: a few axis-aligned boxes inside the cell (farmland, portal frames, the end portal, the
 // nether portal's pane, the dragon egg); BED: a bed half, turned to face its other half; MODEL:
 // boxes that depend on the block's state and its neighbours (slabs, stairs, doors, fences...).
-export const SHAPE = { NONE: 0, CUBE: 1, CROSS: 2, LIQUID: 3, TORCH: 4, CACTUS: 5, BOXES: 6, BED: 7, MODEL: 8 };
+export const SHAPE = { NONE: 0, CUBE: 1, CROSS: 2, LIQUID: 3, TORCH: 4, CACTUS: 5, BOXES: 6, BED: 7, MODEL: 8, RAIL: 9 };
 export const LAYER = { OPAQUE: 0, CUTOUT: 1, TRANSLUCENT: 2 };
 export const TINT = { NONE: 0, GRASS: 1, FOLIAGE: 2, BIRCH: 3, SPRUCE: 4, WATER: 5 };
 export const WAVE = { NONE: 0, LEAVES: 1, PLANT: 2, LIQUID: 3 };
@@ -292,6 +303,91 @@ def('oak_wall_sign', { tex: 'oak_sign', ...thin, layer: LAYER.OPAQUE, solid: fal
 // trapdoors: state bits 0-1 facing, 2 open, 3 in the top half of the cell
 def('oak_trapdoor', { tex: 'oak_trapdoor', ...thin, model: 'trapdoor', facing: true, ...woodFx });
 
+// ---- added with the 384-high world (appended: block ids are saved): four more woods, badlands
+// terracotta, jungle and swamp plants, carrots, potatoes and nether wart, rails, pressure plates,
+// and the blocks of villages, temples, mines, dungeons, ocean monuments and end cities
+export const WOODS2 = [['jungle', '丛林'], ['acacia', '金合欢'], ['dark_oak', '深色橡木'], ['cherry', '樱花']];
+for (const [w, zh] of WOODS2) {
+  def(w + '_log', { zh: zh + '原木', tex: { top: w + '_log_top', side: w + '_log' }, sound: 'wood' });
+  def(w + '_planks', { zh: zh + '木板', tex: w + '_planks', sound: 'wood' });
+  def(w + '_leaves', {
+    zh: zh + '树叶', tex: w + '_leaves', ...transparentCube, lightOpacity: 1, tint: w === 'cherry' ? TINT.NONE : TINT.FOLIAGE,
+    wave: WAVE.LEAVES, mat: MAT.FOLIAGE, sound: 'grass',
+  });
+  def(w + '_sapling', { zh: zh + '树苗', tex: w + '_sapling', ...plant, replaceable: false, sapling: w });
+}
+def('red_sand', { zh: '红沙', tex: 'red_sand', sound: 'sand', mat: MAT.SAND });
+export const TERRACOTTA_COLORS = [['white', '白色'], ['orange', '橙色'], ['yellow', '黄色'], ['brown', '棕色'], ['red', '红色'], ['light_gray', '淡灰色']];
+for (const [c, zh] of TERRACOTTA_COLORS) def(c + '_terracotta', { zh: zh + '陶瓦', tex: c + '_terracotta' });
+// vines hang on the side of a block (state = the side they cling to) and can be climbed
+def('vine', {
+  zh: '藤蔓', tex: 'vine', shape: SHAPE.MODEL, model: 'vine', solid: false, opaque: false, layer: LAYER.CUTOUT, lightOpacity: 0,
+  tint: TINT.FOLIAGE, wave: WAVE.LEAVES, mat: MAT.FOLIAGE, replaceable: true, climbable: true, facing: true, sound: 'grass',
+});
+def('lily_pad', {
+  zh: '睡莲', tex: 'lily_pad', shape: SHAPE.BOXES, boxes: [box(0, 0, 0, 16, 1, 16, null, 1 << 2)], opaque: false, layer: LAYER.CUTOUT,
+  lightOpacity: 0, tint: TINT.FOLIAGE, mat: MAT.PLANT, collideH: 1 / 16, sound: 'grass',
+});
+def('sugar_cane', { zh: '甘蔗', tex: 'sugar_cane', ...plant, wave: WAVE.NONE, replaceable: false });
+def('melon', { zh: '西瓜', tex: { top: 'melon_top', side: 'melon_side' }, sound: 'wood' });
+def('pink_petals', {
+  zh: '粉红色花簇', tex: 'pink_petals', shape: SHAPE.BOXES, boxes: [box(0, 0, 0, 16, 1, 16, null, 1 << 2)], solid: false, opaque: false,
+  layer: LAYER.CUTOUT, lightOpacity: 0, mat: MAT.PLANT, replaceable: true, sound: 'grass',
+});
+for (let i = 0; i < 4; i++) def('carrots_' + i, { name: 'Carrots', zh: '胡萝卜', tex: 'carrots_stage_' + i, ...plant, replaceable: false, inventory: false, crop: i });
+for (let i = 0; i < 4; i++) def('potatoes_' + i, { name: 'Potatoes', zh: '马铃薯', tex: 'potatoes_stage_' + i, ...plant, replaceable: false, inventory: false, crop: i });
+for (let i = 0; i < 3; i++) def('nether_wart_' + i, { name: 'Nether Wart', zh: '下界疣', tex: 'nether_wart_stage_' + i, ...plant, wave: WAVE.NONE, replaceable: false, inventory: false, crop: i });
+// villages
+def('dirt_path', {
+  zh: '土径', tex: { top: 'dirt_path_top', side: 'dirt_path_side', bottom: 'dirt' }, shape: SHAPE.BOXES, boxes: [box(0, 0, 0, 16, 15, 16)],
+  sound: 'gravel', opaque: false, lightOpacity: 15, neighbourLight: true,
+});
+def('hay_bale', { zh: '干草块', tex: { top: 'hay_top', side: 'hay_side' }, sound: 'grass' });
+def('lantern', {
+  zh: '灯笼', tex: 'lantern', shape: SHAPE.BOXES, boxes: [box(5, 0, 5, 11, 7, 11), box(6, 7, 6, 10, 9, 10)], opaque: false, lightOpacity: 0,
+  layer: LAYER.CUTOUT, emission: 15, mat: MAT.EMISSIVE, sound: 'metal',
+});
+// rails: the state is their shape (see RAIL_SHAPES); powered rails speed carts up
+def('rail', { zh: '铁轨', tex: { top: 'rail', side: 'rail', front: 'rail_corner' }, shape: SHAPE.RAIL, solid: false, opaque: false, layer: LAYER.CUTOUT, lightOpacity: 0, sound: 'metal', rail: 1 });
+def('powered_rail', { zh: '动力铁轨', tex: { top: 'powered_rail', side: 'powered_rail' }, shape: SHAPE.RAIL, solid: false, opaque: false, layer: LAYER.CUTOUT, lightOpacity: 0, sound: 'metal', rail: 2, emission: 3 });
+// pressure plates open the doors next to them while something stands on them (state 1 = pressed)
+def('oak_pressure_plate', { zh: '橡木压力板', tex: 'oak_planks', ...thin, layer: LAYER.OPAQUE, solid: false, model: 'plate', plate: 'wood', ...woodFx });
+def('stone_pressure_plate', { zh: '石质压力板', tex: 'stone', ...thin, layer: LAYER.OPAQUE, solid: false, model: 'plate', plate: 'stone' });
+def('iron_door', { zh: '铁门', tex: { top: 'iron_door_top', bottom: 'iron_door_bottom', side: 'iron_door_bottom' }, ...thin, model: 'door', facing: true, inventory: false, mat: MAT.METAL, sound: 'metal', ironDoor: true });
+def('tnt', { zh: 'TNT', name: 'TNT', tex: { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, sound: 'grass' });
+def('cobweb', { zh: '蜘蛛网', tex: 'cobweb', ...plant, wave: WAVE.NONE, tint: TINT.NONE, replaceable: false, sticky: true, sound: 'cloth' });
+def('spawner', { zh: '刷怪笼', name: 'Monster Spawner', tex: 'spawner', ...transparentCube, mat: MAT.METAL, container: 'spawner', inventory: false, sound: 'metal' });
+def('prismarine', { zh: '海晶石', tex: 'prismarine', mat: MAT.GLOSSY });
+def('prismarine_bricks', { zh: '海晶石砖', tex: 'prismarine_bricks', mat: MAT.GLOSSY });
+def('dark_prismarine', { zh: '暗海晶石', tex: 'dark_prismarine', mat: MAT.GLOSSY });
+def('purpur_block', { zh: '紫珀块', tex: 'purpur_block' });
+def('purpur_pillar', { zh: '紫珀柱', tex: { top: 'purpur_pillar_top', side: 'purpur_pillar' } });
+def('end_rod', {
+  zh: '末地烛', tex: 'end_rod', shape: SHAPE.BOXES, boxes: [box(6, 0, 6, 10, 1, 10), box(7, 1, 7, 9, 16, 9)], opaque: false, lightOpacity: 0,
+  emission: 14, mat: MAT.EMISSIVE, sound: 'glass',
+});
+def('enchanting_table', {
+  zh: '附魔台', tex: { top: 'enchanting_table_top', side: 'enchanting_table_side', bottom: 'obsidian' }, shape: SHAPE.BOXES,
+  boxes: [box(0, 0, 0, 16, 12, 16)], opaque: false, lightOpacity: 0, emission: 7, container: 'enchant', mat: MAT.GLOSSY,
+});
+def('brewing_stand', {
+  zh: '酿造台', tex: { top: 'brewing_stand', side: 'brewing_stand', bottom: 'brewing_stand_base' }, shape: SHAPE.BOXES,
+  boxes: [box(7, 0, 7, 9, 14, 9), box(2, 0, 2, 14, 2, 14, 'brewing_stand_base')], opaque: false, lightOpacity: 0, layer: LAYER.CUTOUT,
+  emission: 1, container: 'brewing', mat: MAT.METAL, sound: 'metal',
+});
+def('lapis_ore', { zh: '青金石矿石', tex: 'lapis_ore', mat: MAT.ORE });
+def('lapis_block', { zh: '青金石块', tex: 'lapis_block', mat: MAT.GLOSSY });
+def('emerald_ore', { zh: '绿宝石矿石', tex: 'emerald_ore', mat: MAT.ORE });
+def('wither_skeleton_skull', {
+  zh: '凋灵骷髅头颅', tex: { top: 'wither_skull_top', side: 'wither_skull', front: 'wither_skull_face' }, shape: SHAPE.BOXES, boxes: [box(4, 0, 4, 12, 8, 12)],
+  opaque: false, lightOpacity: 0, sound: 'stone',
+});
+// the End's gateways: step in to be thrown to the outer islands (or back)
+def('end_gateway', {
+  zh: '末地折跃门', tex: 'end_portal', shape: SHAPE.BOXES, boxes: [box(0, 0, 0, 16, 16, 16)], solid: false, opaque: false, lightOpacity: 0,
+  emission: 15, mat: MAT.END_PORTAL, inventory: false, cullSelf: true, sound: 'glass',
+});
+
 // bed halves by colour: { color: [footId, headId] }
 export const BED_BLOCKS = {};
 for (const [c] of DYES) BED_BLOCKS[c] = [BLOCK[(c + '_bed_foot').toUpperCase()], BLOCK[(c + '_bed_head').toUpperCase()]];
@@ -317,7 +413,7 @@ export const IS_BED = new Uint8Array(256);
 export const BED_PARTNER = new Uint8Array(256);
 // state-shaped blocks (see blockBoxes): which box builder, and a few families
 export const MODEL_OF = new Uint8Array(256);
-export const MODELS_BY_NAME = { chest: 1, slab: 2, stairs: 3, door: 4, fence: 5, gate: 6, ladder: 7, pane: 8, sign: 9, wall_sign: 10, trapdoor: 11 };
+export const MODELS_BY_NAME = { chest: 1, slab: 2, stairs: 3, door: 4, fence: 5, gate: 6, ladder: 7, pane: 8, sign: 9, wall_sign: 10, trapdoor: 11, vine: 12, plate: 13 };
 export const HAS_FRONT = new Uint8Array(256); // cubes with a front face that follows the state (furnaces)
 export const FENCE_FAMILY = new Uint8Array(256);
 export const IS_CLIMBABLE = new Uint8Array(256);
@@ -336,6 +432,7 @@ for (const d of defs) {
   if (d.shape === SHAPE.CROSS) SELECT_BOX[d.id] = [0.15, 0, 0.15, 0.85, 0.85, 0.85];
   else if (d.shape === SHAPE.TORCH) SELECT_BOX[d.id] = [0.375, 0, 0.375, 0.625, 0.65, 0.625];
   else if (d.shape === SHAPE.BED) SELECT_BOX[d.id] = [0, 0, 0, 1, 9 / 16, 1];
+  else if (d.shape === SHAPE.RAIL) SELECT_BOX[d.id] = [0, 0, 0, 1, 2 / 16, 1];
   else if (d.shape === SHAPE.BOXES) {
     const bb = [16, 16, 16, 0, 0, 0];
     for (const { b } of d.boxes) for (let k = 0; k < 3; k++) { bb[k] = Math.min(bb[k], b[k]); bb[k + 3] = Math.max(bb[k + 3], b[k + 3]); }
@@ -477,6 +574,12 @@ export function blockBoxes(id, state, nb, ns, purpose = 'render') {
       add(open ? sidePanel(opposite(f), 3) : top ? [0, 13, 0, 16, 16, 16] : [0, 0, 0, 16, 3, 16]);
       break;
     }
+    case 12: // vine: a sheet against the side it clings to
+      add(sidePanel(state & 3, 1));
+      break;
+    case 13: // pressure plate, pressed down while something stands on it
+      add(state & 1 ? [1, 0, 1, 15, 1, 15] : [1, 0, 1, 15, 2, 15]);
+      break;
     default:
       add([0, 0, 0, 16, 16, 16]);
   }
@@ -490,6 +593,26 @@ export function modelSelectBox(id, state, nb, ns) {
   const bb = [16, 16, 16, 0, 0, 0];
   for (const { b } of boxes) for (let k = 0; k < 3; k++) { bb[k] = Math.min(bb[k], b[k]); bb[k + 3] = Math.max(bb[k + 3], b[k + 3]); }
   return bb.map((v) => v / 16);
+}
+
+// Rails: the state is the shape. 0 north-south, 1 east-west, 2-5 sloping up to the east, west,
+// north and south, 6-9 curves joining south-east, south-west, north-west and north-east.
+// For each: the two directions it joins (as FACING indices) and whether it slopes.
+export const RAIL_SHAPES = [
+  { ends: [0, 2] }, { ends: [1, 3] },
+  { ends: [3, 1], up: 1 }, { ends: [1, 3], up: 3 }, { ends: [2, 0], up: 0 }, { ends: [0, 2], up: 2 },
+  { ends: [2, 1] }, { ends: [2, 3] }, { ends: [0, 3] }, { ends: [0, 1] },
+];
+export const IS_RAIL = new Uint8Array(256);
+for (const d of defs) if (d.rail) IS_RAIL[d.id] = d.rail;
+// the rail shape joining two directions (level), or -1
+export function railShapeFor(a, b) {
+  for (let i = 0; i < RAIL_SHAPES.length; i++) {
+    const r = RAIL_SHAPES[i];
+    if (r.up !== undefined) continue;
+    if ((r.ends[0] === a && r.ends[1] === b) || (r.ends[0] === b && r.ends[1] === a)) return i;
+  }
+  return -1;
 }
 
 // Collision: 0 nothing, 1 the whole cell, 2 the boxes of blockBoxes(.., 'collide') (or the

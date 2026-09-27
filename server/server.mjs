@@ -17,7 +17,7 @@ import { extname, join, normalize, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { acceptUpgrade } from './ws.mjs';
 // the game's own rules for items, chests and furnaces (plain data modules, no browser needed)
-import { BLOCKS } from '../src/world/blocks.js';
+import { BLOCKS, WORLD_HEIGHT } from '../src/world/blocks.js';
 import { itemDef } from '../src/sim/items.js';
 import { loadEntity, serializeEntity, serializeEntities, loadEntities, newEntity, tickFurnace, furnaceLit, contentsOf, parseKey } from '../src/sim/containers.js';
 
@@ -353,7 +353,7 @@ export function startServer(overrides = {}) {
           if (!Array.isArray(e) || c.editCount >= 4000) break;
           const [x, y, z, b] = e;
           if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z) || !Number.isInteger(b)) continue;
-          if (y < 0 || y > 127 || b < 0 || b > 65535 || !BLOCKS[b & 255] || Math.abs(x) > 5e5 || Math.abs(z) > 5e5) continue;
+          if (y < 0 || y >= WORLD_HEIGHT || b < 0 || b > 65535 || !BLOCKS[b & 255] || Math.abs(x) > 5e5 || Math.abs(z) > 5e5) continue;
           applyEdit(x, y, z, b, dim);
           out.push([x, y, z, b]);
           c.editCount++;

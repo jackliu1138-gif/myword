@@ -35,6 +35,14 @@ export class Player {
     this.onStep = null; // callback(blockBelow)
     this.onLand = null;
     this.onSplash = null;
+    this.onWallHit = null; // (speed lost) flying into a wall on elytra
+    // effects on movement (from potions): { speed, jump, levitate, slowFall }
+    this.fx = null;
+    this.canGlide = false; // wearing elytra
+    this.gliding = false;
+    this.boost = 0; // seconds of firework push left
+    this.riding = null; // the creature or vehicle being ridden
+    this.jumped = false;
   }
 
   get eye() {
@@ -116,6 +124,16 @@ export class Player {
   update(dt, ctl) {
     // ctl: { forward, strafe, jump, sneak, sprint, toggleFly }
     dt = Math.min(dt, 0.05);
+    // riding: the vehicle moves; the game puts us in its seat
+    if (this.riding) {
+      this.gliding = false;
+      this.vel = [0, 0, 0];
+      this.onGround = true;
+      this.fallStart = null;
+      this.eyeHeight += (EYE - this.eyeHeight) * (1 - Math.exp(-dt * 14));
+      return;
+    }
+    if (this.gliding) { this.glide(dt, ctl); return; }
     // pushed out if something ended up inside the player (e.g. terrain loaded around them)
     if (this.collides(this.pos[0], this.pos[1], this.pos[2])) {
       this.pos[1] = Math.floor(this.pos[1]) + 1 + EPS;
@@ -152,6 +170,7 @@ export class Player {
     else if (this.inWater) speed = this.sprinting ? 3.4 : 2.4;
     else if (this.sneaking) speed = 1.35;
     else speed = this.sprinting ? 5.6 : 4.32;
+    if (this.fx && !this.flying) speed *= Math.max(0.15, this.fx.speed);
 
     const control = this.flying ? 7 : this.onGround ? 18 : this.inWater ? 6 : 2.2;
     const k = 1 - Math.exp(-dt * control);
@@ -176,14 +195,23 @@ export class Player {
       else this.vel[1] = Math.max(this.vel[1], -3);
       this.fallStart = null;
     } else {
-      this.vel[1] -= GRAVITY * dt;
+      const fx = this.fx;
+      if (fx && fx.levitate) this.vel[1] += (fx.levitate * 1.9 - this.vel[1]) * (1 - Math.exp(-dt * 4));
+      else this.vel[1] -= GRAVITY * dt;
+      if (fx && fx.slowFall && this.vel[1] < -2) this.vel[1] = -2;
       if (this.vel[1] < -60) this.vel[1] = -60;
       if (ctl.jump && this.onGround) {
-        this.vel[1] = JUMP_V;
+        this.vel[1] = JUMP_V * (fx ? Math.sqrt(fx.jump) : 1);
+        this.jumped = true;
         if (this.sprinting) {
           this.vel[0] += wishX * 1.2;
           this.vel[2] += wishZ * 1.2;
         }
+      }
+      // wearing elytra: jump again in the air to spread them
+      if (ctl.jumpPressed && !this.onGround && this.canGlide && this.vel[1] < 1 && !this.onLadder) {
+        this.gliding = true;
+        this.fallStart = null;
       }
     }
 
@@ -244,6 +272,58 @@ export class Player {
       this.stepAccum += hs * dt;
       if (this.stepAccum > 2.5) { this.stepAccum = 0; if (this.onStep) this.onStep(-1); }
     }
+  }
+
+  // Gliding on elytra: the pitch trades height for speed and back; fireworks push along the way
+  // you look. Per tick (20 a second), in the usual numbers: gravity -0.08 less a lift of up to
+  // 0.06 with the wings level, sinking turns into forward speed, climbing costs it, drag 1-2%.
+  glide(dt, ctl) {
+    const k = dt * 20; // ticks this step
+    const v = this.vel;
+    const look = this.forward();
+    const pitch = this.pitch;
+    const hl = Math.hypot(look[0], look[2]) || 1e-4;
+    // blocks per tick
+    let vx = v[0] / 20, vy = v[1] / 20, vz = v[2] / 20;
+    const hv = Math.hypot(vx, vz);
+    const cos2 = Math.cos(pitch) ** 2;
+    vy += (-0.08 + cos2 * 0.06) * k;
+    if (vy < 0 && hl > 0) {
+      const lift = vy * -0.1 * cos2 * k;
+      vx += (look[0] / hl) * lift; vy += lift; vz += (look[2] / hl) * lift;
+    }
+    if (pitch > 0 && hl > 0) {
+      const climb = hv * Math.sin(pitch) * 0.04 * k;
+      vx -= (look[0] / hl) * climb; vy += climb * 3.2; vz -= (look[2] / hl) * climb;
+    }
+    const steer = 1 - Math.pow(0.9, k);
+    vx += ((look[0] / hl) * hv - vx) * steer;
+    vz += ((look[2] / hl) * hv - vz) * steer;
+    vx *= Math.pow(0.99, k); vy *= Math.pow(0.98, k); vz *= Math.pow(0.99, k);
+    if (this.boost > 0) {
+      // a firework rocket: towards 1.7 blocks a tick along the look
+      this.boost -= dt;
+      const b = 1 - Math.pow(0.5, k);
+      vx += (look[0] * 1.7 - vx) * b; vy += (look[1] * 1.7 - vy) * b; vz += (look[2] * 1.7 - vz) * b;
+    }
+    v[0] = vx * 20; v[1] = vy * 20; v[2] = vz * 20;
+    const before = Math.hypot(v[0], v[2]);
+    const by = this.moveAxis(1, v[1] * dt);
+    if (by) { this.onGround = v[1] < 0; v[1] = 0; }
+    const bx = this.moveAxis(0, v[0] * dt), bz = this.moveAxis(2, v[2] * dt);
+    if (bx) v[0] = 0;
+    if (bz) v[2] = 0;
+    const lost = before - Math.hypot(v[0], v[2]);
+    if ((bx || bz) && lost > 6 && this.onWallHit) this.onWallHit(lost);
+    const feet = this.blockAt(this.pos[0], this.pos[1] + 0.1, this.pos[2]);
+    this.inWater = IS_LIQUID[feet] === 1;
+    this.headInWater = false;
+    if (this.onGround || this.inWater || !this.canGlide || this.flying || ctl.sneak) {
+      this.gliding = false;
+      if (this.onGround && this.onLand) this.onLand(Math.min(-v[1], 10), this.blockAt(this.pos[0], this.pos[1] - 0.2, this.pos[2]));
+    }
+    this.eyeHeight += (0.6 - this.eyeHeight) * (1 - Math.exp(-dt * 10));
+    this.bobAmount *= Math.exp(-dt * 8);
   }
 
   // Would placing a block at (x,y,z) intersect the player?

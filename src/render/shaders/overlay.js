@@ -87,6 +87,15 @@ in vec3 vRel;
 in vec4 vTint;
 out vec4 oColor;
 void main() {
+  if (vTint.a > 1.5) {
+    // a glowing spark: a soft round dot of light, added on top of the scene
+    float d = length(vUV * 2.0 - 1.0);
+    float a = smoothstep(1.0, 0.0, d);
+    a *= a;
+    if (a < 0.01) discard;
+    oColor = vec4(vTint.rgb * a, 0.0);
+    return;
+  }
   vec4 t = texture(uAlbedo, vec3(vUV, vLayer));
   if (vTint.a > 0.5) { if (t.a < 0.5) discard; }
   else if (t.a < 0.3) t = vec4(t.rgb, 1.0);

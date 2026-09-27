@@ -9,7 +9,7 @@ import { Audio, materialOf } from './audio.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import * as store from './save.js';
-import { BLOCK, BLOCKS, FACE_TEX, IS_SOLID, IS_LIQUID, CHUNK_SIZE } from '../world/blocks.js';
+import { BLOCK, BLOCKS, FACE_TEX, IS_SOLID, IS_LIQUID, CHUNK_SIZE, WORLD_HEIGHT } from '../world/blocks.js';
 import { clockText, PRESET_ORDER } from '../ui/ui.js';
 import { t, tList, setLanguage, detectLanguage } from '../ui/i18n.js';
 import { buildIcons, buildItemIcons } from '../ui/icons.js';
@@ -19,6 +19,9 @@ import { installPlay } from './play.js';
 import { installUse } from './useitems.js';
 import { installTravel } from './travel.js';
 import { installBuilding } from './building.js';
+import { installSurvival } from './survival.js';
+import { installCreaturePlay } from './creatureplay.js';
+import { installVehicles } from './vehicles.js';
 import { installMultiplayer, loadMultiplayerPrefs } from '../net/multiplayer.js';
 import { detectPreset, collectDeviceInfo, isTvDevice } from './device.js';
 import { Gamepads, PAD } from './gamepad.js';
@@ -27,6 +30,9 @@ import { FocusNav } from '../ui/focusnav.js';
 // 2: survival (game mode, difficulty, inventory with counts, health). Version 1 saves load as creative worlds.
 const SAVE_VERSION = 2;
 const SAVE_VERSIONS = [1, 2];
+// the terrain generator new worlds get (saves remember theirs: the first one, before `gen` was
+// saved, keeps making the same 128-high terrain)
+export const CURRENT_GEN = 2;
 
 export function defaultSettings() {
   const preset = detectPreset();
@@ -204,6 +210,7 @@ export class Game {
     };
     this.dimItems = {};
     this.dimension = data && (data.dimension === 1 || data.dimension === 2) ? data.dimension : 0;
+    this.genVersion = data ? (Number.isInteger(data.gen) && data.gen > 0 ? Math.min(data.gen, CURRENT_GEN) : 1) : CURRENT_GEN;
     this.world = this.createWorld(seed, this.dimension, this.dimEdits[this.dimension]);
     this.player = new Player(this.world);
     this.particles = new Particles(this.world);
@@ -247,6 +254,7 @@ export class Game {
     const data = {
       version: SAVE_VERSION,
       seed: this.world.seed,
+      gen: this.genVersion || 1,
       dimension: this.dimension || 0,
       endState: this.endState,
       player: {
@@ -649,6 +657,10 @@ export class Game {
         if (-tc.move[1] > 0.92) ctl.sprint = true;
       }
       ctl.jump = k('Space') || tc.jump;
+      ctl.jumpPressed = input.wasPressed('Space') || (tc.jump && !this.prevTouchJump);
+      this.prevTouchJump = tc.jump;
+      if (input.wasPressed('F5') || input.wasPressed('KeyV')) this.cycleCamera();
+      if (input.wasPressed('KeyX')) this.swapHands();
       ctl.sneak = k('ShiftLeft') || k('ShiftRight') || tc.sneak;
       // (no Ctrl for sprint: Ctrl+W would close the browser tab)
       ctl.sprint = ctl.sprint || k('KeyR') || frameInput.doubleW || (this.player.sprinting && ctl.forward > 0);
@@ -667,6 +679,11 @@ export class Game {
       if (this.sleeping) {
         if (ctl.jump || ctl.sneak || ctl.forward || ctl.strafe) this.wakeUp();
         ctl = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, toggleFly: false, autoJump: false };
+      }
+      // riding: the controls drive what we sit on
+      if (this.player.riding) {
+        this.updateRiding(ctl);
+        if (this.player.riding) ctl = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, toggleFly: false, autoJump: false };
       }
     }
     // arriving in another dimension: portals and platforms appear once the chunks are there
@@ -909,7 +926,9 @@ export class Game {
     if (this.biomeTimer <= 0) {
       this.biomeTimer = 1;
       const col = this.world.generator.column(Math.floor(cam.pos[0]), Math.floor(cam.pos[2]));
-      this.precipType = col.biome === BIOME.DESERT ? 'none' : col.biome === BIOME.SNOWY || col.temp < -0.42 || cam.pos[1] > 104 ? 'snow' : 'rain';
+      const gen = this.world.generator;
+      this.precipType = gen.precipitation ? gen.precipitation(col, cam.pos[1])
+        : col.biome === BIOME.DESERT ? 'none' : col.biome === BIOME.SNOWY || col.temp < -0.42 || cam.pos[1] > 104 ? 'snow' : 'rain';
     }
     const amount = this.precipType === 'none' ? 0 : Math.max(0, (this.weather.rain - 0.15) / 0.85);
     this.precip.amount = amount;
@@ -925,7 +944,7 @@ export class Game {
     const w = this.world, d = this.rainMapData;
     for (let z = 0; z < 64; z++) {
       for (let x = 0; x < 64; x++) {
-        let y = 127;
+        let y = w.columnTop(ox + x, oz + z);
         while (y > 0) {
           const b = w.getBlock(ox + x, y, oz + z);
           if (b && (IS_SOLID[b] || IS_LIQUID[b] || BLOCKS[b].wave === 1)) break;
@@ -975,7 +994,16 @@ export class Game {
     }
     let fovTarget = this.settings.fov;
     if (p.sprinting) fovTarget *= p.flying ? 1.15 : 1.1;
+    if (p.gliding) {
+      // the faster the flight, the wider the view; a rocket's push kicks it wider still
+      const sp = Math.hypot(p.vel[0], p.vel[1], p.vel[2]);
+      fovTarget *= 1 + Math.min(0.25, sp / 140) + (p.boost > 0 ? 0.08 : 0);
+      if (p.boost > 0) { const tm = performance.now() / 1000; pos[0] += Math.sin(tm * 71) * 0.012; pos[1] += Math.sin(tm * 83) * 0.012; }
+    }
+    if (this.fx && this.fx.speedFov) fovTarget *= this.fx.speedFov;
     this.fovCurrent += (fovTarget - this.fovCurrent) * (1 - Math.exp(-dt * 10));
+    const third = this.thirdPerson(pos, fwd);
+    if (third) return { pos: third.pos, forward: third.forward, fov: (this.fovCurrent * Math.PI) / 180 };
     return { pos, forward: fwd, fov: (this.fovCurrent * Math.PI) / 180 };
   }
 
@@ -1125,4 +1153,7 @@ installPlay(Game);
 installUse(Game);
 installTravel(Game);
 installBuilding(Game);
+installSurvival(Game);
+installCreaturePlay(Game);
+installVehicles(Game);
 installMultiplayer(Game);

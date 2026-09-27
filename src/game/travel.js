@@ -4,7 +4,7 @@
 // an eye of ender), and the way home from the End once its dragon is dead. Also runs the End's
 // boss fight. Installed as methods on Game.prototype.
 
-import { BLOCK, IS_SOLID, IS_LIQUID } from '../world/blocks.js';
+import { BLOCK, IS_SOLID, IS_LIQUID, WORLD_HEIGHT } from '../world/blocks.js';
 import { World } from '../world/world.js';
 import { DIM, DIM_NAMES, END_PLATFORM, END_SURFACE } from '../world/dimensions.js';
 import { t } from '../ui/i18n.js';
@@ -24,7 +24,7 @@ export function installTravel(Game) {
   P.createWorld = function createWorld(seed, dimension, edits) {
     const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
     const w = new World(seed, {
-      renderDistance: this.settings.renderDistance, workers, edits, dimension,
+      renderDistance: this.settings.renderDistance, workers, edits, dimension, genVersion: this.genVersion || 1,
       meshOptions: { fancyLeaves: this.settings.fancyLeaves !== false },
     });
     w.onChunkUnload = (c) => this.renderer.freeChunk(c);
@@ -81,7 +81,8 @@ export function installTravel(Game) {
     let target;
     if (how === 'portal') {
       const k = dim === DIM.NETHER ? 1 / 8 : 8;
-      target = [Math.floor(from[0] * k), Math.max(dim === DIM.NETHER ? 34 : 50, Math.min(dim === DIM.NETHER ? 100 : 120, Math.floor(from[1]))), Math.floor(from[2] * k)];
+      // the Nether is 128 high; the overworld as high as its terrain goes
+      target = [Math.floor(from[0] * k), Math.max(dim === DIM.NETHER ? 34 : 50, Math.min(dim === DIM.NETHER ? 100 : WORLD_HEIGHT - 12, Math.floor(from[1]))), Math.floor(from[2] * k)];
     } else if (how === 'endPortal') target = END_PLATFORM.slice();
     else target = null;
     this.switchWorld(dim);
@@ -208,7 +209,8 @@ export function installTravel(Game) {
       for (let dx = -r; dx <= r; dx++) {
         const px = x + dx, pz = z + dz;
         if (!w.isChunkReady(px, pz)) continue;
-        for (let py = 1; py < 126; py++) {
+        const top = this.dimension === DIM.OVERWORLD ? WORLD_HEIGHT - 2 : 126;
+        for (let py = 1; py < top; py++) {
           if (!PORTAL_IDS.has(w.getBlock(px, py, pz)) || PORTAL_IDS.has(w.getBlock(px, py - 1, pz))) continue;
           const d = dx * dx + dz * dz + (py - y) * (py - y) * 0.25;
           if (d < bd) { bd = d; best = [px, py, pz]; }

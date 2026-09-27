@@ -2,7 +2,9 @@
 // and rules, shared by the game and the multiplayer server (which runs everyone's furnaces).
 // Kept per dimension in a Map keyed "x,y,z"; saved as plain objects (see serializeEntity).
 
-import { SMELTING, COOK_TIME, fuelTime, itemDef, ITEM } from './items.js';
+import { SMELTING, COOK_TIME, fuelTime, itemDef, ITEM, POTION_ITEMS, SPLASH_ITEMS } from './items.js';
+import { BREWS, BREW_TIME, BLAZE_FUEL } from './effects.js';
+import { stackOut, stackIn } from './inventory.js';
 
 export const CHEST_SLOTS = 27;
 export const SIGN_LINES = 4;
@@ -14,8 +16,62 @@ export const parseKey = (k) => k.split(',').map(Number);
 export function newEntity(kind) {
   if (kind === 'chest') return { kind, slots: new Array(CHEST_SLOTS).fill(null) };
   if (kind === 'furnace') return { kind, slots: [null, null, null], burn: 0, burnMax: 0, cook: 0 };
+  if (kind === 'brewing') return { kind, slots: [null, null, null, null, null], brew: 0, fuel: 0 };
   if (kind === 'sign') return { kind, lines: new Array(SIGN_LINES).fill('') };
   return null;
+}
+
+// ---------------------------------------------------------------- the brewing stand
+// Slots: three bottles, the ingredient, blaze powder for fuel. A brew takes BREW_TIME seconds and
+// uses the ingredient up; each blaze powder is good for BLAZE_FUEL brews.
+export const BREW_BOTTLES = 3, BREW_INGREDIENT = 3, BREW_FUEL = 4;
+const potionItem = (key) => POTION_ITEMS[key];
+const splashItem = (key) => SPLASH_ITEMS[key];
+// what brewing the ingredient into the bottle's potion gives (an item id), or 0
+export function brewResult(bottleId, ingredientId) {
+  const b = itemDef(bottleId), ing = itemDef(ingredientId);
+  if (!b || !ing || (b.kind !== 'potion' && b.kind !== 'splash')) return 0;
+  if (ing.key === 'gunpowder') return b.kind === 'potion' && b.potion !== 'awkward' ? splashItem(b.potion) || 0 : 0;
+  for (const [from, key, to] of BREWS) {
+    if (from === b.potion && key === ing.key) return b.kind === 'splash' ? splashItem(to) || 0 : potionItem(to) || 0;
+  }
+  return 0;
+}
+export const isBrewIngredient = (id) => { const d = itemDef(id); return !!d && (d.key === 'gunpowder' || BREWS.some((r) => r[1] === d.key)); };
+export const isBottle = (id) => { const d = itemDef(id); return !!d && (d.kind === 'potion' || d.kind === 'splash'); };
+
+export function canBrew(e) {
+  const ing = e.slots[BREW_INGREDIENT];
+  if (!ing) return false;
+  for (let i = 0; i < BREW_BOTTLES; i++) if (e.slots[i] && brewResult(e.slots[i].id, ing.id)) return true;
+  return false;
+}
+
+// Returns true when the slots changed.
+export function tickBrewing(e, dt) {
+  let changed = false;
+  if (!canBrew(e)) { if (e.brew > 0) { e.brew = 0; changed = true; } return changed; }
+  if (e.fuel <= 0 && e.brew <= 0) {
+    const f = e.slots[BREW_FUEL];
+    if (!f || f.id !== ITEM.BLAZE_POWDER) return false;
+    if (--f.count <= 0) e.slots[BREW_FUEL] = null;
+    e.fuel = BLAZE_FUEL;
+    changed = true;
+  }
+  if (e.brew <= 0) { e.brew = BREW_TIME; e.fuel--; changed = true; }
+  e.brew -= dt;
+  if (e.brew <= 0) {
+    e.brew = 0;
+    const ing = e.slots[BREW_INGREDIENT];
+    for (let i = 0; i < BREW_BOTTLES; i++) {
+      const s = e.slots[i];
+      const r = s && brewResult(s.id, ing.id);
+      if (r) e.slots[i] = { id: r, count: 1, wear: 0 };
+    }
+    if (--ing.count <= 0) e.slots[BREW_INGREDIENT] = null;
+    changed = true;
+  }
+  return changed;
 }
 
 const stackOf = (id) => { const d = itemDef(id); return d ? d.stack : 64; };
@@ -62,15 +118,15 @@ export function tickFurnace(f, dt) {
 export const furnaceLit = (f) => f.burn > 0;
 
 // ---------------------------------------------------------------- saving and the network
-const slotOut = (s) => (s ? [s.id, s.count, s.wear || 0] : null);
-const slotIn = (a) => (Array.isArray(a) && Number.isInteger(a[0]) && itemDef(a[0]) && Number.isInteger(a[1]) && a[1] > 0
-  ? { id: a[0], count: Math.min(a[1], stackOf(a[0])), wear: Number.isInteger(a[2]) && a[2] > 0 ? a[2] : 0 } : null);
+const slotOut = stackOut;
+const slotIn = stackIn;
 
 export function serializeEntity(e) {
   if (!e) return null;
   if (e.kind === 'sign') return { kind: 'sign', lines: e.lines.slice(0, SIGN_LINES) };
   const out = { kind: e.kind, slots: e.slots.map(slotOut) };
   if (e.kind === 'furnace') { out.burn = Math.round(e.burn * 100) / 100; out.burnMax = e.burnMax; out.cook = Math.round(e.cook * 100) / 100; }
+  if (e.kind === 'brewing') { out.brew = Math.round(e.brew * 100) / 100; out.fuel = e.fuel; }
   return out;
 }
 
@@ -86,12 +142,13 @@ export function loadEntity(o) {
   }
   const slots = Array.isArray(o.slots) ? o.slots : [];
   e.slots = e.slots.map((_, i) => slotIn(slots[i]));
+  const num = (v, max) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
   if (e.kind === 'furnace') {
-    const num = (v, max) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
     e.burnMax = num(o.burnMax, 1000);
     e.burn = Math.min(num(o.burn, 1000), e.burnMax);
     e.cook = num(o.cook, COOK_TIME);
   }
+  if (e.kind === 'brewing') { e.brew = num(o.brew, BREW_TIME); e.fuel = Math.round(num(o.fuel, BLAZE_FUEL)); }
   return e;
 }
 
@@ -117,5 +174,5 @@ export function loadEntities(obj) {
 // Everything a broken chest or furnace spills: [[id, count, wear], ...]
 export function contentsOf(e) {
   if (!e || !e.slots) return [];
-  return e.slots.filter(Boolean).map((s) => [s.id, s.count, s.wear || 0]);
+  return e.slots.filter(Boolean).map(stackOut);
 }

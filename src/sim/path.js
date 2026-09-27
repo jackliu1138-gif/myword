@@ -1,7 +1,7 @@
 // A* path finding over the voxel grid for walking creatures: steps up one block, drops up to
 // three, swims, never cuts corners and avoids lava and cacti. Positions are feet blocks.
 
-import { BLOCK, IS_LIQUID, TALL_COLLIDE } from '../world/blocks.js';
+import { BLOCK, IS_LIQUID, TALL_COLLIDE, WORLD_HEIGHT } from '../world/blocks.js';
 
 class Heap {
   constructor() { this.a = []; }
@@ -43,7 +43,7 @@ export function makeWalker(world, height = 2) {
   const bad = (b) => b === BLOCK.LAVA || b === BLOCK.CACTUS;
   // standing with feet in (x, y, z)
   return function walkable(x, y, z) {
-    if (y < 1 || y > 126) return 0;
+    if (y < 1 || y > WORLD_HEIGHT - 2) return 0;
     const feet = world.getBlock(x, y, z);
     if (solid(x, y, z) || bad(feet)) return 0;
     if (height > 1 && (solid(x, y + 1, z) || bad(world.getBlock(x, y + 1, z)))) return 0;

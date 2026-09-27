@@ -1202,6 +1202,20 @@ export class Renderer {
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
     for (let i = 0; i < n; i++) {
       const p = ps.list[i];
+      if (p.kind === 'spark') {
+        // glowing: its own colour, fading out, twinkling
+        let a = p.fade ? Math.min(1, p.life / (p.max * 0.5)) : 1;
+        if (p.twinkle && p.life < p.max * 0.6) a *= Math.random() < 0.5 ? 0.15 : 1;
+        const c = p.color, sz = p.size * (0.6 + 0.4 * a);
+        for (const [cx, cy] of corners) {
+          d[o++] = p.x - cam[0]; d[o++] = p.y - cam[1]; d[o++] = p.z - cam[2];
+          d[o++] = cx * sz; d[o++] = cy * sz;
+          d[o++] = cx * 0.5 + 0.5; d[o++] = 0.5 - cy * 0.5;
+          d[o++] = 0; d[o++] = 1; d[o++] = 1;
+          d[o++] = c[0] * a; d[o++] = c[1] * a; d[o++] = c[2] * a; d[o++] = 2;
+        }
+        continue;
+      }
       const ca = Math.cos(p.angle || 0), sa = Math.sin(p.angle || 0);
       const tint = p.tint || [1, 1, 1];
       const cut = p.kind === 'leaf' ? 1 : 0;

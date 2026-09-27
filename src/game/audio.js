@@ -231,7 +231,80 @@ export class Audio {
       case 'drink': for (let i = 0; i < 4; i++) tone(t + i * 0.14, 320 * r(), 0.1, 0.18, 'sine', 200); break;
       case 'grow': for (let i = 0; i < 3; i++) tone(t + i * 0.06, 900 + i * 300, 0.12, 0.08, 'sine', 1400 + i * 300); break;
       case 'furnace': noise(t, 0.5, 'lowpass', 500, 0.6, 0.25); break;
+      // ---- creatures that came with villages, pets and the sea
+      case 'villager': voice(t, 210 * r(), 160, 0.45, 700, 0.45, 4); voice(t + 0.25, 180 * r(), 230, 0.3, 650, 0.35); break;
+      case 'villagerYes': voice(t, 200, 260, 0.25, 800, 0.4); voice(t + 0.2, 240, 280, 0.25, 820, 0.35); break;
+      case 'villagerNo': voice(t, 230, 150, 0.4, 600, 0.45, 3); break;
+      case 'golem': tone(t, 70 * r(), 0.5, 0.35, 'triangle', 50); noise(t, 0.3, 'lowpass', 400, 0.8, 0.3); break;
+      case 'iron_golemAttack': tone(t, 90, 0.3, 0.5, 'square', 45); noise(t, 0.2, 'lowpass', 600, 0.8, 0.4); break;
+      case 'wolf': for (let i = 0; i < 2; i++) voice(t + i * 0.22, 420 * r(), 330, 0.14, 1100, 0.5); break;
+      case 'wolfHowl': voice(t, 380, 620, 1.3, 1200, 0.35, 5); break;
+      case 'cat': voice(t, 620 * r(), 880, 0.5, 1600, 0.35, 6); break;
+      case 'purr': for (let i = 0; i < 6; i++) noise(t + i * 0.08, 0.06, 'lowpass', 180, 1, 0.3); break;
+      case 'horse': voice(t, 520 * r(), 380, 0.9, 1400, 0.35, 11); break;
+      case 'witch': voice(t, 320 * r(), 520, 0.6, 1300, 0.35, 9); break;
+      case 'slime': noise(t, 0.12, 'lowpass', 500, 1.5, 0.45); tone(t, 150 * r(), 0.15, 0.3, 'sine', 90); break;
+      case 'phantom': voice(t, 900 * r(), 500, 0.8, 2200, 0.25, 13); break;
+      case 'phantomSwoop': noise(t, 0.9, 'bandpass', 900, 0.8, 0.35); voice(t, 1100, 600, 0.7, 2400, 0.2, 9); break;
+      case 'pillager': case 'vindicator': voice(t, 180 * r(), 130, 0.5, 620, 0.45, 5); break;
+      case 'evoker': case 'evokerCast': voice(t, 260, 380, 0.8, 900, 0.3, 7); for (let i = 0; i < 4; i++) tone(t + i * 0.1, 700 + i * 140, 0.3, 0.06, 'sine', 900 + i * 200); break;
+      case 'fangs': noise(t, 0.12, 'bandpass', 1800, 2, 0.4); tone(t, 220, 0.1, 0.3, 'square', 110); break;
+      case 'wither': voice(t, 110 * r(), 80, 1.4, 350, 0.5, 3); noise(t, 1.2, 'lowpass', 400, 0.7, 0.3); break;
+      case 'witherSpawn': voice(t, 60, 180, 2.5, 300, 0.6, 2); noise(t, 2.5, 'lowpass', 900, 0.6, 0.45); break;
+      case 'witherShoot': noise(t, 0.3, 'bandpass', 700, 0.8, 0.35); tone(t, 180, 0.3, 0.25, 'sawtooth', 70); break;
+      case 'guardian': voice(t, 300 * r(), 220, 0.7, 900, 0.3, 4); break;
+      case 'guardianBeam': tone(t, 400, 0.4, 0.25, 'sawtooth', 1600); break;
+      case 'shulker': case 'shulkerShoot': tone(t, 500, 0.2, 0.2, 'square', 300); noise(t, 0.15, 'bandpass', 1800, 2, 0.2); break;
+      case 'bulletPop': tone(t, 1400, 0.1, 0.2, 'sine', 700); break;
+      // ---- survival and getting about
+      case 'burp': voice(t, 140, 110, 0.3, 500, 0.4); break;
+      case 'xp': tone(t, 1300 * r(), 0.12, 0.12, 'sine', 1900); break;
+      case 'levelUp': for (let i = 0; i < 3; i++) tone(t + i * 0.08, 660 * (1 + i * 0.26), 0.25, 0.15, 'triangle'); break;
+      case 'levelBig': for (let i = 0; i < 5; i++) tone(t + i * 0.09, 523 * (1 + i * 0.2), 0.4, 0.16, 'triangle'); break;
+      case 'enchant': for (let i = 0; i < 6; i++) tone(t + i * 0.07, 800 + Math.random() * 900, 0.5, 0.07, 'sine', 1800); break;
+      case 'deny': tone(t, 180, 0.2, 0.25, 'square', 120); break;
+      case 'shield': noise(t, 0.1, 'bandpass', 900, 1.6, 0.5); tone(t, 260, 0.14, 0.35, 'triangle', 140); break;
+      case 'crossbowLoad': tone(t, 300, 0.25, 0.2, 'triangle', 520); noise(t + 0.2, 0.08, 'bandpass', 2400, 3, 0.35); break;
+      case 'crossbowShoot': noise(t, 0.1, 'bandpass', 2600, 2.5, 0.45); tone(t, 520, 0.12, 0.25, 'triangle', 200); break;
+      case 'reel': for (let i = 0; i < 5; i++) noise(t + i * 0.05, 0.03, 'bandpass', 2600, 4, 0.2); break;
+      case 'splash': noise(t, 0.45, 'lowpass', 1600, 0.7, 0.45); break;
+      case 'bite': noise(t, 0.2, 'lowpass', 1200, 0.8, 0.5); tone(t, 700, 0.1, 0.15, 'sine', 400); break;
+      case 'fireworkLaunch': { const n = this.noise(t, 0.8, 'bandpass', 1200, 0.8, 0.45 * volume, out); n.f.frequency.exponentialRampToValueAtTime(4200, t + 0.8); break; }
+      case 'fireworkBlast': noise(t, 0.6, 'lowpass', 900, 0.7, 0.55); tone(t, 90, 0.4, 0.4, 'sine', 45); for (let i = 0; i < 6; i++) noise(t + 0.25 + Math.random() * 0.6, 0.04, 'highpass', 5000, 1, 0.2); break;
+      case 'fireworkTwinkle': for (let i = 0; i < 10; i++) noise(t + Math.random() * 0.9, 0.03, 'highpass', 6000, 1, 0.14); break;
+      case 'elytra': noise(t, 0.6, 'bandpass', 700, 0.5, 0.35); break;
+      case 'fuse': { const n = this.noise(t, 1.2, 'highpass', 2800, 0.8, 0.3 * volume, out); void n; break; }
+      case 'totem': for (let i = 0; i < 6; i++) tone(t + i * 0.1, 880 * (1 + (i % 3) * 0.25), 0.6, 0.14, 'triangle'); noise(t, 1, 'highpass', 5000, 0.8, 0.15); break;
+      case 'shear': for (let i = 0; i < 2; i++) noise(t + i * 0.1, 0.07, 'bandpass', 4200, 4, 0.35); break;
+      case 'saddle': noise(t, 0.2, 'lowpass', 800, 0.8, 0.4); break;
+      case 'minecart': noise(t, 0.3, 'bandpass', 900, 1.5, 0.15); break;
+      case 'plate': tone(t, 400, 0.08, 0.2, 'square', 250); break;
+      case 'heart': tone(t, 900, 0.2, 0.12, 'sine', 1200); break;
+      case 'drop': tone(t, 400, 0.1, 0.1, 'sine', 250); break;
       default: break;
+    }
+  }
+
+  // The rush of air while gliding (loud the faster it goes); 0 stops it.
+  setWind(amount) {
+    if (!this.ctx) return;
+    if (!this.windSrc && amount > 0.01) {
+      const c = this.ctx;
+      const src = c.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const bp = c.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.6;
+      const g = c.createGain();
+      g.gain.value = 0;
+      src.connect(bp).connect(g).connect(this.master);
+      src.start();
+      this.windSrc = src; this.windGain = g; this.windFilter = bp;
+    }
+    if (this.windGain) {
+      const t = this.ctx.currentTime;
+      this.windGain.gain.setTargetAtTime(Math.min(0.6, amount * 0.6), t, 0.15);
+      this.windFilter.frequency.setTargetAtTime(300 + amount * 1400, t, 0.2);
     }
   }
 

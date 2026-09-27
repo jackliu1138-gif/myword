@@ -8,7 +8,9 @@ export const BIOME = {
 };
 export const BIOME_NAMES = ['Ocean', 'Beach', 'Plains', 'Forest', 'Birch Forest', 'Taiga', 'Snowy Taiga', 'Desert', 'Mountains', 'River'];
 
-const H = WORLD_HEIGHT;
+// the height this generator was made for: worlds created with it keep exactly the terrain they had
+// (the chunk arrays themselves are WORLD_HEIGHT tall; everything above stays air)
+const H = 128;
 const CS = CHUNK_SIZE;
 const B = BLOCK;
 
@@ -139,7 +141,7 @@ export class TerrainGenerator {
   }
 
   generateChunk(cx, cz) {
-    const blocks = new Uint8Array(CS * CS * H);
+    const blocks = new Uint8Array(CS * CS * WORLD_HEIGHT);
     const x0 = cx * CS, z0 = cz * CS;
 
     // Column data for chunk + 1 border (slopes)

@@ -257,13 +257,92 @@ Object.assign(DRAW, {
   bone_meal: (s) => { s.disc(8, 10, 4, (x, y) => ((x * 7 + y * 3) % 5 === 0 ? [214, 214, 206] : [244, 244, 236])); s.disc(8, 7.5, 2.4, [236, 236, 228]); s.outline([120, 120, 110]); },
 });
 
+// ---- food, brewing, creatures' drops, gear and getting about
+function fish(s, body, belly, fin, stripes = null) {
+  for (let x = 3; x <= 11; x++) {
+    const h = Math.round(Math.sin(((x - 3) / 8) * Math.PI) * 3.2) + 1;
+    for (let y = 8 - h; y <= 8 + h - 1; y++) s.set(x, y, y > 8 ? belly : stripes && (x % 3 === 0) ? stripes : body);
+  }
+  s.rect(12, 6, 1, 4, fin); s.rect(13, 5, 1, 2, fin); s.rect(13, 9, 1, 2, fin);
+  s.set(5, 7, [20, 20, 20]);
+  s.outline(shade(body, 0.35));
+}
+function bottle(s, fill, splash) {
+  const glass = [214, 230, 240];
+  const liquid = fill || [196, 214, 226];
+  if (splash) { s.rect(5, 5, 6, 1, glass); s.rect(4, 6, 8, 7, liquid); s.rect(5, 13, 6, 1, liquid); }
+  else { s.rect(4, 7, 8, 6, liquid); s.rect(5, 13, 6, 1, liquid); s.rect(6, 5, 4, 2, fill ? liquid : glass); }
+  s.rect(7, 2, 2, 3, glass);
+  s.rect(6, 1, 4, 1, [150, 110, 70]);
+  s.set(5, 8, shade(liquid, 1.5));
+  s.outline([40, 48, 60]);
+}
+function egg(s, c1, c2) {
+  const a = [(c1 >> 16) & 255, (c1 >> 8) & 255, c1 & 255], b = [(c2 >> 16) & 255, (c2 >> 8) & 255, c2 & 255];
+  for (let y = 2; y <= 13; y++) {
+    const r = y < 7 ? 1.5 + (y - 2) * 0.7 : 5 - Math.max(0, y - 10) * 0.9;
+    for (let x = Math.ceil(8 - r); x <= Math.floor(8 + r - 0.5); x++) s.set(x, y, ((x * 5 + y * 7) % 11 < 3) ? b : a);
+  }
+  s.set(6, 4, shade(a, 1.3));
+  s.outline(shade(a, 0.3));
+}
+const GOLD = [255, 220, 70], GOLD_D = [200, 140, 20];
+Object.assign(DRAW, {
+  raw_cod: (s) => fish(s, [190, 160, 110], [220, 200, 160], [160, 130, 90]),
+  cooked_cod: (s) => fish(s, [170, 120, 70], [210, 170, 110], [140, 90, 50]),
+  raw_salmon: (s) => fish(s, [200, 70, 60], [240, 150, 130], [60, 110, 100]),
+  cooked_salmon: (s) => fish(s, [170, 90, 60], [220, 150, 110], [120, 70, 40]),
+  tropical_fish: (s) => fish(s, [240, 120, 30], [255, 240, 230], [255, 255, 255], [255, 250, 240]),
+  pufferfish: (s) => { s.disc(8, 8, 4.5, (x, y) => (y > 9 ? [250, 240, 200] : [240, 200, 40])); for (const [x, y] of [[3, 5], [13, 5], [3, 11], [13, 11], [8, 2], [8, 14]]) s.set(x, y, [250, 250, 230]); s.set(6, 7, [20, 20, 20]); s.set(10, 7, [20, 20, 20]); s.outline([90, 70, 10]); },
+  carrot: (s) => { s.line(5, 13, 10, 5, [240, 130, 30]); s.line(6, 13, 11, 5, [210, 100, 20]); s.line(5, 12, 9, 5, [255, 160, 60]); s.rect(10, 2, 2, 3, [80, 170, 50]); s.set(12, 3, [60, 140, 40]); s.outline([110, 50, 10]); },
+  golden_carrot: (s) => { s.line(5, 13, 10, 5, GOLD); s.line(6, 13, 11, 5, GOLD_D); s.line(5, 12, 9, 5, [255, 245, 170]); s.rect(10, 2, 2, 3, [250, 230, 90]); s.outline([110, 80, 10]); },
+  potato: (s) => { s.disc(8, 8.5, 4.2, (x, y) => (x + y < 14 ? [214, 180, 110] : [180, 144, 80])); s.set(7, 7, [150, 120, 60]); s.set(10, 10, [150, 120, 60]); s.outline([90, 66, 30]); },
+  baked_potato: (s) => { s.disc(8, 8.5, 4.2, (x, y) => (x + y < 14 ? [226, 170, 80] : [180, 110, 40])); s.set(7, 6, [255, 230, 150]); s.outline([90, 50, 20]); },
+  melon_slice: (s) => { for (let y = 4; y <= 12; y++) for (let x = 3; x <= 13; x++) { const d = Math.hypot(x - 8, y - 13); if (d < 9 && y < 13) s.set(x, y, d > 8 ? [60, 150, 40] : d > 7 ? [220, 230, 170] : (x * 3 + y) % 7 === 0 ? [30, 20, 20] : [230, 60, 60]); } s.outline([90, 30, 20]); },
+  glistering_melon_slice: (s) => { DRAW.melon_slice(s); for (const [x, y] of [[6, 8], [9, 7], [11, 10], [5, 11]]) s.set(x, y, [255, 240, 120]); },
+  golden_apple: (s) => { s.disc(8, 9, 5, (x, y) => (x < 7 && y < 8 ? [255, 240, 120] : [230, 180, 40])); s.set(8, 3, WOOD_D); s.set(8, 4, WOOD_D); s.set(9, 3, [80, 160, 50]); s.outline([110, 80, 10]); },
+  spider_eye: (s) => { s.disc(8, 8.5, 4.4, (x, y) => (x + y < 14 ? [200, 60, 90] : [150, 30, 60])); s.disc(8, 8, 1.6, [40, 10, 20]); s.set(6, 6, [255, 190, 210]); s.outline([70, 10, 30]); },
+  fermented_spider_eye: (s) => { DRAW.spider_eye(s); s.rect(5, 3, 6, 2, [140, 100, 70]); s.set(10, 11, [120, 160, 90]); },
+  cookie: (s) => { s.disc(8, 8.5, 4.6, (x, y) => ((x * 5 + y * 3) % 7 === 0 ? [80, 40, 20] : [210, 150, 80])); s.outline([100, 60, 20]); },
+  pumpkin_pie: (s) => { s.rect(2, 7, 12, 5, (i, j) => (j === 0 ? [240, 160, 60] : j === 4 ? [170, 110, 50] : [220, 130, 40])); s.rect(3, 6, 10, 1, [250, 200, 120]); s.outline([100, 50, 10]); },
+  nether_wart: (s) => { for (const [x, y] of [[5, 6], [8, 4], [11, 6], [6, 10], [10, 10], [8, 8]]) s.disc(x, y, 1.6, [160, 30, 40]); s.line(8, 9, 8, 14, [100, 30, 30]); s.outline([60, 10, 14]); },
+  paper: (s) => { s.rect(3, 2, 10, 12, (i, j) => (j % 3 === 1 && i > 1 && i < 8 ? [200, 200, 190] : [244, 244, 236])); s.outline([120, 120, 110]); },
+  book: (s) => { s.rect(3, 2, 10, 12, (i, j) => (i < 2 ? [110, 40, 30] : j === 0 || j === 11 ? [236, 230, 210] : [150, 60, 40])); s.rect(11, 3, 1, 10, [236, 230, 210]); s.outline([60, 20, 14]); },
+  sugar: (s) => { s.disc(8, 10, 4, (x, y) => ((x * 7 + y * 3) % 5 === 0 ? [220, 220, 230] : [250, 250, 252])); s.disc(8, 7.5, 2.4, [240, 240, 246]); s.outline([140, 140, 150]); },
+  ink_sac: (s) => { s.disc(8, 9, 4.4, (x, y) => (x + y < 14 ? [50, 50, 70] : [24, 24, 34])); s.rect(7, 3, 2, 3, [40, 40, 56]); s.set(6, 7, [110, 110, 140]); s.outline([8, 8, 12]); },
+  slime_ball: (s) => { s.disc(8, 8.5, 4.4, (x, y) => (x + y < 13 ? [140, 220, 110] : [90, 170, 70])); s.set(6, 6, [220, 255, 210]); s.outline([40, 90, 30]); },
+  magma_cream: (s) => { s.disc(8, 8.5, 4.4, (x, y) => ((x * 3 + y * 5) % 6 === 0 ? [255, 220, 60] : x + y < 13 ? [200, 90, 30] : [140, 50, 20])); s.outline([60, 20, 6]); },
+  ghast_tear: (s) => { for (let y = 3; y <= 13; y++) { const r = y < 8 ? (y - 3) * 0.6 : 3.4 - (y - 8) * 0.45; for (let x = Math.ceil(8 - r); x <= Math.floor(8 + r); x++) s.set(x, y, x < 8 ? [230, 250, 255] : [180, 220, 236]); } s.outline([90, 120, 140]); },
+  glowstone_dust: (s) => { s.disc(8, 10, 4, (x, y) => ((x * 7 + y * 3) % 5 === 0 ? [255, 250, 180] : [240, 200, 90])); s.disc(8, 7.5, 2.4, [255, 230, 130]); s.outline([120, 90, 20]); },
+  glass_bottle: (s) => bottle(s, null, false),
+  lapis_lazuli: (s) => gem(s, [80, 120, 230], [30, 50, 150]),
+  prismarine_shard: (s) => { s.line(4, 12, 11, 3, [110, 190, 170]); s.line(5, 12, 12, 4, [70, 150, 130]); s.line(6, 12, 12, 6, [60, 130, 110]); s.outline([20, 60, 50]); },
+  prismarine_crystals: (s) => { for (const [x, y] of [[5, 6], [9, 5], [7, 9], [11, 9], [6, 12]]) { s.rect(x, y, 2, 2, [200, 240, 230]); s.set(x + 1, y + 1, [120, 200, 190]); } s.outline([40, 90, 80]); },
+  phantom_membrane: (s) => { for (let y = 3; y <= 12; y++) for (let x = 3 + Math.max(0, y - 9); x <= 12 - Math.max(0, 6 - y); x++) s.set(x, y, (x + y) % 4 ? [200, 196, 170] : [170, 160, 140]); s.outline([90, 80, 70]); },
+  shulker_shell: (s) => { s.rect(3, 4, 10, 8, (i, j) => (j < 2 ? [170, 120, 170] : j > 5 ? [120, 80, 120] : [150, 100, 150])); s.rect(3, 7, 10, 1, [90, 60, 90]); s.outline([50, 30, 50]); },
+  nether_star: (s) => { for (let i = -5; i <= 5; i++) { s.set(8 + i, 8, [250, 250, 230]); s.set(8, 8 + i, [250, 250, 230]); } for (let i = -3; i <= 3; i++) { s.set(8 + i, 8 + i, [230, 230, 200]); s.set(8 + i, 8 - i, [230, 230, 200]); } s.disc(8, 8, 1.6, [255, 255, 255]); s.outline([120, 120, 90]); },
+  totem_of_undying: (s) => { s.rect(6, 2, 4, 4, GOLD); s.set(7, 3, [40, 160, 60]); s.set(8, 3, [40, 160, 60]); s.rect(4, 6, 8, 3, GOLD_D); s.rect(6, 9, 4, 5, GOLD); s.set(7, 12, [40, 160, 60]); s.outline([110, 70, 10]); },
+  saddle: (s) => { s.rect(3, 5, 10, 5, (i, j) => (j === 0 ? [150, 90, 50] : [120, 70, 36])); s.rect(5, 4, 6, 1, [170, 110, 60]); s.rect(4, 10, 2, 4, [90, 90, 96]); s.rect(10, 10, 2, 4, [90, 90, 96]); s.outline([50, 28, 14]); },
+  shears: (s) => { s.line(4, 3, 9, 8, [220, 220, 226]); s.line(12, 3, 7, 8, [180, 180, 188]); s.disc(5, 11, 2, [180, 50, 40]); s.disc(11, 11, 2, [180, 50, 40]); s.set(5, 11, [0, 0, 0], 0); s.set(11, 11, [0, 0, 0], 0); s.outline([40, 40, 44]); },
+  fishing_rod: (s) => { handle(s, 2, 14, 12, 2); s.line(13, 2, 13, 12, [230, 230, 230]); s.set(13, 13, [200, 60, 50]); s.set(12, 13, [200, 60, 50]); s.outline(); },
+  crossbow: (s) => { handle(s, 4, 12, 12, 4); s.line(3, 7, 9, 13, WOOD_D); s.line(3, 6, 10, 13, [120, 120, 126]); s.line(4, 6, 10, 12, [230, 230, 230]); s.rect(11, 3, 2, 2, [150, 150, 156]); s.outline(); },
+  shield: (s) => { s.rect(3, 2, 10, 9, (i, j) => (i === 0 || i === 9 || j === 0 ? [150, 150, 156] : (i + j) % 5 === 0 ? [150, 110, 60] : [176, 130, 76])); for (let y = 11; y <= 13; y++) s.rect(3 + (y - 10), y, 10 - 2 * (y - 10), 1, [176, 130, 76]); s.rect(7, 4, 2, 6, [110, 110, 116]); s.outline([40, 30, 20]); },
+  elytra: (s) => { for (let y = 2; y <= 14; y++) { const w = Math.round(2 + Math.sin(((y - 2) / 12) * Math.PI) * 3); s.rect(7 - w, y, w, 1, (i) => (i % 2 ? [150, 150, 170] : [180, 180, 200])); s.rect(9, y, w, 1, (i) => (i % 2 ? [150, 150, 170] : [180, 180, 200])); } s.rect(7, 2, 2, 3, [110, 110, 130]); s.outline([60, 60, 80]); },
+  firework_rocket: (s) => { s.rect(6, 4, 4, 8, (i, j) => (j % 3 === 0 ? [200, 50, 40] : [236, 236, 230])); s.rect(7, 1, 2, 3, [80, 80, 86]); s.line(8, 12, 8, 15, WOOD_D); s.set(7, 2, [255, 200, 60]); s.outline([50, 30, 30]); },
+  oak_boat: (s) => { for (let y = 7; y <= 11; y++) s.rect(1 + (y - 7), y, 14 - 2 * (y - 7), 1, (i) => (y === 7 ? [200, 160, 100] : i % 4 === 0 ? [140, 104, 60] : [176, 136, 82])); s.rect(6, 5, 1, 2, WOOD_D); s.outline([60, 40, 20]); },
+  minecart: (s) => { s.rect(2, 5, 12, 6, (i, j) => (j === 0 || i === 0 || i === 11 ? [170, 170, 176] : [110, 110, 116])); s.rect(3, 6, 10, 2, [70, 70, 76]); s.disc(4.5, 12, 1.6, [60, 60, 64]); s.disc(11.5, 12, 1.6, [60, 60, 64]); s.outline([30, 30, 34]); },
+  iron_door: (s) => doorItem(s, [214, 214, 218], [170, 170, 176], true),
+});
+
 // { key -> layer index }, and RGBA pixels for every item layer (16x16 each)
 export function buildItemSprites() {
   const layers = [];
   const index = new Map();
   for (const d of ITEMS) {
     const s = new Sprite();
-    (DRAW[d.key] || ((sp) => sp.rect(4, 4, 8, 8, [200, 0, 200])))(s);
+    if (d.kind === 'potion' || d.kind === 'splash') bottle(s, d.potion === 'water' ? [60, 110, 220] : d.color, d.kind === 'splash');
+    else if (d.kind === 'egg') egg(s, d.colors[0], d.colors[1]);
+    else (DRAW[d.key] || ((sp) => sp.rect(4, 4, 8, 8, [200, 0, 200])))(s);
     index.set(d.id, layers.length);
     layers.push(s.px);
   }

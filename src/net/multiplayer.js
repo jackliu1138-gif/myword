@@ -8,6 +8,7 @@ import { Voice } from './voice.js';
 import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
 import { loadEntity } from '../sim/containers.js';
 import { itemDef } from '../sim/items.js';
+import { WORLD_HEIGHT } from '../world/blocks.js';
 import { PLAYER_VARIANTS } from '../render/models.js';
 import { t } from '../ui/i18n.js';
 
@@ -108,7 +109,7 @@ export function installMultiplayer(Game) {
     const me = w.me && typeof w.me === 'object' ? w.me : {};
     this.mp.endHost = w.endHost || null;
     const data = {
-      version: 2, seed: w.seed, edits: w.edits, dimEdits: w.dimEdits || {}, dayTime: w.dayTime, dayCount: w.dayCount,
+      version: 2, seed: w.seed, gen: Number.isInteger(w.gen) ? w.gen : 1, edits: w.edits, dimEdits: w.dimEdits || {}, dayTime: w.dayTime, dayCount: w.dayCount,
       mode: me.mode || w.mode, difficulty: w.difficulty, endState: w.endState || undefined,
       dimension: me.dimension === 1 || me.dimension === 2 ? me.dimension : 0,
       inventory: Array.isArray(me.inventory) ? me.inventory : undefined,
@@ -155,7 +156,7 @@ export function installMultiplayer(Game) {
       // an edit in another dimension: kept for when we go there
       const edits = this.dimEdits[d] || (this.dimEdits[d] = new Map());
       for (const [x, y, z, b] of m.l) {
-        if (y < 0 || y > 127) continue;
+        if (y < 0 || y >= WORLD_HEIGHT) continue;
         const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
         const key = (cx + 32768) * 65536 + (cz + 32768);
         let e = edits.get(key);

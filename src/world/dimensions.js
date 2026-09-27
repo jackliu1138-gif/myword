@@ -7,22 +7,37 @@
 //    and small islands far out.
 
 import { Simplex, hash2, hash3, mulberry32 } from './noise.js';
-import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT } from './blocks.js';
+import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT, layerTop } from './blocks.js';
 import { TerrainGenerator, BIOME } from './generator.js';
+import { TerrainGenerator2 } from './generator2.js';
+import { ChunkCtx, pasteEndCity } from './structures.js';
 
 export const DIM = { OVERWORLD: 0, NETHER: 1, END: 2 };
 export const DIM_NAMES = ['overworld', 'nether', 'end'];
 
-const H = WORLD_HEIGHT;
+// the Nether and the End are 128 blocks high, as in Minecraft (the arrays are WORLD_HEIGHT tall)
+const H = 128;
 const CS = CHUNK_SIZE;
 const B = BLOCK;
 const idx = (x, y, z) => (y << 8) | (z << 4) | x;
 const smooth = (e0, e1, x) => { let t = (x - e0) / (e1 - e0); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
 
-export function createGenerator(seed, dimension = 0) {
-  if (dimension === DIM.NETHER) return new NetherGenerator(seed);
-  if (dimension === DIM.END) return new EndGenerator(seed);
-  return new TerrainGenerator(seed);
+// version: 1 for worlds made before the world was 384 high (their terrain never changes), 2 for
+// newer ones (taller terrain, more biomes and structures)
+export function createGenerator(seed, dimension = 0, version = 1) {
+  if (dimension === DIM.NETHER) return new NetherGenerator(seed, version);
+  if (dimension === DIM.END) return new EndGenerator(seed, version);
+  return version >= 2 ? new TerrainGenerator2(seed) : new TerrainGenerator(seed);
+}
+
+// A chunk from any of the generators as { blocks, states, features, top }: states for blocks that
+// have one (vines, stairs, doors, chests...), features for what the world must know of (creatures
+// that live there, monster spawners), top the highest layer with anything in it.
+export function generate(gen, cx, cz) {
+  const out = gen.generateChunk(cx, cz);
+  const r = out instanceof Uint8Array ? { blocks: out, states: null, features: null } : out;
+  r.top = layerTop(r.blocks);
+  return r;
 }
 
 // Writes blocks of a structure that may cross chunk borders: only the part inside this chunk.
@@ -41,8 +56,9 @@ const FORTRESS_CELL = 176;
 const FORTRESS_Y = 66;
 
 export class NetherGenerator {
-  constructor(seed) {
+  constructor(seed, version = 1) {
     this.seed = seed | 0;
+    this.version = version;
     this.dimension = DIM.NETHER;
     const s = this.seed ^ 0x3e7;
     this.n1 = new Simplex(s ^ 0x1111);
@@ -80,7 +96,7 @@ export class NetherGenerator {
   }
 
   generateChunk(cx, cz) {
-    const blocks = new Uint8Array(CS * CS * H);
+    const blocks = new Uint8Array(CS * CS * WORLD_HEIGHT);
     const x0 = cx * CS, z0 = cz * CS;
     // density on a coarse 4 x 8 x 4 grid, interpolated
     const GX = 5, GY = (H >> 3) + 1, GZ = 5;
@@ -231,8 +247,9 @@ export const END_PLATFORM = [100, 49, 0];
 export const END_PILLARS = 10;
 
 export class EndGenerator {
-  constructor(seed) {
+  constructor(seed, version = 1) {
     this.seed = seed | 0;
+    this.version = version;
     this.dimension = DIM.END;
     const s = this.seed ^ 0xe7d;
     this.n1 = new Simplex(s ^ 0x1234);
@@ -267,8 +284,36 @@ export class EndGenerator {
   // where the dragon perches and the exit portal opens
   fountainTop() { return END_SURFACE + 1; }
 
+  // The far island in a grid cell of 96 blocks, if it has one: { x, z, r, y } (and `city` for
+  // the ones with an end city, in worlds made since they exist).
+  islandIn(gx, gz) {
+    if (hash2(gx, gz, this.seed ^ 0x15) >= 0.35) return null;
+    const x = gx * 96 + 20 + hash2(gx, gz, this.seed ^ 0x16) * 56, z = gz * 96 + 20 + hash2(gx, gz, this.seed ^ 0x17) * 56;
+    const r = 7 + hash2(gx, gz, this.seed ^ 0x18) * 12, y = 50 + Math.floor(hash2(gx, gz, this.seed ^ 0x19) * 20);
+    const isl = { x, z, r, y };
+    if (this.version >= 2 && r >= 12 && Math.hypot(x, z) > 420 && hash2(gx, gz, this.seed ^ 0x1a) < 0.6) {
+      const cx = Math.floor(x), cz = Math.floor(z);
+      isl.city = { x: cx, y: y + 1, z: cz, f: Math.floor(hash2(gx, gz, this.seed ^ 0x1b) * 4), gate: [cx, y + 3, cz + Math.floor(r) - 4] };
+    }
+    return isl;
+  }
+
+  // The end city nearest to (x, z) within `range`, for the gateway: { x, y, z, gate } or null.
+  findCity(x, z, range = 700) {
+    let best = null, bd = Infinity;
+    for (let gz = Math.floor((z - range) / 96); gz <= Math.floor((z + range) / 96); gz++) {
+      for (let gx = Math.floor((x - range) / 96); gx <= Math.floor((x + range) / 96); gx++) {
+        const isl = this.islandIn(gx, gz);
+        if (!isl || !isl.city) continue;
+        const d = (isl.x - x) ** 2 + (isl.z - z) ** 2;
+        if (d < bd) { bd = d; best = isl.city; }
+      }
+    }
+    return best;
+  }
+
   generateChunk(cx, cz) {
-    const blocks = new Uint8Array(CS * CS * H);
+    const blocks = new Uint8Array(CS * CS * WORLD_HEIGHT);
     const x0 = cx * CS, z0 = cz * CS;
     for (let z = 0; z < CS; z++) {
       for (let x = 0; x < CS; x++) {
@@ -282,16 +327,26 @@ export class EndGenerator {
           for (let y = Math.max(1, Math.floor(top - depth)); y <= top; y++) blocks[idx(x, y, z)] = B.END_STONE;
         } else if (d > 260) {
           // far islands on a coarse grid
-          const gx = Math.floor(wx / 96), gz = Math.floor(wz / 96);
-          if (hash2(gx, gz, this.seed ^ 0x15) < 0.35) {
-            const ix = gx * 96 + 20 + hash2(gx, gz, this.seed ^ 0x16) * 56, iz = gz * 96 + 20 + hash2(gx, gz, this.seed ^ 0x17) * 56;
-            const ir = 7 + hash2(gx, gz, this.seed ^ 0x18) * 12, iy = 50 + Math.floor(hash2(gx, gz, this.seed ^ 0x19) * 20);
-            const dd = Math.hypot(wx - ix, wz - iz);
-            if (dd < ir) {
-              const depth = Math.sqrt(1 - (dd / ir) ** 2) * ir * 0.7;
-              for (let y = Math.floor(iy - depth); y <= iy; y++) blocks[idx(x, y, z)] = B.END_STONE;
+          const isl = this.islandIn(Math.floor(wx / 96), Math.floor(wz / 96));
+          if (isl) {
+            const dd = Math.hypot(wx - isl.x, wz - isl.z);
+            if (dd < isl.r) {
+              const depth = Math.sqrt(1 - (dd / isl.r) ** 2) * isl.r * 0.7;
+              for (let y = Math.floor(isl.y - depth); y <= isl.y; y++) blocks[idx(x, y, z)] = B.END_STONE;
             }
           }
+        }
+      }
+    }
+    // end cities on the outer islands (they reach a little way off their island)
+    let ctx = null;
+    if (this.version >= 2 && Math.hypot(x0 + 8, z0 + 8) > 300) {
+      for (let gz = Math.floor((z0 - 40) / 96); gz <= Math.floor((z0 + CS + 40) / 96); gz++) {
+        for (let gx = Math.floor((x0 - 40) / 96); gx <= Math.floor((x0 + CS + 40) / 96); gx++) {
+          const isl = this.islandIn(gx, gz);
+          if (!isl || !isl.city || Math.abs(isl.x - (x0 + 8)) > 48 || Math.abs(isl.z - (z0 + 8)) > 48) continue;
+          ctx = ctx || new ChunkCtx(blocks, cx, cz, this);
+          pasteEndCity(ctx, isl.city);
         }
       }
     }
@@ -323,7 +378,7 @@ export class EndGenerator {
       set(px + dx, py - 1, pz + dz, B.OBSIDIAN);
       for (let k = 0; k < 3; k++) set(px + dx, py + k, pz + dz, 0);
     }
-    return blocks;
+    return ctx ? ctx.result() : blocks;
   }
 
   findSpawn() { return [END_PLATFORM[0] + 0.5, END_PLATFORM[1], END_PLATFORM[2] + 0.5]; }
