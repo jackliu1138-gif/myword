@@ -447,15 +447,16 @@ export function newPose(r, e, type, t, k) {
   const hide = new Set();
   switch (type) {
     case 'villager': case 'witch': {
-      r.head = r.nose = [headPitch, headYaw, 0];
-      r.arms = [-0.75 + Math.sin(t * 1.1 + e.id) * 0.03, 0, 0];
+      r.head = [headPitch, headYaw, 0]; // (the nose turns with it: it hangs off the head)
+      // arms folded in front, the hands raised a little (a potion up to the mouth, drinking)
+      r.arms = [0.75 + Math.sin(t * 1.1 + e.id) * 0.03, 0, 0];
       r.rightLeg = [sw, 0, 0];
       r.leftLeg = [-sw, 0, 0];
-      if (type === 'witch' && e.mode === 'drink') r.arms = [-1.4, 0, 0];
+      if (type === 'witch' && e.mode === 'drink') r.arms = [1.35, 0, 0];
       break;
     }
     case 'pillager': case 'vindicator': case 'evoker': {
-      r.head = r.nose = [headPitch, headYaw, 0];
+      r.head = [headPitch, headYaw, 0];
       r.rightLeg = [sw, 0, 0];
       r.leftLeg = [-sw, 0, 0];
       const chase = e.mode === 'chase';
@@ -476,7 +477,7 @@ export function newPose(r, e, type, t, k) {
       break;
     }
     case 'iron_golem': {
-      r.head = r.nose = [headPitch * 0.6, headYaw, 0];
+      r.head = [headPitch * 0.6, headYaw, 0];
       r.rightLeg = [sw * 0.6, 0, 0];
       r.leftLeg = [-sw * 0.6, 0, 0];
       const s = e.swing > 0 ? Math.sin((e.swing / 0.4) * Math.PI) * 1.8 : 0;
@@ -486,20 +487,33 @@ export function newPose(r, e, type, t, k) {
     }
     case 'wolf': case 'cat': {
       const sit = e.flags & 256;
-      r.head = [headPitch, headYaw, 0];
-      r.snout = r.nose = r.earR = r.earL = r.head;
-      if (sit) {
-        r.body = [-0.6, 0, 0];
-        r.mane = [-0.4, 0, 0];
-        r.legFR = r.legFL = [0.25, 0, 0];
-        r.legBR = r.legBL = [-1.4, 0, 0];
-        r.tail = type === 'cat' ? [0.6, 0, 0] : [0.9, 0, 0];
+      const tamed = e.flags & 128;
+      r.head = [headPitch, headYaw, 0]; // (snout, nose and ears hang off the head)
+      // the wolf's tail hangs down behind a wild one, sticks out behind a tame one (lower as it
+      // gets hurt) and stands straight out when it is angry
+      const hp = Math.min(1, (e.health || 20) / (tamed ? 20 : e.def ? e.def.health : 8));
+      const wolfTail = e.mode === 'chase' || e.flags & 512 ? -1.54 : tamed ? -(1.0 + 0.73 * hp) : -0.63;
+      if (sit && type === 'wolf') {
+        // sitting: the chest up, the rear on the ground, hind legs folded under, tail behind
+        r.body = [0.8, 0, 0, 0, -3, -1.5];
+        r.mane = [0.3, 0, 0, 0, -0.5, -0.5];
+        r.legFR = r.legFL = [0.35, 0, 0, 0, -0.5, 0];
+        r.legBR = r.legBL = [Math.PI / 2, 0, 0, 0, -5.5, -5];
+        r.tail = [-1.45, Math.sin(t * (tamed ? 10 : 3)) * (tamed ? 0.35 : 0.1), 0, 0, -8.5, -4.5];
+      } else if (sit) {
+        r.body = [0.5, 0, 0, 0, -2, 0.5];
+        r.head = [headPitch, headYaw, 0, 0, 2, 1.5];
+        r.legFR = r.legFL = [0.1, 0, 0];
+        r.legBR = r.legBL = [Math.PI / 2, 0, 0, 0, -3.8, -2];
+        r.tail = [0.05, Math.sin(t * 1.5 + e.id) * 0.25, 0, 0, -6.5, -1];
+        r.tail2 = [-0.3, 0, 0];
       } else {
         r.legFR = r.legBL = [sw, 0, 0];
         r.legFL = r.legBR = [-sw, 0, 0];
-        const wag = type === 'wolf' ? Math.sin(t * (e.flags & 128 ? 14 : 4)) * (e.flags & 128 ? 0.5 : 0.15) : Math.sin(t * 2 + e.id) * 0.3;
-        r.tail = type === 'wolf' ? [e.mode === 'chase' ? 0.4 : 0.9 - (1 - Math.min(1, (e.health || 8) / (e.def ? e.def.health : 8))) * 0.7, wag, 0] : [-0.2, wag, 0];
-        if (type === 'cat') r.tail2 = [0.4, 0, 0];
+        const wag = type === 'wolf' ? Math.sin(t * (tamed ? 14 : 4)) * (tamed ? 0.5 : 0.15) : Math.sin(t * 2 + e.id) * 0.3;
+        // (a cat's tail goes down and back, its tip curling up)
+        r.tail = type === 'wolf' ? [wolfTail, wag, 0] : [0.6, wag, 0];
+        if (type === 'cat') r.tail2 = [-0.9, 0, 0];
       }
       break;
     }
@@ -513,10 +527,11 @@ export function newPose(r, e, type, t, k) {
       r.tail = [0, Math.sin(t * 8) * 0.4, 0];
       break;
     case 'squid':
+      // the tentacles open out from under the body and close again as it swims
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2;
         const open = 0.35 + Math.sin(t * 2 + e.id) * 0.3;
-        r['tent' + i] = [Math.sin(a) * open, 0, -Math.cos(a) * open];
+        r['tent' + i] = [-Math.sin(a) * open, 0, Math.cos(a) * open];
       }
       break;
     case 'slime': {
@@ -538,8 +553,9 @@ export function newPose(r, e, type, t, k) {
       r.head = [headPitch, headYaw, 0];
       r.headR = [headPitch, headYaw + Math.sin(t * 0.7) * 0.3, 0];
       r.headL = [headPitch, headYaw - Math.sin(t * 0.9) * 0.3, 0];
-      r.tail = [0.35 + Math.sin(t * 1.5) * 0.1, 0, 0];
-      r.spine = [0.12, 0, 0];
+      // the spine leans back a little, the tail below it curls away behind
+      r.tail = [-(0.35 + Math.sin(t * 1.5) * 0.1), 0, 0];
+      r.spine = [-0.15, 0, 0];
       break;
     }
     case 'wither_skeleton': {
@@ -572,14 +588,17 @@ export function newPose(r, e, type, t, k) {
       r.neck = [-0.5 - graze * 0.9 + headPitch * 0.3, headYaw * 0.6, 0];
       r.head = [0.5 + graze * 0.4, 0, 0];
       r.mane = [0, 0, 0];
-      r.tail = [0.45 + Math.sin(t * 1.3 + e.id) * 0.08 + amt * 0.3, Math.sin(t * 0.9) * 0.1, 0];
+      // (the tail hangs down behind, and streams out further at a run)
+      r.tail = [-(0.45 + Math.sin(t * 1.3 + e.id) * 0.08 + amt * 0.3), Math.sin(t * 0.9) * 0.1, 0];
       if (!(e.flags & 64)) hide.add('saddle');
       break;
     }
     case 'boat': {
       const row = e.rowPhase || 0;
-      r.oarR = [0, Math.sin(row) * 0.5, -0.3 + Math.cos(row) * 0.25];
-      r.oarL = [0, -Math.sin(row) * 0.5, 0.3 - Math.cos(row) * 0.25];
+      // the oars sweep back and forth: blades deep in the water as they pull back, lifted as they
+      // swing forwards again
+      r.oarR = [0, Math.sin(row) * 0.5, 0.3 + Math.cos(row) * 0.25];
+      r.oarL = [0, -Math.sin(row) * 0.5, -(0.3 + Math.cos(row) * 0.25)];
       break;
     }
     case 'evoker_fangs': {

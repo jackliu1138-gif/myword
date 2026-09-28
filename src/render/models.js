@@ -327,8 +327,8 @@ export const MODELS = {
     parts: [
       ...HUMANOID(4),
       ['snout', [0, 24, 0], [-2, 1, -5, 4, 3, 1]],
-      ['earR', [-4, 30, 0], [-1, -4, -2, 1, 5, 4]],
-      ['earL', [4, 30, 0], [0, -4, -2, 1, 5, 4]],
+      ['earR', [-4, 6, 0], [-1, -4, -2, 1, 5, 4], null, 'head'],
+      ['earL', [4, 6, 0], [0, -4, -2, 1, 5, 4], null, 'head'],
     ],
   },
   blaze: {
@@ -587,6 +587,12 @@ function mul(a, b) {
 const apply = (m, x, y, z) => [m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7], m[8] * x + m[9] * y + m[10] * z + m[11]];
 const applyN = (m, x, y, z) => { const v = [m[0] * x + m[1] * y + m[2] * z, m[4] * x + m[5] * y + m[6] * z, m[8] * x + m[9] * y + m[10] * z]; const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 
+// a spider's legs, front pair first: how far each pair fans forwards (-) or back, how steeply it
+// goes down to the ground, and where in the stride it is
+const SPIDER_FAN = [-Math.PI / 4, -Math.PI / 8, Math.PI / 8, Math.PI / 4];
+const SPIDER_TILT = [Math.PI / 4, 0.58, 0.58, Math.PI / 4];
+const SPIDER_PHASE = [1.5 * Math.PI, 0.5 * Math.PI, Math.PI, 0];
+
 // Part rotations for the current pose: returns { name: [rx, ry, rz] }
 function pose(e, type, t) {
   const r = {};
@@ -626,14 +632,17 @@ function pose(e, type, t) {
     r.head = [headPitch * 0.5, headYaw, 0];
     r.legFR = r.legBL = [sw, 0, 0];
     r.legFL = r.legBR = [-sw, 0, 0];
-  } else if (type === 'spider') {
+  } else if (type === 'spider' || type === 'cave_spider') {
     r.head = [headPitch * 0.5, headYaw * 0.6, 0];
+    // eight legs out to the sides and down to the ground, as in the original: the end pairs at
+    // 45 degrees, the middle ones flatter, fanned forwards and back (pair 0 is the front one).
+    // Walking swings each pair back and forth and lifts it, the pairs out of step.
     for (let i = 0; i < 4; i++) {
-      const ph = walk * 3 + i * Math.PI / 2;
-      const lift = Math.max(0, Math.sin(ph)) * 0.5 * amt;
-      const spreadY = (i - 1.5) * 0.35 + Math.cos(ph) * 0.35 * amt;
-      r['legR' + i] = [0, spreadY, -0.5 - lift];
-      r['legL' + i] = [0, -spreadY, 0.5 + lift];
+      const ph = SPIDER_PHASE[i];
+      const swing = -Math.cos(walk * 4.4 + ph) * 0.4 * amt;
+      const lift = Math.abs(Math.sin(walk * 2.2 + ph)) * 0.4 * amt;
+      r['legR' + i] = [0, SPIDER_FAN[i] + swing, SPIDER_TILT[i] - lift];
+      r['legL' + i] = [0, -SPIDER_FAN[i] - swing, -SPIDER_TILT[i] + lift];
     }
   } else if (type === 'cow' || type === 'pig' || type === 'sheep') {
     r.legFR = r.legBL = [sw, 0, 0];
@@ -643,14 +652,14 @@ function pose(e, type, t) {
     r.head = [headPitch - graze, headYaw, 0];
     r.horns = r.snout = r.headWool = r.head;
   } else if (type === 'zombified_piglin') {
-    r.head = r.snout = r.earR = r.earL = [headPitch, headYaw, 0];
+    r.head = r.snout = [headPitch, headYaw, 0];
     r.rightLeg = [sw, 0, 0];
     r.leftLeg = [-sw, 0, 0];
     const swing = e.swing > 0 ? Math.sin((e.swing / 0.4) * Math.PI) * 1.2 : 0;
     r.rightArm = [-sw * 0.8 + 0.3 + swing, 0, 0.05];
     r.leftArm = [sw * 0.8, 0, -0.05];
-    r.earR = [headPitch, headYaw, 0.35];
-    r.earL = [headPitch, headYaw, -0.35];
+    r.earR = [0, 0, -0.35];
+    r.earL = [0, 0, 0.35];
   } else if (type === 'blaze') {
     r.head = [headPitch, headYaw, 0];
     for (let i = 0; i < 12; i++) {
@@ -681,8 +690,8 @@ function pose(e, type, t) {
     r.head = [headPitch * 0.5 + bob, 0, 0];
     r.jaw = [headPitch * 0.5 + bob - 0.15 - Math.max(0, Math.sin(t * 1.3)) * 0.25, 0, 0];
     for (let i = 1; i <= 4; i++) r['tail' + i] = [0, Math.sin(t * 1.4 + i * 0.7) * 0.18 * i * 0.5, 0];
-    r.legFR = r.legFL = [0.9, 0, 0];
-    r.legBR = r.legBL = [0.7, 0, 0];
+    r.legFR = r.legFL = [e.landed ? -0.1 : -1.2, 0, 0];
+    r.legBR = r.legBL = [e.landed ? 0 : -0.9, 0, 0];
   } else if (type === 'end_crystal') {
     r.outer = [t * 1.3, t * 1.7, 0.6];
     r.inner = [-t * 1.9, t * 1.1, 0.3];
@@ -697,11 +706,18 @@ function pose(e, type, t) {
     r.wingL = [0, 0, flap];
   } else newPose(r, e, type, t, { sw, walk, amt, headYaw, headPitch });
   if (type === 'sheep' && e.flags & 64) r.__hide = new Set(['wool', 'headWool']); // sheared
-  if (type === 'player' && e.sitting) { r.rightLeg = [-1.4, 0.15, 0]; r.leftLeg = [-1.4, -0.15, 0]; }
-  if (type === 'player' && e.gliding) { r.rightArm = [0.1, 0, 0.35]; r.leftArm = [0.1, 0, -0.35]; r.rightLeg = [0.05, 0, 0.08]; r.leftLeg = [0.05, 0, -0.08]; }
+  if (type === 'player' && e.sitting) {
+    r.rightLeg = [1.41, Math.PI / 10, -0.08];
+    r.leftLeg = [1.41, -Math.PI / 10, 0.08];
+    r.rightArm = [(r.rightArm ? r.rightArm[0] : 0) + 0.63, 0, 0.05];
+    r.leftArm = [(r.leftArm ? r.leftArm[0] : 0) + 0.63, 0, -0.05];
+  }
+  if (type === 'player' && e.gliding) { r.rightArm = [0.1, 0, -0.35]; r.leftArm = [0.1, 0, 0.35]; r.rightLeg = [0.05, 0, 0.06]; r.leftLeg = [0.05, 0, -0.06]; }
   if ((type === 'player' || type === 'zombie' || type === 'skeleton') && e.blocking) r.leftArm = [1.1, 0.5, 0];
   return r;
 }
+
+const NO_ROT = [0, 0, 0];
 
 // Writes the triangles of one creature into `out` starting at float offset o. Vertex layout:
 // pos3 (camera relative), normal3, uv2, layer, sky, block, mode, tint rgba -> 16 floats.
@@ -741,7 +757,7 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   const rots = pose(e, type, t);
   let scale = 1 / 16;
   let root = mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]);
-  if (e.lying) root = mul(root, mat(-Math.PI / 2, 0, 0, 0, 0.22, 1.0)); // asleep on the back along the bed, head on the pillow
+  if (e.lying) root = mul(root, mat(Math.PI / 2, Math.PI, 0, 0, 0.22, 1.0)); // asleep on the back (face up) along the bed, head on the pillow
   if (e.deathTime > 0) {
     // topple over sideways
     const k = Math.min(1, e.deathTime / 0.45);
@@ -757,11 +773,13 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   const byName = {};
   for (const part of model.parts) {
     const [name, pivot, box, , parent] = part;
-    const rot = rots[name] || [0, 0, 0];
+    const rot = rots[name] || NO_ROT;
+    // (a pose may also move the pivot, in pixels: [rx, ry, rz, dx, dy, dz])
+    const px = pivot[0] + (rot[3] || 0), py = pivot[1] + (rot[4] || 0), pz = pivot[2] + (rot[5] || 0);
     // a child's pivot is in its parent's (already scaled) space
     const m = parent && byName[parent]
-      ? mul(byName[parent], mat(rot[0], rot[1], rot[2], pivot[0], pivot[1], pivot[2], 1))
-      : mul(root, mat(rot[0], rot[1], rot[2], pivot[0] * scale * swell, pivot[1] * scale * swell, pivot[2] * scale * swell, scale * swell));
+      ? mul(byName[parent], mat(rot[0], rot[1], rot[2], px, py, pz, 1))
+      : mul(root, mat(rot[0], rot[1], rot[2], px * scale * swell, py * scale * swell, pz * scale * swell, scale * swell));
     byName[name] = m;
     if (hide && hide.has(name)) continue;
     o = emitBox(out, o, m, box, model.rects[name], layer, light, tint);
