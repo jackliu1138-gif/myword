@@ -122,7 +122,7 @@ export class Player {
   }
 
   update(dt, ctl) {
-    // ctl: { forward, strafe, jump, sneak, sprint, toggleFly }
+    // ctl: { forward, strafe, jump, jumpPressed (this step only), sneak, sprint, toggleFly }
     dt = Math.min(dt, 0.05);
     // riding: the vehicle moves; the game puts us in its seat
     if (this.riding) {
@@ -133,15 +133,16 @@ export class Player {
       this.eyeHeight += (EYE - this.eyeHeight) * (1 - Math.exp(-dt * 14));
       return;
     }
-    if (this.gliding) { this.glide(dt, ctl); return; }
+    if (this.gliding) {
+      if (!ctl.toggleFly) { this.glide(dt, ctl); return; }
+      // (creative) flight switched on mid-glide: fly instead
+      this.gliding = false;
+      ctl = { ...ctl, jumpPressed: false };
+    }
     // pushed out if something ended up inside the player (e.g. terrain loaded around them)
     if (this.collides(this.pos[0], this.pos[1], this.pos[2])) {
       this.pos[1] = Math.floor(this.pos[1]) + 1 + EPS;
       this.vel[1] = Math.max(this.vel[1], 0);
-    }
-    if (ctl.toggleFly) {
-      this.flying = !this.flying;
-      if (this.flying) this.vel[1] = Math.max(this.vel[1], 0);
     }
     const feet = this.blockAt(this.pos[0], this.pos[1] + 0.1, this.pos[2]);
     const waist = this.blockAt(this.pos[0], this.pos[1] + 0.8, this.pos[2]);
@@ -151,9 +152,18 @@ export class Player {
     this.headInWater = BLOCKS[eyeBlock].key === 'water';
     if (this.inWater && !wasInWater && this.vel[1] < -4 && this.onSplash) this.onSplash();
 
+    // wearing elytra, a jump press in the air spreads them, straight after a jump as well as
+    // falling (as since Java 1.15); in creative that press spreads them instead of toggling flight
+    const climbable = this.world.climbableAt(this.pos[0], this.pos[1] + 0.05, this.pos[2]) || this.world.climbableAt(this.pos[0], this.pos[1] + 0.9, this.pos[2]);
+    const spread = !!ctl.jumpPressed && this.canGlide && !this.onGround && !this.flying && !this.inWater && !climbable && !(this.fx && this.fx.levitate);
+    if (ctl.toggleFly && !spread) {
+      this.flying = !this.flying;
+      if (this.flying) this.vel[1] = Math.max(this.vel[1], 0);
+    }
+
     this.sneaking = ctl.sneak && !this.flying;
     // on a ladder: climb while pushing into it (or holding jump), hold on while sneaking, slide down slowly
-    this.onLadder = !this.flying && (this.world.climbableAt(this.pos[0], this.pos[1] + 0.05, this.pos[2]) || this.world.climbableAt(this.pos[0], this.pos[1] + 0.9, this.pos[2]));
+    this.onLadder = !this.flying && climbable;
     if (ctl.sprint && ctl.forward > 0 && !this.sneaking) this.sprinting = true;
     if (ctl.forward <= 0 || this.sneaking) this.sprinting = false;
 
@@ -208,8 +218,7 @@ export class Player {
           this.vel[2] += wishZ * 1.2;
         }
       }
-      // wearing elytra: jump again in the air to spread them
-      if (ctl.jumpPressed && !this.onGround && this.canGlide && this.vel[1] < 1 && !this.onLadder) {
+      if (spread) {
         this.gliding = true;
         this.fallStart = null;
       }
@@ -309,7 +318,8 @@ export class Player {
     v[0] = vx * 20; v[1] = vy * 20; v[2] = vz * 20;
     const before = Math.hypot(v[0], v[2]);
     const by = this.moveAxis(1, v[1] * dt);
-    if (by) { this.onGround = v[1] < 0; v[1] = 0; }
+    this.onGround = by && v[1] < 0;
+    if (by) v[1] = 0;
     const bx = this.moveAxis(0, v[0] * dt), bz = this.moveAxis(2, v[2] * dt);
     if (bx) v[0] = 0;
     if (bz) v[2] = 0;
@@ -324,6 +334,21 @@ export class Player {
     }
     this.eyeHeight += (0.6 - this.eyeHeight) * (1 - Math.exp(-dt * 10));
     this.bobAmount *= Math.exp(-dt * 8);
+  }
+
+  // A firework rocket with the elytra on but not spread (jumping, falling, flying, or standing):
+  // they spread at once, off the ground with a hop. False when they can't be.
+  takeOff() {
+    if (this.gliding) return true;
+    if (!this.canGlide || this.riding || this.inWater || (this.fx && this.fx.levitate)) return false;
+    if (this.onGround) {
+      this.vel[1] = Math.max(this.vel[1], JUMP_V);
+      this.onGround = false;
+    }
+    this.flying = false;
+    this.gliding = true;
+    this.fallStart = null;
+    return true;
   }
 
   // Would placing a block at (x,y,z) intersect the player?

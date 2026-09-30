@@ -111,6 +111,7 @@ const HELP = [
       [kb('W', 'A', 'S', 'D'), 'act.walk'],
       [kb('i18n:key.mouse'), 'act.look'],
       [kb('Space'), 'act.jump'],
+      [kb('Space', 'i18n:key.inAir'), 'act.glide'],
       [kb('Space ×2', 'i18n:key.or', 'F'), 'act.toggleFly'],
       [kb('Shift'), 'act.sneak'],
       [kb('W ×2', 'i18n:key.or', 'R'), 'act.sprint'],
@@ -137,6 +138,7 @@ const HELP = [
       [kb('i18n:pad.leftStick'), 'act.moveSprint'],
       [kb('i18n:pad.rightStick'), 'act.lookPick'],
       [kb('pad:A'), 'act.jumpFly'],
+      [kb('pad:A', 'i18n:key.inAir'), 'act.glide'],
       [kb('pad:B'), 'act.sneak'],
       [kb('pad:X'), 'act.toggleFly'],
       [kb('pad:Y'), 'act.inventory'],
@@ -176,7 +178,7 @@ let padStyle = 'xbox';
 
 function keyHtml(k) {
   const text = k.startsWith('i18n:') ? t(k.slice(5)) : k.startsWith('pad:') ? GLYPHS[padStyle][k.slice(4)] : k;
-  if (k === 'i18n:key.or') return ` ${text} `;
+  if (k === 'i18n:key.or' || k === 'i18n:key.inAir') return ` ${text} `;
   return `<kbd>${escapeHtml(text)}</kbd>`;
 }
 

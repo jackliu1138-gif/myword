@@ -1,11 +1,12 @@
 // The deeper survival game on the player's side: hunger (eating takes a moment; sprinting and
 // jumping make you hungry), experience (orbs, levels, mending), status effects (potions, food,
 // creatures' poison), the enchanting table, potions to drink and throw, the shield in the other
-// hand, the crossbow, the fishing rod, fireworks, spawn eggs and the totem of undying.
+// hand, the crossbow, the fishing rod, fireworks, spawn eggs, armour put on from the hand and the
+// totem of undying.
 // Installed as methods on Game.prototype.
 
 import { ITEM, itemDef, isBlockItem, SPLASH_ITEMS, POTION_ITEMS, EGG_ITEMS } from '../sim/items.js';
-import { OFFHAND_REF, CONTAINER_REF } from '../sim/inventory.js';
+import { OFFHAND_REF, CONTAINER_REF, ARMOR_REF } from '../sim/inventory.js';
 import {
   addEffect, hasEffect, effectAmp, potionOutcome, enchLevel, enchantOffers, addXp, spendLevels, xpForLevel, xpProgress, eat, EXHAUST, MAX_FOOD, EFFECTS,
 } from '../sim/effects.js';
@@ -195,11 +196,26 @@ export function installSurvival(Game) {
           this.swing = 1;
         }
         return true;
+      case 'armor':
+        if (usePressed || tc.tap) { tc.tap = false; this.putOnHeld(def); }
+        return true;
       case 'totem': case 'shield': case 'saddle':
         tc.tap = false;
         return true;
       default: return false;
     }
+  };
+
+  // Armour (and elytra) used from the hand go on, swapping places with what was worn.
+  P.putOnHeld = function putOnHeld(def) {
+    const inv = this.inventory;
+    const ref = ARMOR_REF + def.slot;
+    const held = inv.get(this.selected);
+    if (!held || !inv.accepts(ref, held)) return;
+    inv.set(this.selected, inv.get(ref));
+    inv.set(ref, held);
+    inv.changed();
+    this.audio.sfx('equip', 0.7, 0);
   };
 
   P.finishConsuming = function finishConsuming(e) {
@@ -376,10 +392,13 @@ export function installSurvival(Game) {
   };
 
   // ---------------------------------------------------------------- fireworks
-  // Gliding: a burst of speed along the way you look. On the ground: a rocket into the sky.
+  // Gliding: a burst of speed along the way you look. With elytra on but not spread yet (jumping,
+  // falling, flying, or standing and aiming at the sky rather than at a block) they spread and
+  // the rocket takes you with it. Otherwise: a rocket into the sky from the block you aim at.
   P.useFirework = function useFirework(hit) {
     const p = this.player;
     const creative = this.isCreative();
+    if (!p.gliding && (!p.onGround || !hit)) p.takeOff();
     if (p.gliding) {
       this.sim.launchFirework('local', [p.pos[0], p.pos[1] + 0.9, p.pos[2]], [0, 0, 0], { attached: true, life: 1.6 });
       this.boost = 1.6;

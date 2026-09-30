@@ -15,7 +15,7 @@ export class Input {
     this.dragging = false;
     this.enabled = false; // only capture while playing
     this.onLockChange = null;
-    this.touch = { active: false, move: [0, 0], jump: false, sneak: false, breakHeld: false, breakBtn: false, tap: false, toggleFly: false, menu: false, inventory: false };
+    this.touch = { active: false, move: [0, 0], jump: false, jumpTap: false, sneak: false, breakHeld: false, breakBtn: false, tap: false, toggleFly: false, menu: false, inventory: false };
     this.lastSpace = 0;
     this.doubleSpace = false;
     this.lastW = 0;
@@ -213,8 +213,10 @@ export class TouchControls {
         if (!this.input.enabled && key !== 'fullscreen') return;
         b.classList.add('down');
         this.input.touch.active = true;
-        if (holdKeys.has(key)) input.touch[key] = true;
-        else if (key === 'placeBtn') input.touch.tap = true;
+        if (holdKeys.has(key)) {
+          input.touch[key] = true;
+          if (key === 'jump') input.touch.jumpTap = true; // (kept until the game has seen it)
+        } else if (key === 'placeBtn') input.touch.tap = true;
         else if (key === 'fullscreen') this.toggleFullscreen();
         else input.touch[key] = true;
       };
@@ -286,7 +288,7 @@ export class TouchControls {
   release() {
     const tc = this.input.touch;
     tc.move = [0, 0];
-    tc.jump = tc.sneak = tc.breakBtn = tc.breakHeld = false;
+    tc.jump = tc.jumpTap = tc.sneak = tc.breakBtn = tc.breakHeld = false;
     this.stickId = null;
     this.lookId = null;
     this.knob.style.transform = '';

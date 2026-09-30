@@ -658,9 +658,10 @@ export class Game {
         if (Math.abs(tc.move[0]) > 0.15) ctl.strafe = tc.move[0];
         if (-tc.move[1] > 0.92) ctl.sprint = true;
       }
-      ctl.jump = k('Space') || tc.jump;
-      ctl.jumpPressed = input.wasPressed('Space') || (tc.jump && !this.prevTouchJump);
-      this.prevTouchJump = tc.jump;
+      // a press counts even when it is over before the frame (a quick tap on a slow device)
+      ctl.jumpPressed = input.wasPressed('Space') || tc.jumpTap;
+      ctl.jump = k('Space') || tc.jump || ctl.jumpPressed;
+      tc.jumpTap = false;
       if (input.wasPressed('F5') || input.wasPressed('KeyC')) this.cycleCamera();
       if (input.wasPressed('KeyX')) this.swapHands();
       ctl.sneak = k('ShiftLeft') || k('ShiftRight') || tc.sneak;
@@ -706,7 +707,9 @@ export class Game {
       while (rem > 1e-6) {
         const step = Math.min(rem, 1 / 60);
         this.player.update(step, ctl);
+        // a press counts once: one can't both jump and spread the elytra
         ctl.toggleFly = false;
+        ctl.jumpPressed = false;
         rem -= step;
       }
     }
@@ -816,6 +819,7 @@ export class Game {
     }
     ctl.jump = ctl.jump || pad.down(PAD.A);
     if (pad.pressed(PAD.A)) {
+      ctl.jumpPressed = true; // (in the air with elytra on: spread them)
       const now = performance.now();
       if (now - this.lastPadA < 300) ctl.toggleFly = true;
       this.lastPadA = now;

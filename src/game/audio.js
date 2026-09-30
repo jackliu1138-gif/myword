@@ -277,6 +277,7 @@ export class Audio {
       case 'totem': for (let i = 0; i < 6; i++) tone(t + i * 0.1, 880 * (1 + (i % 3) * 0.25), 0.6, 0.14, 'triangle'); noise(t, 1, 'highpass', 5000, 0.8, 0.15); break;
       case 'shear': for (let i = 0; i < 2; i++) noise(t + i * 0.1, 0.07, 'bandpass', 4200, 4, 0.35); break;
       case 'saddle': noise(t, 0.2, 'lowpass', 800, 0.8, 0.4); break;
+      case 'equip': noise(t, 0.14, 'bandpass', 1500, 1.1, 0.3); tone(t + 0.02, 420, 0.12, 0.12, 'triangle', 300); break;
       case 'minecart': noise(t, 0.3, 'bandpass', 900, 1.5, 0.15); break;
       case 'plate': tone(t, 400, 0.08, 0.2, 'square', 250); break;
       case 'heart': tone(t, 900, 0.2, 0.12, 'sine', 1200); break;

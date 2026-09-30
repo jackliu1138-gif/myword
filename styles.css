@@ -464,9 +464,15 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
   background: var(--glass);
   border: 1px solid var(--line);
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: 20px;
   font-weight: 500;
   text-shadow: none;
+  /* long ones wrap instead of running off a phone's screen */
+  white-space: normal;
+  width: max-content;
+  max-width: min(640px, calc(100vw - 32px));
+  line-height: 1.45;
+  text-align: center;
 }
 #blockname.show, #toast.show { opacity: 1; }
 #lockhint {

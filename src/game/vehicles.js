@@ -207,8 +207,14 @@ export function installVehicles(Game) {
     const p = this.player;
     const chest = this.inventory.armor[1];
     const d = chest && itemDef(chest.id);
+    const could = p.canGlide;
     p.canGlide = !!(d && d.elytra && (chest.wear || 0) < d.durability - 1);
+    // the first time they go on: how to fly them
+    if (p.canGlide && !could && !this.elytraHinted) { this.elytraHinted = true; this.ui.toast(t('toast.elytraOn'), 9000); }
     if (this.boost > 0) { p.boost = Math.max(p.boost, this.boost); this.boost = 0; }
+    // the wings opening
+    if (p.gliding && !this.wasGliding) this.audio.sfx('elytra', 0.7, 0);
+    this.wasGliding = p.gliding;
     const speed = Math.hypot(p.vel[0], p.vel[1], p.vel[2]);
     this.audio.setWind(p.gliding ? Math.min(1, speed / 30) : 0);
     if (!p.gliding) { this.glideTime = 0; this.prevTips = null; this.wasBoosting = false; return; }

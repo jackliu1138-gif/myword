@@ -36,6 +36,7 @@ registerStrings('en', {
   'boss.wither': 'Wither',
   'toast.elderCurse': 'Mining fatigue: an elder guardian is near',
   'toast.dismount': 'Sneak (Shift) to get off',
+  'toast.elytraOn': 'Elytra on! Jump, then press jump again in the air to glide. While gliding, use a firework rocket to speed up; standing on the ground, look at the sky and use one to take off.',
   'toast.noCity': 'No end city out that way',
   'toast.cam0': 'First person', 'toast.cam1': 'Third person (behind)', 'toast.cam2': 'Third person (in front)',
 
@@ -48,6 +49,7 @@ registerStrings('en', {
   'death.wolf': 'A wolf got you', 'death.pufferfish': 'You were stung by a pufferfish',
 
   'keys.swap': 'Swap hands', 'keys.camera': 'Change view', 'keys.dismount': 'Get off (while riding)',
+  'key.inAir': '(in mid-air)', 'act.glide': 'Spread the elytra',
 });
 
 registerStrings('zh', {
@@ -83,6 +85,7 @@ registerStrings('zh', {
   'boss.wither': '凋灵',
   'toast.elderCurse': '挖掘疲劳：附近有远古守卫者',
   'toast.dismount': '按潜行键（Shift）下来',
+  'toast.elytraOn': '穿上鞘翅了！跳起来后，在空中再按一次跳跃就会展开滑翔。滑翔时使用烟花火箭加速；站在地上抬头看天空使用烟花，可以直接起飞。',
   'toast.noCity': '这个方向没有末地城',
   'toast.cam0': '第一人称', 'toast.cam1': '第三人称（背后）', 'toast.cam2': '第三人称（正面）',
 
@@ -94,6 +97,7 @@ registerStrings('zh', {
   'death.wolf': '你被狼咬死了', 'death.pufferfish': '你被河豚刺死了',
 
   'keys.swap': '交换主副手', 'keys.camera': '切换视角', 'keys.dismount': '下坐骑（骑乘时）',
+  'key.inAir': '（在空中）', 'act.glide': '展开鞘翅滑翔',
 });
 
 // adventures: short how-tos on the help screen
@@ -104,7 +108,7 @@ registerStrings('en', {
   'adv.pets': 'Animals: wheat, carrots or seeds bring two into love and a baby follows. Bones tame wolves, raw fish tames cats; use a tamed pet to make it sit. Shears for wool, a bucket for milk.',
   'adv.trade': 'Villages: use a villager to trade emeralds. Iron golems guard them; a pumpkin on a T of iron blocks makes one.',
   'adv.ride': 'Riding: boats go on water, minecarts on rails. Tame a horse by riding it until it stops throwing you, then saddle it. Shift gets you off.',
-  'adv.elytra': 'Elytra (from end cities): jump while falling to glide, and use a firework rocket in flight for a burst of speed with a trail of sparks.',
+  'adv.elytra': 'Elytra (from end cities): wear them in the chest slot (or use them from your hand). Jump, then press jump again in the air to glide; sneak to fold them. A firework rocket used while gliding sends you flying the way you look, trailing sparks; standing on the ground, look at the sky and use one to take off.',
   'adv.plate': 'Pressure plates open the doors beside them while something stands on them; iron doors only open that way.',
 });
 registerStrings('zh', {
@@ -114,7 +118,7 @@ registerStrings('zh', {
   'adv.pets': '动物：用小麦、胡萝卜或种子让两只动物进入恋爱模式，就会生出幼崽。用骨头驯服狼，用生鱼驯服猫；对驯服的宠物使用可让它坐下。剪刀剪羊毛，桶挤牛奶。',
   'adv.trade': '村庄：对村民使用可以用绿宝石交易。铁傀儡守护村庄；在 T 形铁块上放南瓜能造一个。',
   'adv.ride': '骑乘：船在水上走，矿车在铁轨上跑。骑马直到它不再把你甩下来就驯服了，再装上鞍。按 Shift 下来。',
-  'adv.elytra': '鞘翅（在末地城里找）：下落时再按跳跃即可滑翔，飞行中使用烟花火箭会猛地加速，身后拖出火花。',
+  'adv.elytra': '鞘翅（在末地城里找）：穿在胸甲栏（拿在手里按使用键也能穿上）。跳起来后在空中再按一次跳跃就会展开滑翔，按潜行收起。滑翔时使用烟花火箭会朝你看的方向猛地加速，身后拖出火花；站在地上抬头看天空使用烟花，可以直接起飞。',
   'adv.plate': '压力板：有东西站在上面时会打开旁边的门；铁门只能这样打开。',
 });
 
