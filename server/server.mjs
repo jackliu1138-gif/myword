@@ -22,12 +22,15 @@ import { itemDef } from '../src/sim/items.js';
 import { loadEntity, serializeEntity, serializeEntities, loadEntities, newEntity, tickFurnace, furnaceLit, tickBrewing, contentsOf, parseKey } from '../src/sim/containers.js';
 import { rollLoot } from '../src/sim/loot.js';
 import { stepWeatherClock } from '../src/game/weather.js';
+import { createBrain, llmConfig } from './brain.mjs';
 
 // 2: beds, armour, the nether and the end (new block and item ids); 3: block states in edits
 // (id | state << 8), shared dropped items, chests, furnaces and signs; 4: the 384-high world and
 // its generator version, shared weather, brewing stands, loot chests, enchanted items, the
-// creatures of structures (spawned once) and the creatures that stay (kept by the server)
-export const PROTOCOL = 4;
+// creatures of structures (spawned once) and the creatures that stay (kept by the server); 5: villagers
+// that talk (talk / vnote / vopen / vclose, say / said / vact / vrec / vdo; a villager's uid and trade seed in
+// its snapshots), the villagers' memories and gossip kept with the world, and space (dimensions 3-5)
+export const PROTOCOL = 5;
 const CURRENT_GEN = 2;
 const MAX_PMOBS = 3000; // creatures kept per dimension
 const ADOPT_RADIUS = 64;
@@ -63,6 +66,8 @@ function loadConfig(overrides = {}) {
     turnUser: String(pick('turnUser', 'TURN_USER', '')),
     turnPass: String(pick('turnPass', 'TURN_PASS', '')),
     quiet: !!overrides.quiet,
+    // the villagers' language model (see server/brain.mjs): its key only ever lives here
+    llm: overrides.llm || llmConfig(pick, env),
   };
 }
 
@@ -107,6 +112,9 @@ export function startServer(overrides = {}) {
   };
   const locks = new Map(); // "d:x,y,z" -> client holding that chest or furnace open
   let dirty = false;
+  // the villagers' minds: what each remembers of each player, and the village gossip
+  const brain = createBrain({ cfg, log, onChange: () => { dirty = true; } });
+  brain.setDay(() => world.dayCount);
   let nextId = 1;
   const clients = new Map();
 
@@ -142,6 +150,7 @@ export function startServer(overrides = {}) {
       readEdits(d.dimEdits && d.dimEdits[1], world.dimEdits[1]);
       readEdits(d.dimEdits && d.dimEdits[2], world.dimEdits[2]);
       world.endState = d.endState && typeof d.endState === 'object' ? d.endState : null;
+      brain.load(d.brain);
       const be = d.bents && typeof d.bents === 'object' ? d.bents : {};
       for (const dim of [0, 1, 2]) world.bents[dim] = loadEntities(be[dim]);
       log(`world loaded: seed ${world.seed} (generator ${world.gen}), ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players, ${world.pmobs[0].size} creatures kept`);
@@ -171,6 +180,7 @@ export function startServer(overrides = {}) {
         dimEdits: serializeDimEdits(), endState: world.endState, players: world.players,
         bents: { 0: serializeEntities(world.bents[0]), 1: serializeEntities(world.bents[1]), 2: serializeEntities(world.bents[2]) },
         weather: world.weather,
+        brain: brain.serialize(),
         claims: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.claims[d]]])),
         pmobs: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.pmobs[d].values()].map((r) => r.c)])),
       });
@@ -299,6 +309,26 @@ export function startServer(overrides = {}) {
     }
   }
   const byId = (id) => { const c = clients.get(String(id)); return c && c.ready ? c : null; };
+  function dimcast(d, msg, except = null) {
+    const text = JSON.stringify(msg);
+    for (const o of clients.values()) if (o.ready && o !== except && ((o.state && o.state.d) || 0) === d) sendRaw(o, text);
+  }
+  const villagerHooks = {
+    day: () => world.dayCount,
+    sendTo: (c, msg) => send(c, msg),
+    // what is said to a villager, and what it says back, reaches the players near it (and the one
+    // it is talking to, wherever they are)
+    hear: (d, pos, msg, except) => {
+      const text = JSON.stringify(msg);
+      const r2 = brain.HEAR_RADIUS * brain.HEAR_RADIUS;
+      for (const o of clients.values()) {
+        if (!o.ready || o === except) continue;
+        const near = o.state && (o.state.d || 0) === d && (o.state.p[0] - pos[0]) ** 2 + (o.state.p[2] - pos[2]) ** 2 < r2;
+        if (near || o.id === msg.to) sendRaw(o, text);
+      }
+    },
+    all: (d, msg, except = null) => dimcast(d, msg, except),
+  };
 
   // ------------------------------------------------------------------ sleeping and the End
   // The night is skipped once everyone in the overworld is in bed.
@@ -365,6 +395,7 @@ export function startServer(overrides = {}) {
     c.name = name;
     c.key = key;
     c.ready = true;
+    if (!world.players[key]) brain.addRumor('join', name);
     welcome(c, m);
     broadcast({ t: 'join', id: c.id, n: name }, c);
     log(`${name} joined (${[...clients.values()].filter((o) => o.ready).length} online)`);
@@ -390,7 +421,11 @@ export function startServer(overrides = {}) {
         const d = m.d === 1 || m.d === 2 ? m.d : 0;
         if (d) c.state.d = d;
         broadcast({ t: 'st', id: c.id, ...c.state }, c, true);
-        if ((c.lastDim || 0) !== d) { c.lastDim = d; c.sleeping = false; checkEndHost(); checkSleep(); }
+        if ((c.lastDim || 0) !== d) {
+          c.lastDim = d; c.sleeping = false; checkEndHost(); checkSleep();
+          const went = { 1: 'nether', 2: 'end', 3: 'space', 4: 'moon', 5: 'mars' }[d];
+          if (went) brain.addRumor(went, c.name);
+        }
         break;
       }
       case 'sleep':
@@ -408,7 +443,7 @@ export function startServer(overrides = {}) {
         };
         dirty = true;
         broadcast({ t: 'end', s: world.endState, slain: !!m.slain }, c);
-        if (m.slain) { broadcast({ t: 'ev', id: c.id, n: c.name, k: 'dragon', s: '' }); log(`${c.name} slew the ender dragon`); }
+        if (m.slain) { broadcast({ t: 'ev', id: c.id, n: c.name, k: 'dragon', s: '' }); log(`${c.name} slew the ender dragon`); brain.addRumor('dragon', c.name); }
         break;
       }
       case 'b': { // block edits [[x, y, z, id], ...] in dimension d
@@ -560,7 +595,19 @@ export function startServer(overrides = {}) {
       }
       case 'ev': // death and other notices shown to everyone
         broadcast({ t: 'ev', id: c.id, n: c.name, k: clean(m.k, 24), s: clean(m.s, 24) }, c);
+        if (m.k === 'death') brain.addRumor('death', c.name, clean(m.s, 24));
         break;
+      case 'talk': case 'vnote': // a player talking to a villager, or doing something to one
+        brain.onTalk(c, m, villagerHooks).catch((e) => log('villager talk failed: ' + e.message));
+        break;
+      case 'vopen': case 'vclose': { // the talk screen: the villager stops and faces them (whoever runs it)
+        const u = typeof m.u === 'string' && /^[\w.:-]{1,40}$/.test(m.u) ? m.u : null;
+        if (!u) return;
+        const d = Number.isInteger(m.d) ? m.d : 0;
+        if (m.t === 'vopen') send(c, { t: 'vrec', u, r: brain.recordSummary(c, u, world.dayCount), ai: brain.status() });
+        dimcast(d, { t: 'vdo', u, a: { type: m.t === 'vopen' ? 'attend' : 'release', id: c.id } }, c);
+        break;
+      }
       case 'voice':
         c.voice = { on: !!m.on, muted: !!m.muted };
         broadcast({ t: 'voice', id: c.id, ...c.voice }, c);
@@ -600,7 +647,7 @@ export function startServer(overrides = {}) {
     let path = decodeURIComponent(url.pathname);
     if (path === '/lumen-server.json') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ lumencraft: true, v: PROTOCOL, name: cfg.name, password: !!cfg.password, players: [...clients.values()].filter((c) => c.ready).length, max: cfg.maxPlayers }));
+      res.end(JSON.stringify({ lumencraft: true, v: PROTOCOL, name: cfg.name, password: !!cfg.password, players: [...clients.values()].filter((c) => c.ready).length, max: cfg.maxPlayers, ai: brain.status() }));
       return;
     }
     const sourceMode = !existsSync(join(cfg.webRoot, 'src')) ? false : !cfg.webRoot.endsWith(sep + 'dist');
@@ -626,6 +673,11 @@ export function startServer(overrides = {}) {
   const notFound = (res) => { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); };
 
   const http = createServer((req, res) => {
+    // single-player games ask their villagers here (the memories travel with the request)
+    if (req.url === '/api/talk' || req.url.startsWith('/api/talk?')) {
+      brain.handleHttp(req, res).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
+      return;
+    }
     serveFile(req, res).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
   });
   http.on('upgrade', (req, socket) => {

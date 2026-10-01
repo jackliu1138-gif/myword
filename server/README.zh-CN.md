@@ -102,6 +102,13 @@ PASSWORD=你们的密码 SERVER_NAME=我们的世界 node server/server.mjs
 | `TURN_SECRET` | `turnSecret` | 空 | 语音中继的共享密钥，见第 6 步 |
 | `STUN_URLS` | `stun` | 小米和 Google 的公共 STUN | 一般不用改 |
 | `DATA_DIR` | `dataDir` | server/data | 世界存档的位置 |
+| `ATRIA_API_KEY` | `llmKey` | 空 | 村民用的大模型的 API Key。留空时村民用简单的脚本对话。用一键部署时请用 `set-llm-key.sh` 设置（见下面“会说话的村民”） |
+| `LLM_BASE_URL` | `llmBase` | https://api.atria-asi.ai/v1 | 大模型的地址（任何 OpenAI 兼容接口都行）。国内账号可以用 https://discovery-api.intern-ai.org.cn/v1 |
+| `LLM_MODEL` | `llmModel` | Atria-Dawn-Preview | 模型名 |
+| `LLM_REASONING` | `llmReasoning` | none | 思考强度 `none` / `low` / `medium` / `high`：越高越聪明但越慢，村民聊天用 `none` 就够 |
+| `LLM_RPM` | `llmRpm` | 30 | 每分钟最多问大模型几次，超过的用脚本对话回答 |
+| `LLM_DAILY` | `llmDaily` | 4000 | 每天最多问几次 |
+| `LLM_SINGLE_PLAYER` | `llmSinglePlayer` | yes | 单人游戏（打开同一个网址玩单人模式）也能用大模型；`no` 则只有联机时才用 |
 
 世界存档是 `server/data/world.json`，每 30 秒自动保存一次，关服时也会保存。备份时复制这个文件就行。
 里面有所有被改过的方块（连同它们的朝向、开关状态、水位等）、箱子和熔炉里的东西、告示牌上的字、末影龙的战况和每个玩家的背包。
@@ -181,6 +188,23 @@ Environment=TURN_SECRET=刚才生成的密钥
 
 安全组还需要放行：**TCP 和 UDP 3478**，以及 **UDP 49160～49200**。
 
+## 会说话的村民（大模型）
+
+村民的“大脑”在服务器上：每个村民有自己的名字、性格和记忆，记得每个玩家说过的话、做过的事，会传村里的八卦、派任务、送礼物、打折、跟着人走。
+大模型的 Key 只放在服务器上，不会进 GitHub，也不会发到任何人的浏览器里。没设 Key 时村民用简单的脚本对话，照样能聊天、派任务。
+
+用一键部署的服务器上，这样设置 Key（会写到只有 root 能读的 `/etc/lumencraft/secrets.env`，然后重启游戏并问一个村民试试）：
+
+```bash
+sudo ATRIA_API_KEY=你的key bash /opt/games/lumencraft/server/deploy/set-llm-key.sh
+# 国内账号的 Key：再加上 LLM_BASE_URL=https://discovery-api.intern-ai.org.cn/v1
+# 去掉 Key：sudo bash /opt/games/lumencraft/server/deploy/set-llm-key.sh --remove
+```
+
+最后一行显示 `OK: the language model is answering` 就成功了。之后每次更新游戏，Key 都会保留。
+村民的记忆和八卦保存在 `world.json` 的 `brain` 里，和世界一起备份。
+单人游戏如果是从这个服务器的网址打开的，也会问这里的大模型（记忆存在玩家自己的浏览器里）；为了防止被滥用，每个 IP 每小时最多 120 次、每天 600 次。
+
 ## 防火墙端口一览
 
 | 端口 | 协议 | 用途 |
@@ -212,7 +236,9 @@ Environment=TURN_SECRET=刚才生成的密钥
 **箱子、熔炉、掉落物**：这些由服务器统一管理。同一个箱子或熔炉同一时间只能一个人打开；没人打开的熔炉在服务器上继续烧（只要有人在线）；掉落物谁先走到谁拿到。
 流动的水和熔岩由引起流动的那个玩家的电脑计算，结果再同步给其他人。
 
-**提示版本不对（version）**：服务器和网页的版本要一致（现在是第 4 版协议）。更新服务器后让大家刷新网页即可。
+**提示版本不对（version）**：服务器和网页的版本要一致（现在是第 5 版协议）。更新服务器后让大家刷新网页即可。
+
+**村民只会说简单的话**：说明没连上大模型。看 `journalctl -u lumencraft -n 50`：`the model didn't answer (HTTP 401 ...)` 是 Key 不对；`timeout` 是网络慢或连不上，国内服务器可以换成国内地址 `LLM_BASE_URL=https://discovery-api.intern-ai.org.cn/v1`（需要国内平台的 Key）。
 
 **更新游戏**：
 

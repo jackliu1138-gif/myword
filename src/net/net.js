@@ -4,7 +4,7 @@
 
 // 2: beds, armour, the nether and the end (new block and item ids); 3: block states in edits
 // (id | state << 8), shared dropped items, chests, furnaces and signs
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 // "game.example.com", "1.2.3.4:8080", "https://game.example.com", "wss://..." -> WebSocket URL.
 // Empty: the server this page came from, at the same path (the game can be reverse-proxied under

@@ -25,10 +25,16 @@ export function mobFlags(e) {
 
 // Snapshot of one of our own creatures for the other players:
 // [id, type, x, y, z (1/16 block), yaw, head yaw (1/100 rad), flags, variant, fuse (1/10 s)]
+// and for a villager also [uid, trade seed]: who it is (to talk to it) and what it sells
 export function mobSnapshot(e) {
   const b = e.body;
-  return [e.id, MOB_TYPES.indexOf(e.type), Math.round(b.pos[0] * 16), Math.round(b.pos[1] * 16), Math.round(b.pos[2] * 16),
+  const s = [e.id, MOB_TYPES.indexOf(e.type), Math.round(b.pos[0] * 16), Math.round(b.pos[1] * 16), Math.round(b.pos[2] * 16),
     Math.round(e.yaw * 100), Math.round((e.headYaw ?? e.yaw) * 100), mobFlags(e), e.variant || 0, Math.round((e.fuse || 0) * 10)];
+  if (e.type === 'villager') {
+    if (!e.tradeSeed) e.tradeSeed = (Math.random() * 2 ** 31) | 0; // (as its first look at its trades would)
+    s.push(e.uid || '', e.tradeSeed);
+  }
+  return s;
 }
 
 export class RemoteMob {
@@ -92,6 +98,9 @@ export class RemoteMob {
     this.variant = s[8] | 0;
     this.fuse = (s[9] | 0) / 10;
     this.flags = f;
+    if (typeof s[10] === 'string' && /^[\w.:-]{1,40}$/.test(s[10])) this.uid = s[10];
+    if (Number.isInteger(s[11]) && s[11]) this.tradeSeed = s[11];
+    this.baby = !!(f & 32);
     // how big it is drawn (and hit): slimes by their size, the young smaller, a puffed-up pufferfish
     if (this.type === 'slime') {
       const n = Math.max(1, this.variant);

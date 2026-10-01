@@ -542,6 +542,7 @@ export function installSurvival(Game) {
     this.sim.dropXp(m.body.pos[0], m.body.pos[1] + 1, m.body.pos[2], 3 + Math.floor(Math.random() * 4));
     this.audio.sfx('villagerYes', 0.8, 0);
     inv.changed();
+    this.villagerTraded(m);
   };
 
   // ---------------------------------------------------------------- spawn eggs

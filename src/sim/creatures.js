@@ -63,6 +63,8 @@ function villager(m) {
     m.watch = sim.nearestPlayer(b.pos, 6);
   }
   if (m.threat && alive(m.threat)) { m.mode = 'flee'; return flee(m, m.threat.pos, d.speed * 2.3); }
+  // trading or talking with someone: stand and face them (a while, if nobody says it's over)
+  if (m.attendUntil && m.age > m.attendUntil) { m.trading = null; m.attendUntil = 0; }
   if (m.trading && sim.players.get(m.trading)) {
     const p = sim.players.get(m.trading).pos;
     m.faceTowards(p[0], p[2], 10);
@@ -70,6 +72,19 @@ function villager(m) {
     return standOn(m);
   }
   m.trading = null;
+  // talked into following someone for a while
+  if (m.followId && m.age < (m.followUntil || 0)) {
+    const p = sim.players.get(m.followId);
+    if (p && !p.dead) {
+      const dist = Math.sqrt(d2(p.pos, b.pos));
+      m.mode = 'follow';
+      if (dist > 3) return m.followPath(p.pos, d.speed * 1.7);
+      m.faceTowards(p.pos[0], p.pos[2], 8);
+      m.headYaw = m.yaw;
+      return standOn(m);
+    }
+  }
+  m.followId = null;
   if (m.watch && Math.sqrt(d2(m.watch.pos, b.pos)) < 6) {
     const p = m.watch.pos;
     const want = Math.atan2(-(p[0] - b.pos[0]), -(p[2] - b.pos[2]));

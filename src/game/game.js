@@ -20,6 +20,8 @@ import { installUse } from './useitems.js';
 import { installTravel } from './travel.js';
 import { installBuilding } from './building.js';
 import { installSurvival } from './survival.js';
+import { installVillagers } from './villagers.js';
+import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
 import { installVehicles } from './vehicles.js';
 import { installMultiplayer, loadMultiplayerPrefs } from '../net/multiplayer.js';
@@ -65,6 +67,8 @@ export function defaultSettings() {
     touchHaptics: true,
     voiceVolume: 1,
     voiceMode: 'proximity',
+    villagerVoice: true,
+    villagerVolume: 1,
   };
 }
 
@@ -153,6 +157,7 @@ export class Game {
       this.touch = new TouchControls(document.getElementById('app'), this.input, { settings: () => this.settings, t });
     }
     this.audio = new Audio();
+    this.speech = new Speech(); // the villagers' voices
     this.audio.setVolume(this.settings.volume);
     this.audio.ambientOn = this.settings.ambience;
     this.pads = new Gamepads();
@@ -279,7 +284,7 @@ export class Game {
   // ------------------------------------------------------------------ UI wiring
   bindUi() {
     const ui = this.ui;
-    ui.on('click', () => { this.audio.unlock(); this.audio.play('click'); });
+    ui.on('click', () => { this.audio.unlock(); this.speech.unlock(); this.audio.play('click'); });
     ui.on('play', () => this.play());
     ui.on('resume', () => this.play());
     ui.on('openSettings', () => {
@@ -397,6 +402,14 @@ export class Game {
     ui.on('invSwap', (ref, hot) => this.inventorySwap(ref, hot));
     ui.on('invOutside', () => this.inventoryOutside());
     ui.on('invTrash', () => this.inventoryTrash());
+    ui.on('invClose', () => { if (this.state === 'inventory') this.closeInventory(); });
+    ui.on('cycleCamera', () => this.cycleCamera());
+    ui.on('talkSend', (text) => this.talkSend(text));
+    ui.on('talkClose', () => this.closeTalk());
+    ui.on('talkDeliver', () => this.talkDeliver());
+    ui.on('talkGift', () => this.talkGift());
+    ui.on('talkTrade', () => this.talkTrade());
+    ui.on('talkMic', () => this.talkListen());
     ui.on('palettePick', (id, button, shift) => this.palettePick(id, button, shift));
     ui.on('craft', (i) => this.craft(i));
     ui.on('wake', () => this.wakeUp());
@@ -416,6 +429,9 @@ export class Game {
         });
       } catch (e) { /* ignore */ }
     }
+    // (taps on a phone call preventDefault, so no click follows: their touchend unlocks the sound)
+    window.addEventListener('touchend', () => { this.audio.unlock(); this.speech.unlock(); }, { capture: true, passive: true });
+    window.addEventListener('mousedown', () => this.speech.unlock(), { capture: true, passive: true });
     this.canvas.addEventListener('click', () => {
       this.audio.unlock();
       if (this.state === 'playing' && !this.input.locked && !this.input.lockFailed) this.input.requestLock();
@@ -453,6 +469,8 @@ export class Game {
     if (key === 'voiceVolume' && this.voice) this.voice.volume = value;
     if (key === 'voiceMode' && this.voice) this.voice.mode = value;
     if (key === 'ambience') this.audio.ambientOn = value;
+    if (key === 'villagerVoice') { this.speech.enabled = !!value; if (!value) this.speech.stop(); }
+    if (key === 'villagerVolume') this.speech.volume = value;
     const graphics = ['preset', 'renderScale', 'shadows', 'clouds', 'volumetric', 'ssao', 'ssr', 'bloom', 'taa', 'grass3d', 'grassShadows', 'pom'];
     if (!live && graphics.includes(key)) this.renderer.applySettings(s);
     store.saveSettings(s);
@@ -472,6 +490,9 @@ export class Game {
         if (this.handleBack()) e.preventDefault();
       }
       return;
+    }
+    if (this.state === 'playing' && (code === 'Enter' || code === 'NumpadEnter') && this.aimMob && this.aimMob.type === 'villager') {
+      if (this.openTalk(this.aimMob)) { e.preventDefault(); return; }
     }
     if (this.mp && this.state === 'playing') {
       if (code === 'Enter' || code === 'NumpadEnter' || code === 'Slash') { this.openChat(); e.preventDefault(); return; }
@@ -496,6 +517,7 @@ export class Game {
   // was nothing to go back from (the title screen), so the platform can handle it.
   handleBack() {
     if (this.state === 'chat') { this.closeChat(''); return true; }
+    if (this.state === 'talk') { this.closeTalk(); return true; }
     if (this.state === 'sign') { this.finishSign(this.ui.signLines()); return true; }
     if (this.sleeping && this.state === 'playing') { this.wakeUp(); return true; }
     if (this.state === 'dead' && this.ui.current === 'death') return true;
@@ -507,7 +529,7 @@ export class Game {
   }
 
   menuOpen() {
-    return this.state === 'inventory' || this.state === 'dead' || this.state === 'sign' || (this.state !== 'playing' && this.ui.current !== null);
+    return this.state === 'inventory' || this.state === 'talk' || this.state === 'dead' || this.state === 'sign' || (this.state !== 'playing' && this.ui.current !== null);
   }
 
   // Arrow keys and OK / Enter in menus (TV remotes send these).
@@ -772,6 +794,7 @@ export class Game {
     }
     if (this.debug && this.ui.current === 'settings') this.ui.refreshLive('timeOfDay', this.dayTime);
     this.updateNameTags();
+    this.updateVillagers(dt);
   }
 
   // Leaves now and then let go of the canopy above and around the camera (more in wind and rain).
@@ -828,7 +851,8 @@ export class Game {
     if (pad.pressed(PAD.X)) ctl.toggleFly = true;
     if (pad.pressed(PAD.Y)) { this.openInventory(); return; }
     if (this.mp && pad.pressed(PAD.UP)) this.toggleMic();
-    if (pad.pressed(PAD.LB) || pad.pressed(PAD.LEFT)) this.selectSlot((this.selected + 8) % 9);
+    if (pad.pressed(PAD.LB)) this.selectSlot((this.selected + 8) % 9);
+    if (pad.pressed(PAD.LEFT)) this.cycleCamera();
     if (pad.pressed(PAD.RB) || pad.pressed(PAD.RIGHT)) this.selectSlot((this.selected + 1) % 9);
     if (pad.pressed(PAD.DOWN)) { this.hudHidden = !this.hudHidden; this.ui.setHud(!this.hudHidden); }
     if (pad.pressed(PAD.VIEW)) { this.debug = !this.debug; if (!this.debug) this.ui.setDebug(null); }
@@ -1011,7 +1035,7 @@ export class Game {
     }
     if (this.fx && this.fx.speedFov) fovTarget *= this.fx.speedFov;
     this.fovCurrent += (fovTarget - this.fovCurrent) * (1 - Math.exp(-dt * 10));
-    const third = this.thirdPerson(pos, fwd);
+    const third = this.thirdPerson(pos, fwd, dt);
     if (third) return { pos: third.pos, forward: third.forward, fov: (this.fovCurrent * Math.PI) / 180 };
     return { pos, forward: fwd, fov: (this.fovCurrent * Math.PI) / 180 };
   }
@@ -1167,3 +1191,4 @@ installSurvival(Game);
 installCreaturePlay(Game);
 installVehicles(Game);
 installMultiplayer(Game);
+installVillagers(Game);

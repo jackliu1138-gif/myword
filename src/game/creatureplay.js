@@ -8,6 +8,7 @@ import { ITEM, itemDef, EGG_ITEMS } from '../sim/items.js';
 import { BLOCK, BLOCKS, IS_SOLID } from '../world/blocks.js';
 import { JOB_LIST, CAT_LOOKS } from '../sim/looks.js';
 import { tradesFor } from '../sim/trades.js';
+import { discounted } from '../sim/brain.js';
 import { MOBS } from '../sim/entities.js';
 import { t } from '../ui/i18n.js';
 
@@ -24,7 +25,8 @@ export function installCreaturePlay(Game) {
 
   // ---------------------------------------------------------------- right click on a creature
   P.useOnMob = function useOnMob(mob, def) {
-    if (mob.deathTime > 0 || mob.ghost) return false;
+    // (another player's game runs that one: only a villager can be talked to, or traded with)
+    if (mob.deathTime > 0 || (mob.ghost && mob.type !== 'villager')) return false;
     const me = this.me();
     const creative = this.isCreative();
     const owner = (me && (me.name || me.id)) || 'local';
@@ -41,9 +43,9 @@ export function installCreaturePlay(Game) {
       return false;
     }
     if (type === 'villager') {
-      if (mob.baby) return false;
-      this.openTrading(mob);
-      return true;
+      // a word first; sneaking, straight to its trades
+      if (this.player.sneaking && !mob.baby && (!mob.ghost || mob.tradeSeed)) { this.openTrading(mob); return true; }
+      return this.openTalk(mob);
     }
     if (type === 'iron_golem' && def && def.id === ITEM.IRON_INGOT && mob.health < mob.def.health) {
       mob.health = Math.min(mob.def.health, mob.health + 25);
@@ -130,6 +132,9 @@ export function installCreaturePlay(Game) {
     const today = this.dayCount || 0;
     if (m.tradeDay !== today) { m.trades = null; m.tradeDay = today; }
     if (Array.isArray(m.trades)) offers.forEach((o, i) => { o.uses = m.trades[i] | 0; });
+    // a villager talked into a discount knocks it off today
+    const pct = this.tradeDiscount(m);
+    if (pct) for (const o of offers) o.cost = discounted(o.cost, pct);
     return offers;
   };
 
@@ -195,7 +200,7 @@ export function installCreaturePlay(Game) {
       for (const [cx, cy, cz] of cells) { w.setBlock(cx, cy, cz, 0); this.particles.burst(cx, cy, cz, BLOCKS[body] ? body : BLOCK.STONE, 1, 0.3); }
       const m = this.sim.spawnMob(pumpkin ? 'iron_golem' : 'wither', hx + 0.5, hy - 2, hz + 0.5);
       m.persistent = true;
-      if (skull) { m.charge = 10; m.health = 30; this.ui.toast(t('toast.wither'), 4000); this.audio.sfx('witherSpawn', 1, 0); }
+      if (skull) { m.charge = 10; m.health = 30; this.ui.toast(t('toast.wither'), 4000); this.audio.sfx('witherSpawn', 1, 0); this.addRumor('wither'); }
       return true;
     };
     for (const ax of [[1, 0], [0, 1]]) {

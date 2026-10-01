@@ -40,6 +40,8 @@ export function installTravel(Game) {
   P.switchWorld = function switchWorld(dim) {
     if (this.state === 'inventory') this.closeInventory();
     if (this.state === 'sign') this.finishSign(this.ui.signLines());
+    if (this.state === 'talk') this.closeTalk();
+    if (this.bubbles) { for (const b of this.bubbles.values()) b.el.remove(); this.bubbles.clear(); }
     if (this.mp) this.flushEdits();
     if (this.player.riding) this.dismount();
     if (this.bobber) { this.bobber.removed = true; this.bobber = null; }
@@ -93,6 +95,8 @@ export function installTravel(Game) {
     } else if (how === 'endPortal') target = END_PLATFORM.slice();
     else target = null;
     this.switchWorld(dim);
+    // the village will hear of it
+    if (dim === DIM.NETHER || dim === DIM.END) this.addRumor(dim === DIM.NETHER ? 'nether' : 'end');
     if (!target) {
       const sp = this.spawnPoint || this.world.generator.findSpawn();
       target = [Math.floor(sp[0]), Math.floor(sp[1]), Math.floor(sp[2])];
@@ -385,6 +389,7 @@ export function installTravel(Game) {
       es.dragonHp = 0;
       this.ui.toast(t('boss.slain'), 5000);
       this.audio.sfx('dragon', 1, 0);
+      this.addRumor('dragon');
       if (this.mp) this.mp.net.send({ t: 'end', s: es, slain: true });
     } else if (e.type === 'dragonGone') {
       this.openExitPortal();

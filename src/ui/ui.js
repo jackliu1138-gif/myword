@@ -98,6 +98,8 @@ const SCHEMA = [
       { key: 'ambience', type: 'toggle', label: 'set.ambience', desc: 'set.ambience.desc' },
       { key: 'voiceVolume', type: 'range', label: 'set.voiceVolume', min: 0, max: 2, step: 0.05, fmt: pct },
       { key: 'voiceMode', type: 'choice', label: 'set.voiceMode', options: [['proximity', 'voice.proximity'], ['global', 'voice.global']], desc: 'voice.hint' },
+      { key: 'villagerVoice', type: 'toggle', label: 'set.villagerVoice', desc: 'set.villagerVoice.desc' },
+      { key: 'villagerVolume', type: 'range', label: 'set.villagerVolume', min: 0, max: 1, step: 0.05, fmt: pct },
     ],
   },
 ];
@@ -145,6 +147,7 @@ const HELP = [
       [kb('pad:RT'), 'act.break'],
       [kb('pad:LT'), 'act.place'],
       [kb('pad:LB', 'pad:RB'), 'act.hotbarPad'],
+      [kb('i18n:pad.dpad', '←'), 'keys.camera'],
       [kb('i18n:pad.dpad', '↑'), 'act.fastTime'],
       [kb('i18n:pad.dpad', '↓'), 'act.hideHud'],
       [kb('i18n:pad.view'), 'act.debug'],
@@ -219,7 +222,7 @@ export function clockText(tm) {
 
 export class UI {
   constructor() {
-    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer', 'signedit', 'worlds'];
+    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer', 'signedit', 'worlds', 'talk'];
     this.mp = null;
     this.chatLines = [];
     this.newWorld = { mode: 'survival', difficulty: 'normal' };
@@ -255,6 +258,7 @@ export class UI {
     click('btn-device', 'openDevice');
     click('btn-resume', 'resume');
     click('btn-pause-settings', 'openSettings');
+    click('btn-camera', 'cycleCamera');
     click('btn-pause-help', 'openHelp');
     click('btn-title', 'toTitle');
     click('btn-settings-done', 'back');
@@ -287,6 +291,22 @@ export class UI {
     // tapping or clicking back into the game closes the chat
     $('chat-input').addEventListener('blur', () => setTimeout(() => { if ($('chat').classList.contains('open')) this.emit('chatCancel'); }, 150));
     click('btn-death-title', 'toTitle');
+    // talking with a villager
+    $('talk-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const v = $('talk-input').value;
+      $('talk-input').value = '';
+      this.emit('talkSend', v);
+    });
+    $('talk-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this.emit('talkClose'); }
+      e.stopPropagation();
+    });
+    click('btn-talk-close', 'talkClose');
+    click('btn-talk-deliver', 'talkDeliver');
+    click('btn-talk-gift', 'talkGift');
+    click('btn-talk-trade', 'talkTrade');
+    click('btn-talk-mic', 'talkMic');
     const create = () => this.emit('createWorld', $('seed-input').value.trim(), { ...this.newWorld, name: $('name-input').value.trim() });
     $('btn-newworld-create').addEventListener('click', () => { this.emit('click'); create(); });
     for (const id of ['seed-input', 'name-input']) {
@@ -452,6 +472,7 @@ export class UI {
     if (this.vitalsState) { const v = this.vitalsState; this.vitalsState = null; this.setVitals(v); }
     if (this.deathCause) this.showDeath(this.deathCause);
     if (this.mp) $('btn-title').textContent = t('mp.leave');
+    this.setCameraMode(this.camMode || 0);
     if (this.mpPanelState) this.renderMpPanel(this.mpPanelState);
     if (this.deviceInfo) this.showDevice(this.deviceInfo);
   }
@@ -465,14 +486,15 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
     for (const s of this.screens) $(s).hidden = s !== name;
     this.current = name;
     if (name) {
-      const first = focusEl || $(name).querySelector('.btn.primary') || $(name).querySelector('button');
+      const talkFirst = name === 'talk' ? (this.isTouch || document.documentElement.classList.contains('pad-nav') ? $('talk-chips').querySelector('button') : $('talk-input')) : null;
+      const first = focusEl || talkFirst || $(name).querySelector('.btn.primary') || $(name).querySelector('button');
       if (first && name !== 'inventory') setTimeout(() => { if (this.current === name) first.focus({ preventScroll: true }); }, 30);
     }
     this.emit('screen', name);
@@ -497,6 +519,12 @@ export class UI {
 
   clearStack() {
     this.stack = [];
+  }
+
+  // the pause menu's button for the view: first person, behind, in front
+  setCameraMode(mode) {
+    this.camMode = mode | 0;
+    $('btn-camera').textContent = t('pause.camera', { mode: t('toast.cam' + this.camMode) });
   }
 
   setHud(visible) {
@@ -608,6 +636,103 @@ export class UI {
       list.innerHTML = deviceRows(device.rows);
       list.hidden = false;
     }
+  }
+
+  // ------------------------------------------------------------ talking with villagers
+  // st = { name, job, hearts (0..5), lines: [{ me, text, mood }], waiting, quest: { text, ready } | null,
+  //        gift: button label or '', canTrade, canListen, brain: a note on what answers, quick: [lines] }
+  renderTalk(st) {
+    $('talk-name').textContent = st.name;
+    $('talk-job').textContent = st.job;
+    const hearts = $('talk-hearts');
+    hearts.innerHTML = Array.from({ length: 5 }, (_, i) => `<i class="${i < st.hearts ? 'on' : ''}"></i>`).join('');
+    hearts.setAttribute('aria-label', t('talk.hearts', { n: st.hearts }));
+    const log = $('talk-log');
+    const html = st.lines.map((l) => `<p class="tl ${l.me ? 'me' : 'them'}${l.mood && !l.me ? ' m-' + l.mood : ''}">${escapeHtml(l.text)}</p>`).join('')
+      + (st.waiting ? '<p class="tl them waiting" aria-label="…"><i></i><i></i><i></i></p>' : '');
+    if (this.talkHtml !== html) { this.talkHtml = html; log.innerHTML = html; log.scrollTop = log.scrollHeight; }
+    $('talk-quest').hidden = !st.quest;
+    if (st.quest) {
+      $('talk-quest-text').textContent = st.quest.text;
+      $('btn-talk-deliver').disabled = !st.quest.ready || st.waiting;
+    }
+    const chips = $('talk-chips');
+    const key = st.quick.join('|') + (st.waiting ? '#' : '');
+    if (chips.dataset.key !== key) {
+      const focused = document.activeElement && chips.contains(document.activeElement) ? [...chips.children].indexOf(document.activeElement) : -1;
+      chips.dataset.key = key;
+      chips.innerHTML = '';
+      st.quick.forEach((q, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        b.textContent = q;
+        b.disabled = st.waiting;
+        b.addEventListener('click', () => { this.emit('click'); this.emit('talkSend', q); });
+        chips.appendChild(b);
+        if (i === focused && !st.waiting) setTimeout(() => b.focus({ preventScroll: true }), 0);
+      });
+    }
+    $('btn-talk-send').disabled = st.waiting;
+    $('btn-talk-mic').hidden = !st.canListen;
+    const gift = $('btn-talk-gift');
+    gift.hidden = !st.gift;
+    gift.textContent = st.gift;
+    gift.disabled = st.waiting;
+    $('btn-talk-trade').hidden = !st.canTrade;
+    $('talk-brain').textContent = st.brain || '';
+  }
+
+  // where the talk panel sits: at the side (the fraction of the width it takes) or at the bottom
+  talkLayout() {
+    const r = $('talk').querySelector('.talk-sheet').getBoundingClientRect();
+    const w = innerWidth, h = innerHeight;
+    if (r.left > w * 0.25) return { side: 'right', frac: Math.min(0.7, (w - r.left) / w) };
+    return { side: 'bottom', frac: Math.min(0.75, (h - r.top) / h) };
+  }
+
+  setTalkListening(on) {
+    $('btn-talk-mic').classList.toggle('live', on);
+    $('talk-input').placeholder = t(on ? 'talk.listening' : 'talk.placeholder');
+  }
+
+  setTalkDraft(text) {
+    $('talk-input').value = text || '';
+  }
+
+  // words over a villager's head
+  createBubble() {
+    const el = document.createElement('div');
+    el.className = 'vbubble';
+    el.hidden = true;
+    el.innerHTML = '<b></b><span></span>';
+    $('vbubbles').appendChild(el);
+    return el;
+  }
+
+  setBubble(el, name, text) {
+    el.children[0].textContent = name;
+    el.children[1].textContent = text;
+    el.classList.remove('fade');
+  }
+
+  placeBubble(el, at, dist, fading) {
+    el.hidden = !at;
+    if (!at) return;
+    const k = Math.max(0.6, Math.min(1, 12 / Math.max(dist, 1)));
+    el.style.transform = `translate(${at[0].toFixed(1)}px, ${at[1].toFixed(1)}px) translate(-50%, -100%) scale(${k.toFixed(2)})`;
+    el.classList.toggle('fade', !!fading);
+  }
+
+  // the name of the villager under the crosshair (info = { at, name, job, hint, dist } or null)
+  setVillagerTag(info) {
+    const el = $('vtag');
+    if (!info) { if (!el.hidden) el.hidden = true; return; }
+    el.hidden = false;
+    el.children[0].textContent = info.name;
+    el.children[1].textContent = info.job;
+    el.children[2].textContent = info.dist < 7.5 ? info.hint : '';
+    el.style.transform = `translate(${info.at[0].toFixed(1)}px, ${info.at[1].toFixed(1)}px) translate(-50%, -100%)`;
   }
 
   // ------------------------------------------------------------ toasts
@@ -944,6 +1069,8 @@ export class UI {
     screen.addEventListener('pointerdown', (e) => {
       if (e.target === screen && !this.drag) this.emit('invOutside');
     });
+    // the × at the top right (phones and tablets have no E key)
+    $('btn-inv-close').addEventListener('click', () => { this.emit('click'); this.emit('invClose'); });
     // 1-9 over a slot swaps it with that hotbar slot
     document.addEventListener('keydown', (e) => {
       if (this.current !== 'inventory' || (e.target && e.target.tagName === 'INPUT')) return;

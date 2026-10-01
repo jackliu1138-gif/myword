@@ -185,7 +185,8 @@ const DICT = {
 
     // inventory
     'inv.title': 'Blocks and items',
-    'inv.hint': 'Click a block or item to pick up a stack (right click: one), then click or drag it into any slot. Shift-click puts a stack straight into your bag. Drop it on the bin to throw it away. E closes.',
+    'inv.hint': 'Click a block or item to pick up a stack (right click: one), then click or drag it into any slot. Shift-click puts a stack straight into your bag. Drop it on the bin to throw it away. E or the × closes.',
+    'inv.close': 'Close',
     'inv.survivalTitle': 'Inventory',
     'inv.survivalHint': 'Click a stack to pick it up (right click: half), click or drag it to another slot to put it there. Shift-click moves it between bag and hotbar, and armour onto your body. Craft from what you carry. E closes.',
     'inv.bag': 'Bag',
@@ -617,9 +618,10 @@ const DICT = {
     'new.create': '创建世界',
 
     'inv.title': '方块和物品',
-    'inv.hint': '点一下方块或物品拿起一整组（右键拿一个），再点或拖到任意格子里。Shift+点击直接放进背包。拖到垃圾桶就扔掉。按 E 关闭。',
+    'inv.hint': '点一下方块或物品拿起一整组（右键拿一个），再点或拖到任意格子里。Shift+点击直接放进背包。拖到垃圾桶就扔掉。按 E 或右上角的 × 关闭。',
+    'inv.close': '关闭',
     'inv.survivalTitle': '背包',
-    'inv.survivalHint': '点一下物品拿起来（右键拿一半），再点或拖到别的格子放下。Shift+点击在背包和快捷栏之间移动，盔甲会直接穿上。用身上的材料合成。按 E 关闭。',
+    'inv.survivalHint': '点一下物品拿起来（右键拿一半），再点或拖到别的格子放下。Shift+点击在背包和快捷栏之间移动，盔甲会直接穿上。用身上的材料合成。按 E 或右上角的 × 关闭。',
     'inv.bag': '背包',
     'inv.crafting': '合成',
     'inv.planks': '任意木板',

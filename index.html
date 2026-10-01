@@ -59,6 +59,8 @@
     <div id="hotbar" data-i18n-attr="aria-label:hud.hotbar"></div>
     <div id="lockhint" hidden data-i18n="hud.lockHint"></div>
     <div id="nametags" aria-hidden="true"></div>
+    <div id="vbubbles" class="vbubbles" aria-hidden="true"></div>
+    <div id="vtag" class="vtag" hidden aria-hidden="true"><b></b><span></span><em></em></div>
     <div id="voice-hud" class="voice-hud" hidden></div>
     <div id="chat" class="chat" hidden>
       <div id="chat-log" class="chat-log" role="log" aria-live="polite"></div>
@@ -99,6 +101,7 @@
       <h2 data-i18n="pause.title"></h2>
       <div class="menu">
         <button id="btn-resume" class="btn primary" type="button" data-i18n="pause.resume"></button>
+        <button id="btn-camera" class="btn" type="button"></button>
         <button id="btn-pause-settings" class="btn" type="button" data-i18n="title.settings"></button>
         <button id="btn-pause-help" class="btn" type="button" data-i18n="title.help"></button>
         <button id="btn-title" class="btn" type="button" data-i18n="pause.toTitle"></button>
@@ -222,6 +225,7 @@
       <header class="sheet-head">
         <h2 id="inv-title" data-i18n="inv.title"></h2>
         <p class="hint" id="inv-hint" data-i18n="inv.hint"></p>
+        <button id="btn-inv-close" class="sheet-close" type="button" data-i18n-attr="aria-label:inv.close;title:inv.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
       </header>
       <div class="inv-body">
         <div class="inv-player">
@@ -292,6 +296,35 @@
       </div>
     </div>
     <div id="inv-cursor" class="inv-cursor" hidden><img alt=""><span class="count"></span></div>
+  </section>
+
+  <section id="talk" class="screen talk-screen" hidden>
+    <div class="sheet talk-sheet" role="dialog" aria-labelledby="talk-name">
+      <header class="talk-head">
+        <div class="talk-who">
+          <h2 id="talk-name"></h2>
+          <p class="hint" id="talk-job"></p>
+        </div>
+        <div id="talk-hearts" class="talk-hearts" role="img"></div>
+        <button id="btn-talk-close" class="sheet-close" type="button" data-i18n-attr="aria-label:inv.close;title:inv.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
+      </header>
+      <div id="talk-log" class="talk-log" role="log" aria-live="polite"></div>
+      <div id="talk-quest" class="talk-quest" hidden>
+        <p id="talk-quest-text" class="tq-text"></p>
+        <button id="btn-talk-deliver" class="btn primary" type="button" data-i18n="talk.deliver"></button>
+      </div>
+      <div id="talk-chips" class="talk-chips"></div>
+      <form id="talk-form" class="talk-form" autocomplete="off">
+        <button id="btn-talk-mic" class="talk-mic" type="button" hidden data-i18n-attr="aria-label:talk.mic;title:talk.mic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+        <input id="talk-input" type="text" maxlength="200" enterkeyhint="send" autocomplete="off" data-i18n-attr="placeholder:talk.placeholder;aria-label:talk.placeholder">
+        <button id="btn-talk-send" class="btn primary" type="submit" data-i18n="talk.send"></button>
+      </form>
+      <footer class="talk-foot">
+        <button id="btn-talk-gift" class="btn subtle" type="button"></button>
+        <button id="btn-talk-trade" class="btn subtle" type="button" data-i18n="talk.trade"></button>
+        <span id="talk-brain" class="talk-brain"></span>
+      </footer>
+    </div>
   </section>
 
   <section id="signedit" class="screen dim" hidden>

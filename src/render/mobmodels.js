@@ -448,6 +448,8 @@ export function newPose(r, e, type, t, k) {
   switch (type) {
     case 'villager': case 'witch': {
       r.head = [headPitch, headYaw, 0]; // (the nose turns with it: it hangs off the head)
+      // speaking: the head bobs a little with the words (talkUntil: performance.now() seconds)
+      if (e.talkUntil && t < e.talkUntil) r.head[0] += Math.sin(t * 11 + e.id) * 0.07 + 0.03;
       // arms folded in front, the hands raised a little (a potion up to the mouth, drinking)
       r.arms = [0.75 + Math.sin(t * 1.1 + e.id) * 0.03, 0, 0];
       r.rightLeg = [sw, 0, 0];

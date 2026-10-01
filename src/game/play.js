@@ -83,6 +83,7 @@ export function installPlay(Game) {
     this.sim.dayCount = this.dayCount || 0;
     this.setupSurvival(data);
     this.setupCreatures(data);
+    this.setupVillagers(data);
     this.player.onWallHit = (lost) => { const d = Math.floor(lost / 2 - 3); if (d > 0 && !this.isCreative()) this.sim.damagePlayer('local', d, 'wall'); };
     this.spawnPoint = data && data.spawn ? data.spawn : null;
     this.breaking = null;
@@ -383,7 +384,7 @@ export function installPlay(Game) {
           if (e.id === 'local') this.audio.sfx('pickup', 0.6, 0);
           break;
         case 'playerDeath':
-          if (e.id === 'local') this.deathCause = e.source;
+          if (e.id === 'local') { this.deathCause = e.source; this.addRumor('death', String(e.source || '')); }
           break;
         case 'fireworkBurst': this.onFireworkBurst(e); break;
         case 'fireworkTrail': this.onFireworkTrail(e); break;
@@ -521,6 +522,7 @@ export function installPlay(Game) {
     const hit = raycast(this.world, eye, dir, reach);
     const mobHit = this.sim.pickEntity(eye, dir, REACH_HIT);
     const aimMob = mobHit && (!hit || mobHit.t < hit.t) ? mobHit.entity : null;
+    this.aimMob = aimMob; // (a villager looked at shows its name)
     this.selection = hit && !aimMob ? { min: [hit.box[0], hit.box[1], hit.box[2]], max: [hit.box[3], hit.box[4], hit.box[5]], progress: this.breaking ? this.breaking.progress : 0 } : null;
     const input = this.input;
     const tc = input.touch;
@@ -618,6 +620,7 @@ export function installPlay(Game) {
     const crit = !p.onGround && p.vel[1] < -0.5 && !p.inWater;
     const dmg = this.isCreative() ? Math.max(base, 20) : base;
     this.sim.playerAttack('local', mob, dmg, crit);
+    if (mob.type === 'villager') this.villagerHit(mob); // (they remember)
     this.swing = 1;
     this.attackCooldown = def && def.kind === 'sword' ? 0.5 : 0.4;
     if (!this.isCreative() && def && def.durability) {
@@ -833,6 +836,7 @@ export function installPlay(Game) {
       blockEntities: this.serializeBlockEntities(),
       survival: this.serializeSurvival(),
       ...this.serializeCreatures(),
+      ...this.serializeVillagers(),
     };
   };
 

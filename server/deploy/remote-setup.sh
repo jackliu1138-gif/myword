@@ -20,6 +20,9 @@ DATA_DIR="/var/lib/lumencraft"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 CARD_MARKER="lumencraft-card"
 WS_MARKER="games/lumencraft/ws"
+API_MARKER="games/lumencraft/api/"
+# secrets the game server reads (the villagers' language model key): root only, outside $APP_DIR
+SECRETS_DIR="/etc/lumencraft"
 GAME_PATH="games/lumencraft"
 LOG="/var/log/lumencraft-deploy.log"
 
@@ -101,6 +104,8 @@ Environment=PORT=$PORT
 Environment=HOST=$1
 Environment=SERVER_NAME=Lumencraft
 Environment=DATA_DIR=$DATA_DIR
+# ATRIA_API_KEY=... (and optionally LLM_BASE_URL=...) for the villagers: see set-llm-key.sh
+EnvironmentFile=-$SECRETS_DIR/secrets.env
 
 [Install]
 WantedBy=multi-user.target
@@ -109,6 +114,8 @@ EOF
 }
 
 echo "==> systemd service (port $PORT)"
+mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR"
+if [ -s "$SECRETS_DIR/secrets.env" ]; then echo "    the villagers' language model key is set ($SECRETS_DIR/secrets.env)"; else echo "    no language model key yet: villagers use simple scripted talk (set one with set-llm-key.sh)"; fi
 write_service 0.0.0.0
 systemctl enable --now lumencraft
 sleep 1
@@ -205,6 +212,49 @@ EOF
     else
       echo "    the edited nginx config didn't pass 'nginx -t'; restoring the original (see $LOG)"
       cp "$NGINX_BAK" "$HUB_CONF"
+      nginx -t >>"$LOG" 2>&1 && systemctl reload nginx || true
+    fi
+  fi
+
+  # the villagers' minds (single-player games ask at ./api/talk): added on its own, so sites set
+  # up by earlier versions of this script (which already proxy /ws) get it too
+  if [ "$NGINX_OK" = 1 ] && ! grep -q "$API_MARKER" "$HUB_CONF"; then
+    NGINX_BAK2="$HUB_CONF.bak-api-$(date +%s)"
+    cp "$HUB_CONF" "$NGINX_BAK2"
+    APILOC="$(mktemp)"
+    cat > "$APILOC" <<EOF
+
+    location /$GAME_PATH/api/ {
+        proxy_pass http://127.0.0.1:$PORT/api/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_read_timeout 60s;
+        client_max_body_size 64k;
+    }
+EOF
+    awk -v addfile="$APILOC" '
+      BEGIN { depth = 0; sawListen = 0; done = 0 }
+      {
+        o = gsub(/\{/, "{", $0); c = gsub(/\}/, "}", $0)
+        newDepth = depth + o - c
+        if ($0 ~ /listen[ \t]+([^;]*:)?1777([ \t]|;)/ && depth >= 1) sawListen = 1
+        if (newDepth == 0 && depth >= 1 && sawListen && !done) {
+          while ((getline line < addfile) > 0) print line
+          close(addfile)
+          done = 1
+        }
+        print $0
+        depth = newDepth
+      }
+    ' "$HUB_CONF" > "$HUB_CONF.new"
+    cp "$HUB_CONF.new" "$HUB_CONF"
+    rm -f "$HUB_CONF.new" "$APILOC"
+    if nginx -t >>"$LOG" 2>&1; then
+      systemctl reload nginx
+      echo "    added /$GAME_PATH/api/ (the villagers) to $HUB_CONF (backup: $NGINX_BAK2)"
+    else
+      echo "    the api location didn't pass 'nginx -t'; restoring (single-player villagers will use scripted talk)"
+      cp "$NGINX_BAK2" "$HUB_CONF"
       nginx -t >>"$LOG" 2>&1 && systemctl reload nginx || true
     fi
   fi

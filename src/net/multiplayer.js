@@ -206,6 +206,8 @@ export function installMultiplayer(Game) {
       if (this.signLayers) this.signLayers.delete(String(m.k));
     });
     net.on('chat', (m) => { this.ui.addChat(m.n, m.x); if (m.id !== mp.id) this.audio.sfx('pickup', 0.35, 0); });
+    // villagers: what they say, what they did for us, and the ones we run told to stop or follow
+    this.bindVillagerNet(net);
     net.on('ev', (m) => {
       if (m.k === 'death') this.ui.addChat(null, t('mp.died', { name: m.n }));
       else if (m.k === 'dragon') this.ui.addChat(null, t('mp.dragon', { name: m.n }));

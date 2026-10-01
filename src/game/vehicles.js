@@ -340,19 +340,30 @@ export function installVehicles(Game) {
   // ---------------------------------------------------------------- the camera: first person, behind, in front
   P.cycleCamera = function cycleCamera() {
     this.camMode = ((this.camMode || 0) + 1) % 3;
+    this.camDist = 0.4; // (it pulls back from the head, rather than jumping)
     this.ui.toast(t('toast.cam' + this.camMode), 1200);
+    this.ui.setCameraMode(this.camMode);
   };
 
-  P.thirdPerson = function thirdPerson(pos, fwd) {
+  // The camera behind (1) or in front of (2) the player: out to 4 blocks, closer when a wall is in
+  // the way (at once), easing back out when it clears.
+  P.thirdPerson = function thirdPerson(pos, fwd, dt = 0.016) {
     const mode = this.camMode || 0;
     if (!mode) return null;
     const back = mode === 1 ? -1 : 1;
-    let dist = 4;
-    // stop short of walls
-    for (let d = 0.5; d <= 4; d += 0.25) {
-      const x = pos[0] + fwd[0] * d * back, y = pos[1] + fwd[1] * d * back, z = pos[2] + fwd[2] * d * back;
-      if (IS_SOLID[this.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z))]) { dist = Math.max(0.3, d - 0.35); break; }
+    let room = 4;
+    // stop short of walls (checked a little to each side too, so it doesn't peek through corners)
+    const side = [-fwd[2], 0, fwd[0]];
+    const sl = Math.hypot(side[0], side[2]) || 1;
+    for (let d = 0.5; d <= 4.2 && room === 4; d += 0.2) {
+      for (const o of [0, -0.25, 0.25]) {
+        const x = pos[0] + fwd[0] * d * back + (side[0] / sl) * o, y = pos[1] + fwd[1] * d * back, z = pos[2] + fwd[2] * d * back + (side[2] / sl) * o;
+        if (IS_SOLID[this.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z))]) { room = Math.max(0.3, d - 0.4); break; }
+      }
     }
+    const cur = this.camDist ?? room;
+    this.camDist = room < cur ? room : cur + (room - cur) * (1 - Math.exp(-dt * 5));
+    const dist = this.camDist;
     const cp = [pos[0] + fwd[0] * dist * back, pos[1] + fwd[1] * dist * back, pos[2] + fwd[2] * dist * back];
     return { pos: cp, forward: mode === 1 ? fwd : [-fwd[0], -fwd[1], -fwd[2]] };
   };
@@ -360,6 +371,8 @@ export function installVehicles(Game) {
   // The local player as the renderer draws it in the third-person views.
   P.localPlayerModel = function localPlayerModel() {
     if (!this.camMode || !this.player) return null;
+    // a wall right behind pulls the camera into our own head: then there is nothing to draw
+    if ((this.camDist ?? 4) < 0.9) return null;
     const p = this.player;
     const inv = this.inventory;
     const hs = Math.hypot(p.vel[0], p.vel[2]);

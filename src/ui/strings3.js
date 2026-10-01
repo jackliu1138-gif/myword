@@ -50,6 +50,7 @@ registerStrings('en', {
 
   'keys.swap': 'Swap hands', 'keys.camera': 'Change view', 'keys.dismount': 'Get off (while riding)',
   'key.inAir': '(in mid-air)', 'act.glide': 'Spread the elytra',
+  'pause.camera': 'View: {mode}',
 });
 
 registerStrings('zh', {
@@ -98,6 +99,7 @@ registerStrings('zh', {
 
   'keys.swap': '交换主副手', 'keys.camera': '切换视角', 'keys.dismount': '下坐骑（骑乘时）',
   'key.inAir': '（在空中）', 'act.glide': '展开鞘翅滑翔',
+  'pause.camera': '视角：{mode}',
 });
 
 // adventures: short how-tos on the help screen
@@ -132,3 +134,71 @@ registerStrings('zh', {
 
 registerStrings('en', { 'touch.camera': 'Change view' });
 registerStrings('zh', { 'touch.camera': '切换视角' });
+
+// talking with villagers
+registerStrings('en', {
+  'talk.cannot': 'This villager can\'t talk just now.',
+  'talk.you': 'a traveller',
+  'talk.quest': '{name} wants {item} ×{n} (you have {have}) → reward: {reward} ×{rn}',
+  'talk.deliver': 'Hand over',
+  'talk.discount': '{pct}% off today',
+  'talk.gift': 'Give: {item}',
+  'talk.trade': 'Trade',
+  'talk.send': 'Say',
+  'talk.placeholder': 'Say something…',
+  'talk.listening': 'Listening… speak now',
+  'talk.mic': 'Speak instead of typing',
+  'talk.micDenied': 'The microphone is blocked: allow it in the browser to talk out loud.',
+  'talk.micFail': 'Talking out loud doesn\'t work on this device or network. Type instead!',
+  'talk.brainAi': 'Answers by the ATRIA model',
+  'talk.brainOffline': 'Simple answers (no language model reachable)',
+  'talk.quickList': 'Hello!|What\'s your name?|Got any work for me?|Any news?|Can you do it cheaper?|Follow me!|Tell me a story|Bye!',
+  'talk.gotGift': '{name} gave you {item} ×{n}',
+  'talk.newQuest': 'New task from {name}: {item} ×{n}',
+  'talk.gotDiscount': '{name} gives you {pct}% off today',
+  'talk.questDone': 'Task done! You got {item} ×{n}',
+  'talk.child': 'Child',
+  'talk.hintKeys': 'Right click or Enter: talk',
+  'talk.hintTouch': 'Tap: talk',
+  'talk.hintPad': 'LT: talk',
+  'talk.hearts': 'Friendship: {n} of 5 hearts',
+  'set.villagerVoice': 'Villagers speak aloud',
+  'set.villagerVoice.desc': 'Villagers say their words in your device\'s voice, quieter the further away they are. Off: their words only appear above their heads.',
+  'set.villagerVolume': 'Villager voice volume',
+  'adv.talk': 'Villagers: right click (or tap) one to talk. Each has a name, a character and a memory: they remember you, what you said and did, pass on village gossip, set you tasks, give friends little presents and can be talked into a discount or into following you. Type, pick a ready-made line, or speak (where the device can). Sneak and right click to go straight to trading.',
+  'adv.trade': 'Villages: trade emeralds with villagers (from the talk screen, or sneak and right click). Iron golems guard them; a pumpkin on a T of iron blocks makes one.',
+  biomes: 'Ocean|Beach|Plains|Forest|Birch Forest|Taiga|Snowy Taiga|Desert|Mountains|River|Jungle|Savanna|Swamp|Badlands|Cherry Grove|Dark Forest',
+});
+registerStrings('zh', {
+  'talk.cannot': '这个村民现在没法说话。',
+  'talk.you': '一个外乡人',
+  'talk.quest': '{name}想要：{item} ×{n}（你有 {have} 个）→ 奖励：{reward} ×{rn}',
+  'talk.deliver': '交付',
+  'talk.discount': '今天打 {pct}% 折扣',
+  'talk.gift': '送礼：{item}',
+  'talk.trade': '交易',
+  'talk.send': '说',
+  'talk.placeholder': '想说点什么……',
+  'talk.listening': '在听……请说话',
+  'talk.mic': '用说话代替打字',
+  'talk.micDenied': '麦克风被禁止了：在浏览器里允许后就能说话聊天。',
+  'talk.micFail': '这台设备或网络听不了语音，请打字吧！',
+  'talk.brainAi': '由 ATRIA 大模型回答',
+  'talk.brainOffline': '简单对话（没有连上大模型）',
+  'talk.quickList': '你好！|你叫什么名字？|有什么活儿要帮忙吗？|最近有什么新鲜事？|能便宜点吗？|跟我来！|讲个故事吧|再见！',
+  'talk.gotGift': '{name}送给你 {item} ×{n}',
+  'talk.newQuest': '{name}的新任务：{item} ×{n}',
+  'talk.gotDiscount': '{name}今天给你打 {pct}% 折扣',
+  'talk.questDone': '任务完成！得到 {item} ×{n}',
+  'talk.child': '小孩',
+  'talk.hintKeys': '右键或回车：交谈',
+  'talk.hintTouch': '点一下：交谈',
+  'talk.hintPad': 'LT：交谈',
+  'talk.hearts': '好感度：5 颗心里有 {n} 颗',
+  'set.villagerVoice': '村民说话出声',
+  'set.villagerVoice.desc': '村民用设备自带的声音把话说出来，离得越远声音越小。关掉后只在头顶显示文字。',
+  'set.villagerVolume': '村民说话音量',
+  'adv.talk': '村民：对村民右键（手机上点一下）就能聊天。每个村民都有自己的名字、性格和记忆：记得你、记得你说过什么做过什么，会传村里的八卦，会派任务，会给好朋友送小礼物，还能被你说动打折，或者跟着你走。可以打字、点现成的话，也可以直接说话（设备支持的话）。蹲下再右键可以直接交易。',
+  'adv.trade': '村庄：用绿宝石和村民交易（在聊天界面里点“交易”，或者蹲下右键）。铁傀儡守护村庄；在 T 形铁块上放南瓜能造一个。',
+  biomes: '海洋|沙滩|平原|森林|白桦林|针叶林|积雪针叶林|沙漠|山地|河流|丛林|热带草原|沼泽|恶地|樱花林|黑森林',
+});
