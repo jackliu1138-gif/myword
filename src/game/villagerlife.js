@@ -382,14 +382,15 @@ export function installVillagerLife(Game) {
       this.mp.net.send({ t: 'vchat', a: pa.uid, ja: pa.job, b: pb.uid, jb: pb.job, l: lang, p: a.body.pos.map((v) => Math.round(v * 10) / 10), d: this.dimension | 0, c: ctx });
       return;
     }
-    // (while a model writes it, they come together: it takes a few seconds)
-    this.dialogue = { a, b, lines: null, i: 0, next: 0, asked: now() };
-    this.holdChat(a, b, 30);
+    // (a model takes a while to write it, up to half a minute: meanwhile they go about their
+    // business, and meet when it's ready)
+    const d = { a, b, lines: null, i: 0, next: 0, asked: now() };
+    this.dialogue = d;
     let lines = null;
     if (this.hostServer && this.hostServer.ai === 'atria') {
       try {
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 30000);
+        const timer = setTimeout(() => ctl.abort(), 45000);
         const res = await fetch('./api/chat2', {
           method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ a: pa.uid, ja: pa.job, b: pb.uid, jb: pb.job, l: lang, c: ctx, rm: this.rumors.slice(-8), day: this.dayCount | 0, name: this.playerName() }),
@@ -398,7 +399,7 @@ export function installVillagerLife(Game) {
         if (res.ok) { const r = await res.json(); lines = cleanDialogue(r && r.lines); }
       } catch (e) { lines = null; }
     }
-    if (this.dialogue && this.dialogue.a !== a) return; // (the world changed meanwhile)
+    if (this.dialogue !== d) return; // (the world changed meanwhile)
     if (!lines) lines = offlineDialogue({ a: pa, b: pb, lang, ctx, rumors: this.rumors || [], day: this.dayCount | 0, player: this.playerName() });
     this.playDialogue(pa.uid, pb.uid, lines);
   };
@@ -408,7 +409,10 @@ export function installVillagerLife(Game) {
   P.playDialogue = function playDialogue(ua, ub, lines) {
     const a = this.villagerByUid(ua), b = this.villagerByUid(ub);
     lines = cleanDialogue(lines);
-    if (!a || !b || !lines) { this.dialogue = null; return; }
+    const me = this.me();
+    // (still near each other, and near enough to us to be seen and heard)
+    const ok = a && b && lines && !a.carriedBy && !b.carriedBy && flat(a.body.pos, b.body.pos) < 13 && (!me || Math.min(flat(a.body.pos, me.pos), flat(b.body.pos, me.pos)) < 36);
+    if (!ok) { this.dialogue = null; return; }
     let total = 0;
     for (const l of lines) total += lineTime(l[1]);
     this.holdChat(a, b, total + 6);
@@ -425,7 +429,7 @@ export function installVillagerLife(Game) {
       this.dialogue = null;
     };
     if (a.removed || b.removed || a.deathTime > 0 || b.deathTime > 0 || a.carriedBy || b.carriedBy) { end(); return; }
-    if (!dl.lines) { if (tn - dl.asked > 40) end(); return; }
+    if (!dl.lines) { if (tn - dl.asked > 50) this.dialogue = null; return; }
     if (dl.i >= dl.lines.length) { if (tn > dl.next) end(); return; }
     // the first line once they're face to face (or have had time to get there); each next one
     // when the last has been said (a few seconds more at most)
