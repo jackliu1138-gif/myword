@@ -102,6 +102,7 @@ const SCHEMA = [
       { key: 'voiceMode', type: 'choice', label: 'set.voiceMode', options: [['proximity', 'voice.proximity'], ['global', 'voice.global']], desc: 'voice.hint' },
       { key: 'villagerVoice', type: 'toggle', label: 'set.villagerVoice', desc: 'set.villagerVoice.desc' },
       { key: 'villagerVolume', type: 'range', label: 'set.villagerVolume', min: 0, max: 1, step: 0.05, fmt: pct },
+      { key: 'voiceTest', type: 'action', label: 'set.voiceTest', button: 'set.voiceTest.btn', desc: 'set.voiceTest.desc', event: 'voiceTest' },
     ],
   },
 ];
@@ -1507,6 +1508,14 @@ export class UI {
         row.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
         this.onSettingChange(it.key, v);
       }));
+    } else if (it.type === 'action') {
+      // a button, and what came of pressing it
+      row.innerHTML = `<div class="setting-top"><span class="label">${label}</span><button type="button" id="${id}" class="btn small">${escapeHtml(t(it.button))}</button></div>${desc}<p class="desc result" id="${id}-result" aria-live="polite"></p>`;
+      const out = row.querySelector('.result');
+      row.querySelector('button').addEventListener('click', () => {
+        this.emit('click');
+        this.emit(it.event, (msg) => { out.textContent = msg; });
+      });
     } else if (it.type === 'preset') {
       row.innerHTML = `<div class="setting-top"><span class="label">${label}</span><span class="value" id="preset-value">${escapeHtml(t('preset.' + settings.preset))}</span></div>
         <div class="seg" role="group" aria-label="${label}" style="--cols:${PRESET_ORDER.length}">${PRESET_ORDER.map((o) => `<button type="button" id="preset-${o}" data-v="${o}" aria-pressed="${settings.preset === o}">${escapeHtml(t('preset.' + o))}</button>`).join('')}</div>${desc}`;

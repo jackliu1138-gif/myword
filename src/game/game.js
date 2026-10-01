@@ -11,7 +11,7 @@ import { Weather } from './weather.js';
 import * as store from './save.js';
 import { BLOCK, BLOCKS, FACE_TEX, IS_SOLID, IS_LIQUID, CHUNK_SIZE, WORLD_HEIGHT } from '../world/blocks.js';
 import { clockText, PRESET_ORDER } from '../ui/ui.js';
-import { t, tList, setLanguage, detectLanguage } from '../ui/i18n.js';
+import { t, tList, setLanguage, detectLanguage, getLanguage } from '../ui/i18n.js';
 import { buildIcons, buildItemIcons } from '../ui/icons.js';
 import { BIOME } from '../world/generator.js';
 import { mat4 } from '../engine/math.js';
@@ -304,6 +304,13 @@ export class Game {
       ui.push('settings');
     });
     ui.on('openHelp', () => ui.push('help'));
+    // Settings -> Sound: say a line now (inside this tap) and tell what came of it
+    ui.on('voiceTest', (show) => {
+      this.audio.unlock();
+      const lang = getLanguage();
+      show(t('voice.testing'));
+      this.speech.test(t('voice.testLine'), lang).then((r) => show(this.voiceReport(r, lang)));
+    });
     ui.on('openDevice', () => {
       ui.showDevice(collectDeviceInfo(this));
       ui.push('device');
@@ -441,9 +448,11 @@ export class Game {
         });
       } catch (e) { /* ignore */ }
     }
-    // (taps on a phone call preventDefault, so no click follows: their touchend unlocks the sound)
-    window.addEventListener('touchend', () => { this.audio.unlock(); this.speech.unlock(); }, { capture: true, passive: true });
-    window.addEventListener('mousedown', () => this.speech.unlock(), { capture: true, passive: true });
+    // (taps on a phone call preventDefault, so no click follows: their touchend unlocks the sound.
+    // Speaking unlocks on whichever tap, click or key the device counts, trying until it has.)
+    for (const ev of ['touchend', 'click', 'keydown', 'mousedown']) {
+      window.addEventListener(ev, () => { if (ev !== 'mousedown') this.audio.unlock(); this.speech.unlock(); }, { capture: true, passive: true });
+    }
     this.canvas.addEventListener('click', () => {
       this.audio.unlock();
       if (this.state === 'playing' && !this.input.locked && !this.input.lockFailed) this.input.requestLock();

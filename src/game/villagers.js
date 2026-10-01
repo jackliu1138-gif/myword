@@ -147,6 +147,10 @@ export function installVillagers(Game) {
     if (me && Math.hypot(me.pos[0] - m.body.pos[0], me.pos[2] - m.body.pos[2]) > TALK_RANGE + 1) return false;
     this.speech.unlock();
     this.audio.unlock();
+    if (!this.speech.ok && this.settings.villagerVoice !== false && !this.noVoiceHinted) {
+      this.noVoiceHinted = true;
+      this.ui.toast(t('talk.noVoice'), 5000);
+    }
     const uid = persona.uid;
     this.talk = { mob: m, uid, persona, lines: [], waiting: false, rec: this.mp ? null : this.soulOf(uid), ai: this.mp ? null : (this.hostServer && this.hostServer.ai) || 'offline', opened: now() };
     this.state = 'talk';
@@ -293,6 +297,18 @@ export function installVillagers(Game) {
     if (line && Math.random() < 0.12) this.addRumor('talk', clip(line, 24));
     this.onVillagerSay(uid, r.say, r.mood, true);
     this.onVillagerAction(uid, action);
+  };
+
+  // What the voice test found, in words: what works, or what to do about it.
+  P.voiceReport = function voiceReport(r, lang) {
+    const st = this.speech.status(lang);
+    const off = this.settings.villagerVoice === false ? ' ' + t('voice.r.off') : '';
+    if (r === 'unsupported' || !st.ok) return t('voice.r.unsupported');
+    if (r === 'ok') return (st.voice ? t('voice.r.ok', { voice: st.voice, n: st.matching }) : t('voice.r.okDefault')) + off;
+    if (st.total > 0 && st.matching === 0) return t('voice.r.novoice') + off;
+    if (r === 'not-allowed') return t('voice.r.notAllowed');
+    if (r === 'silent') return t('voice.r.silent') + off;
+    return t('voice.r.error', { err: r }) + off;
   };
 
   // A villager speaks (ours or, on a server, anyone's): over its head, in its voice, and on the

@@ -6,6 +6,8 @@
 // offers never cross. The audio transceiver is negotiated as send-and-receive from the start and
 // the microphone is attached later with replaceTrack, which needs no renegotiation.
 
+import { setRecording } from '../game/audiosession.js';
+
 export class Voice {
   constructor(net, getContext) {
     this.net = net;
@@ -127,9 +129,11 @@ export class Voice {
     if (typeof window !== 'undefined' && window.isSecureContext === false) throw new Error('insecure');
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof RTCPeerConnection === 'undefined') throw new Error('unsupported');
     let stream;
+    setRecording(true);
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (e) {
+      setRecording(false);
       throw new Error(e && e.name === 'NotAllowedError' ? 'denied' : 'unsupported');
     }
     this.stream = stream;
@@ -155,6 +159,7 @@ export class Voice {
     try { if (this.micSource) this.micSource.disconnect(); } catch (e) { /* ignore */ }
     this.stream = this.track = this.analyser = this.micSource = null;
     this.level = 0;
+    setRecording(false);
     this.announce();
   }
 

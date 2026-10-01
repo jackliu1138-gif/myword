@@ -1,6 +1,8 @@
 // Procedural sound: block break/place/step per material, splashes and ambience.
 // Everything is synthesised with WebAudio, no sample files.
 
+import { playThroughSilentSwitch } from './audiosession.js';
+
 const MATERIAL = {
   stone: { f: 1700, q: 1.1, decay: 0.13, thump: 110, gain: 0.55 },
   grass: { f: 950, q: 0.6, decay: 0.2, thump: 80, gain: 0.5, crunch: true },
@@ -28,6 +30,8 @@ export class Audio {
 
   // Must be called from a user gesture.
   unlock() {
+    // (on an iPhone or iPad: heard even with the silent switch on)
+    playThroughSilentSwitch();
     if (this.ctx) {
       if (this.ctx.state === 'suspended') this.ctx.resume();
       return;

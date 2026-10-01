@@ -93,8 +93,9 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
           body: JSON.stringify(body),
         });
       } finally { clearTimeout(timer); }
-      if (res.status === 400 && body.reasoning_effort !== undefined && attempt === 0) {
-        // an endpoint that doesn't know the parameter: once more without it
+      if ((res.status === 400 || res.status === 422) && body.reasoning_effort !== undefined && attempt === 0) {
+        // an endpoint that doesn't know the parameter (or the value: ATRIA answers 422 to
+        // reasoning_effort "none"): once more without it, and never again
         noReasoningParam = true;
         delete body.reasoning_effort;
         await res.text().catch(() => '');

@@ -270,6 +270,9 @@ kbd {
 .setting label, .setting .label { font-weight: 600; font-size: 14px; }
 .setting .value { font: 500 12px var(--font-mono); color: var(--sun); font-variant-numeric: tabular-nums; }
 .setting .desc { margin: 0; font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
+.setting .btn.small { padding: 6px 16px; min-height: 0; font-size: 13px; flex: none; }
+.setting .desc.result { color: var(--ink-soft); }
+.setting .desc.result:empty { display: none; }
 .setting input[type="range"] { width: 100%; accent-color: var(--sun); }
 .seg { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 6px; }
 .seg button {

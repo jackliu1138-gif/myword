@@ -124,7 +124,8 @@ function fakeModel(reply) {
 const llm = (base, extra = {}) => ({ key: 'test-key', base, model: 'Atria-Dawn-Preview', reasoning: 'none', timeout: 1500, rpm: 30, daily: 100, concurrent: 4, singlePlayer: true, ...extra });
 
 test('single player: the server asks the model and checks what comes back; no model, a scripted reply', async () => {
-  const fm = await fakeModel((j, n) => (n === 1 && j.reasoning_effort !== undefined ? { status: 400, body: { error: 'unknown parameter reasoning_effort' } }
+  // (as ATRIA does: reasoning_effort "none" is refused with a 422)
+  const fm = await fakeModel((j, n) => (n === 1 && j.reasoning_effort !== undefined ? { status: 422, body: { error: { code: 'upstream_request_rejected', message: 'Unprocessable Entity', type: 'invalid_request_error' } } }
     : JSON.stringify({ say: '哎呀，阿杰来啦！今天想买点啥？', mood: 'happy', action: { type: 'gift', item: 'diamond_block', count: 64 } })));
   const dataDir = mkdtempSync(join(tmpdir(), 'lumen-'));
   const srv = startServer({ port: 0, dataDir, quiet: true, llm: llm(fm.base) });
@@ -137,7 +138,7 @@ test('single player: the server asks the model and checks what comes back; no mo
     assert.equal(r.say, '哎呀，阿杰来啦！今天想买点啥？');
     assert.equal(r.offline, false);
     assert.equal(r.action, null, 'a stack of diamond blocks was not on the menu');
-    // what reached the model: the key, the model, the villager's prompt; reasoning_effort dropped after the 400
+    // what reached the model: the key, the model, the villager's prompt; reasoning_effort dropped after the 422
     assert.equal(fm.seen.length, 2);
     assert.equal(fm.seen[1].auth, 'Bearer test-key');
     assert.equal(fm.seen[1].body.model, 'Atria-Dawn-Preview');
