@@ -22,6 +22,7 @@ import { installBuilding } from './building.js';
 import { installSurvival } from './survival.js';
 import { installVillagers } from './villagers.js';
 import { installSpace } from './space.js';
+import { installCarry } from './carry.js';
 import { moonPhase } from '../world/space.js';
 import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
@@ -521,6 +522,9 @@ export class Game {
       if (code === 'Enter' || code === 'NumpadEnter' || code === 'Slash') { this.openChat(); e.preventDefault(); return; }
       if (code === 'KeyV') { this.toggleMic(); return; }
     }
+    if (code === 'KeyG' && this.state === 'playing') { this.toggleCarry(); e.preventDefault(); return; }
+    // carried by someone: every press of jump is a wriggle (however slow the frames)
+    if (code === 'Space' && this.carriedBy && !e.repeat) this.struggleTap(true);
     if (code === 'KeyE') {
       if (this.state === 'playing') { this.openInventory(); e.preventDefault(); }
       else if (this.state === 'inventory') { this.closeInventory(); e.preventDefault(); }
@@ -719,6 +723,7 @@ export class Game {
       if (tc.chat) { tc.chat = false; this.openChat(); }
       if (tc.mic) { tc.mic = false; this.toggleMic(); }
       if (tc.camera) { tc.camera = false; this.cycleCamera(); }
+      if (tc.carry) { tc.carry = false; this.toggleCarry(); }
       for (let i = 0; i < 9; i++) {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
@@ -752,7 +757,8 @@ export class Game {
       let rem = dt;
       while (rem > 1e-6) {
         const step = Math.min(rem, 1 / 60);
-        if (this.dimension === 3) this.spaceFlight(step, ctl); else this.player.update(step, ctl);
+        if (this.carriedBy) this.followCarrier(ctl);
+        else if (this.dimension === 3) this.spaceFlight(step, ctl); else this.player.update(step, ctl);
         // a press counts once: one can't both jump and spread the elytra
         ctl.toggleFly = false;
         ctl.jumpPressed = false;
@@ -763,6 +769,7 @@ export class Game {
     // creatures, items, arrows, health; then what the other players need to know
     this.updatePlay(dt);
     this.updateNet(dt);
+    this.updateCarry();
 
     // time of day (on a server, the server's clock)
     if (this.state !== 'paused' || this.mp) {
@@ -879,7 +886,8 @@ export class Game {
     if (this.mp && pad.pressed(PAD.UP)) this.toggleMic();
     if (pad.pressed(PAD.LB)) this.selectSlot((this.selected + 8) % 9);
     if (pad.pressed(PAD.LEFT)) this.cycleCamera();
-    if (pad.pressed(PAD.RB) || pad.pressed(PAD.RIGHT)) this.selectSlot((this.selected + 1) % 9);
+    if (pad.pressed(PAD.RB)) this.selectSlot((this.selected + 1) % 9);
+    if (pad.pressed(PAD.RIGHT)) this.toggleCarry();
     if (pad.pressed(PAD.DOWN)) { this.hudHidden = !this.hudHidden; this.ui.setHud(!this.hudHidden); }
     if (pad.pressed(PAD.VIEW)) { this.debug = !this.debug; if (!this.debug) this.ui.setDebug(null); }
     if (pad.pressed(PAD.MENU)) this.pause();
@@ -1228,3 +1236,4 @@ installVehicles(Game);
 installMultiplayer(Game);
 installVillagers(Game);
 installSpace(Game);
+installCarry(Game);

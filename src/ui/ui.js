@@ -8,6 +8,7 @@ import { ARMOR_REF, OFFHAND_REF, CONTAINER_REF } from '../sim/inventory.js';
 import { EFFECTS, ENCHANTS, ROMAN, BREW_TIME, BLAZE_FUEL } from '../sim/effects.js';
 import './strings3.js';
 import './strings4.js';
+import './strings5.js';
 
 // Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
 const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
@@ -128,6 +129,7 @@ const HELP = [
       [kb('Q'), 'act.drop'],
       [kb('X'), 'keys.swap'],
       [kb('F5', 'i18n:key.or', 'C'), 'keys.camera'],
+      [kb('G'), 'help.carry'],
       [kb('Shift'), 'keys.dismount'],
       [kb('Enter'), 'act.chat'],
       [kb('V'), 'act.mic'],
@@ -151,6 +153,7 @@ const HELP = [
       [kb('pad:LT'), 'act.place'],
       [kb('pad:LB', 'pad:RB'), 'act.hotbarPad'],
       [kb('i18n:pad.dpad', '←'), 'keys.camera'],
+      [kb('i18n:pad.dpad', '→'), 'help.carry'],
       [kb('i18n:pad.dpad', '↑'), 'act.fastTime'],
       [kb('i18n:pad.dpad', '↓'), 'act.hideHud'],
       [kb('i18n:pad.view'), 'act.debug'],
@@ -489,7 +492,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {

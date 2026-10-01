@@ -45,6 +45,16 @@ export function installTravel(Game) {
     if (this.mp) this.flushEdits();
     if (this.player.riding) this.dismount();
     if (this.bobber) { this.bobber.removed = true; this.bobber = null; }
+    // what we carry comes with us (on a server it is put down first: the server keeps its creatures
+    // where they are)
+    let carried = null;
+    if (this.carrying && this.carrying.kind === 'mob' && !this.mp) {
+      const e = this.carrying.e;
+      carried = this.serializeCreature(e);
+      e.removed = true;
+      this.sim.entities.delete(e.id);
+      this.carrying = null;
+    } else if (this.carrying) this.putDown(false);
     // the creatures that stay (villagers, pets, boats...) wait here for us
     this.stashCreatures();
     const old = this.world;
@@ -68,6 +78,10 @@ export function installTravel(Game) {
     else for (const e of this.dimItems[dim] || []) { e.body.world = this.world; sim.entities.set(e.id, e); }
     this.dimItems[dim] = [];
     this.restoreCreatures();
+    if (carried) {
+      const e = this.loadCreature(carried);
+      if (e) { e.carriedBy = 'local'; this.carrying = { kind: 'mob', e }; this.holdAt(e, this.player.pos, this.player.yaw); }
+    }
     this.dragon = null;
     if (this.mp) { this.mp.ghosts.clear(); this.mp.ghostIds.clear(); }
     this.crops = new Map();

@@ -76,3 +76,19 @@ test('a zombie chases and hurts a survival player, never a creative one', () => 
   for (let i = 0; i < 30; i++) sim.tick(env);
   assert.ok(!sim.entities.has(z.id));
 });
+
+test('a creature in someone\'s arms stays where it is put, can\'t be aimed at, and walks off when set down', () => {
+  const w = flatWorld();
+  const sim = new Simulation(w, { difficulty: 'normal', spawnMobs: false });
+  const v = sim.spawnMob('villager', 3.5, 11, 0.5);
+  v.carriedBy = 'local';
+  v.body.pos = [3.5, 14, 0.5];
+  for (let i = 0; i < 40; i++) sim.tick({ dayTime: 0.3 });
+  assert.deepEqual(v.body.pos, [3.5, 14, 0.5], 'held up, not falling or wandering');
+  assert.equal(sim.pickEntity([3.5, 15, 3], [0, 0, -1], 6), null, 'the ray goes past it');
+  v.carriedBy = null;
+  for (let i = 0; i < 40; i++) sim.tick({ dayTime: 0.3 });
+  assert.ok(v.body.pos[1] < 12, 'set free, it drops to the ground: ' + v.body.pos[1]);
+  assert.ok(sim.pickEntity([v.body.pos[0], 12, v.body.pos[2] + 3], [0, 0, -1], 6), 'and can be aimed at again');
+  assert.ok(v.health === v.maxHealth, 'unhurt');
+});

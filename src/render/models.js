@@ -714,6 +714,15 @@ function pose(e, type, t) {
   }
   if (type === 'player' && e.gliding) { r.rightArm = [0.1, 0, -0.35]; r.leftArm = [0.1, 0, 0.35]; r.rightLeg = [0.05, 0, 0.06]; r.leftLeg = [0.05, 0, -0.06]; }
   if ((type === 'player' || type === 'zombie' || type === 'skeleton') && e.blocking) r.leftArm = [1.1, 0.5, 0];
+  // carried in someone's arms (see carry.js): knees over their arm, legs kicking a little, hands
+  // on the chest; carrying: both arms out in front
+  if (e.carried === 'arms') {
+    const kick = Math.sin(t * 5 + (e.id || 0)) * 0.12;
+    r.rightLeg = [-1.25 + kick, 0, 0.05];
+    r.leftLeg = [-1.25 - kick, 0, -0.05];
+    if (type === 'player') { r.rightArm = [0.7, 0, 0.35]; r.leftArm = [0.7, 0, -0.35]; }
+  }
+  if (type === 'player' && e.carrying) { r.rightArm = [1.3, -0.32, 0]; r.leftArm = [1.3, 0.32, 0]; }
   return r;
 }
 
@@ -758,6 +767,13 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   let scale = 1 / 16;
   let root = mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]);
   if (e.lying) root = mul(root, mat(Math.PI / 2, Math.PI, 0, 0, 0.22, 1.0)); // asleep on the back (face up) along the bed, head on the pillow
+  // in someone's arms, from their feet and facing their way: lying across them face up, head to
+  // their left; an animal held up in front of them
+  if (e.carried === 'arms') root = mul(root, mat(Math.PI / 2, 0, Math.PI / 2, 0.82 * (e.renderScale || 1), 1.0, -0.55));
+  else if (e.carried === 'hold') {
+    const h = e.body ? e.body.h : 0.8, hw = e.body ? e.body.hw : 0.3;
+    root = mul(root, mat(0, 0, 0, 0, Math.max(0.3, 1.2 - h * 0.55), -(0.3 + hw)));
+  }
   if (e.deathTime > 0) {
     // topple over sideways
     const k = Math.min(1, e.deathTime / 0.45);

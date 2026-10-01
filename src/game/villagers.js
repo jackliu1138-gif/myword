@@ -15,6 +15,7 @@ import { JOB_LIST } from '../sim/looks.js';
 import { itemDef } from '../sim/items.js';
 import { BLOCKS } from '../world/blocks.js';
 import { Speech, canListen, listenOnce, stopListening } from './speech.js';
+import { carriedEye } from './carry.js';
 import { projectToScreen, loadMultiplayerPrefs } from '../net/multiplayer.js';
 import { t, getLanguage } from '../ui/i18n.js';
 
@@ -505,7 +506,8 @@ export function installVillagers(Game) {
       if (tnow > b.until || !m || m.removed) { b.el.remove(); this.bubbles.delete(uid); continue; }
       const a = this.sim.alpha || 0;
       const x = m.prevPos[0] + (m.body.pos[0] - m.prevPos[0]) * a, y = m.prevPos[1] + (m.body.pos[1] - m.prevPos[1]) * a, z = m.prevPos[2] + (m.body.pos[2] - m.prevPos[2]) * a;
-      const head = [x, y + (m.baby ? 1.3 : 2.35), z];
+      // (in someone's arms: over its head there, to their left)
+      const head = m.carried === 'arms' ? carriedEye([x, y, z], m.yaw).map((v, i) => (i === 1 ? v + 0.75 : v)) : [x, y + (m.baby ? 1.3 : 2.35), z];
       const dist = cam ? Math.hypot(head[0] - cam.pos[0], head[1] - cam.pos[1], head[2] - cam.pos[2]) : 99;
       const at = show && cam && dist < BUBBLE_RANGE ? projectToScreen(cam, head, w, h) : null;
       this.ui.placeBubble(b.el, at, dist, tnow > b.until - 0.6);

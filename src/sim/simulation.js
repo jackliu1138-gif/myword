@@ -590,7 +590,7 @@ export class Simulation {
   pickEntity(origin, dir, maxDist) {
     let best = null, bt = maxDist;
     for (const e of this.entities.values()) {
-      if (e.kind !== 'mob' || e.deathTime > 0) continue;
+      if (e.kind !== 'mob' || e.deathTime > 0 || e.carriedBy) continue;
       const b = e.body;
       const pad = 0.1;
       const box = [b.pos[0] - b.hw - pad, b.pos[1] - pad, b.pos[2] - b.hw - pad, b.pos[0] + b.hw + pad, b.pos[1] + b.h + pad, b.pos[2] + b.hw + pad];

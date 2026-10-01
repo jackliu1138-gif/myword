@@ -375,6 +375,8 @@ export function installVehicles(Game) {
     // a wall right behind pulls the camera into our own head: then there is nothing to draw
     if ((this.camDist ?? 4) < 0.9) return null;
     const p = this.player;
+    // (carried by someone: drawn in their arms)
+    const by = this.carriedBy && this.mp && this.mp.players.get(this.carriedBy);
     const inv = this.inventory;
     const hs = Math.hypot(p.vel[0], p.vel[2]);
     this.selfWalk = (this.selfWalk || 0) + hs * 0.016 * 2.2;
@@ -384,6 +386,8 @@ export function installVehicles(Game) {
       skin: 'player:0', held: this.heldId(), armor: inv.armorIds(), walkPhase: this.selfWalk, walkAmount: p.onGround && !p.riding ? Math.min(1, hs / 4) : 0,
       swing: this.swing, hurtTime: 0, deathTime: 0, gliding: p.gliding, glidePitch: p.gliding ? -p.pitch * 0.6 : 0, sitting: !!p.riding,
       wings: !!(chest && itemDef(chest.id) && itemDef(chest.id).elytra), offhand: inv.offhand ? inv.offhand.id : 0, blocking: !!this.blocking,
+      carrying: !!this.carrying,
+      ...(by && by.pos ? { pos: by.pos.slice(), yaw: by.yaw, carried: 'arms', walkAmount: 0 } : null),
     };
   };
 

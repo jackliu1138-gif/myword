@@ -440,6 +440,25 @@ export function startServer(overrides = {}) {
         }
         break;
       }
+      case 'carry': { // picking up (or putting down) a creature or a player, or wriggling free
+        const k = ['mob', 'player', 'free'].includes(m.k) ? m.k : null;
+        if (!k) return;
+        const v3 = (a) => (Array.isArray(a) && a.length === 3 && a.every((x) => Number.isFinite(x)) ? a.map((x) => Math.max(-3e7, Math.min(3e7, x))) : undefined);
+        const out = { t: 'carry', from: c.id, k, on: m.on ? 1 : 0 };
+        if (k === 'mob') {
+          if (typeof m.o !== 'string' || !Number.isInteger(m.r)) return;
+          out.o = m.o.slice(0, 16); out.r = m.r;
+          if (typeof m.u === 'string') out.u = m.u.slice(0, 64);
+        } else {
+          if (typeof m.id !== 'string') return;
+          out.id = m.id.slice(0, 16);
+        }
+        const p = v3(m.p), v = v3(m.v);
+        if (p) out.p = p;
+        if (v) out.v = v.map((x) => Math.max(-20, Math.min(20, x)));
+        broadcast(out, c);
+        break;
+      }
       case 'sleep':
         c.sleeping = !!m.on;
         checkSleep();

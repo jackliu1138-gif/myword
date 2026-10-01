@@ -17,7 +17,7 @@ import { t } from '../ui/i18n.js';
 const STATE_INTERVAL = 1 / 12;
 const MOB_INTERVAL = 1 / 8;
 const SHARE_RADIUS = 72; // our creatures within this distance of another player are sent to them
-const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512 };
+const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512, CARRY: 1024 };
 const PMOB_INTERVAL = 5; // how often the server hears of the creatures that stay
 const MP_KEY = 'lumencraft.multiplayer';
 
@@ -111,6 +111,8 @@ export function installMultiplayer(Game) {
       // chunks whose structure creatures we asked to spawn ("d:key" -> creatures); the creatures
       // that stay are reported every few seconds
       claims: new Map(), pmobTimer: 2,
+      // who carries what: carrier id -> { kind: 'mob', o, r, u } | { kind: 'player', id }
+      carries: new Map(),
     };
     const me = w.me && typeof w.me === 'object' ? w.me : {};
     this.mp.endHost = w.endHost || null;
@@ -209,6 +211,8 @@ export function installMultiplayer(Game) {
       if (this.signLayers) this.signLayers.delete(String(m.k));
     });
     net.on('chat', (m) => { this.ui.addChat(m.n, m.x); if (m.id !== mp.id) this.audio.sfx('pickup', 0.35, 0); });
+    // someone picking up (or putting down) a creature or a player, or wriggling free
+    net.on('carry', (m) => this.onCarryMessage(m));
     // villagers: what they say, what they did for us, and the ones we run told to stop or follow
     this.bindVillagerNet(net);
     net.on('ev', (m) => {
@@ -266,6 +270,7 @@ export function installMultiplayer(Game) {
     p.tag.remove();
     this.sim.removePlayer(id);
     mp.players.delete(id);
+    this.carryPlayerLeft(id);
     for (const [key, g] of mp.ghosts) if (g.owner === id) { g.removed = true; mp.ghosts.delete(key); }
     if (this.voice) this.voice.remove(id);
     this.refreshMpPanel();
@@ -332,7 +337,7 @@ export function installMultiplayer(Game) {
       mp.stateTimer = STATE_INTERVAL;
       const pl = this.player;
       const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0)
-        | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0);
+        | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0) | (this.carrying ? FLAG.CARRY : 0);
       // (in space: where we are over the body nearest us, the same for everyone)
       const sb = this.dimension === 3 && this.spaceState ? this.spaceBodyCoords() : null;
       const at = sb ? sb.q : pl.pos;
@@ -533,8 +538,11 @@ export function installMultiplayer(Game) {
       if ((p.dim | 0) !== (this.dimension | 0)) continue; // in another dimension
       const gliding = !!(p.flags & FLAG.GLIDE);
       const chest = p.armor && p.armor[1] ? itemDef(p.armor[1]) : null;
+      // (carried by us or by someone else: drawn lying in their arms)
+      const by = p.carriedBy === 'local' ? this.player : p.carriedBy ? mp.players.get(p.carriedBy) : null;
       out.push({
-        id: p.id, pos: p.pos, yaw: p.yaw, headYaw: p.yaw, headPitch: gliding ? 0 : p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),
+        ...(by && by.pos ? { carried: 'arms' } : null), carrying: !!(p.flags & FLAG.CARRY),
+        id: p.id, pos: by && by.pos ? by.pos : p.pos, yaw: by && by.pos ? by.yaw : p.yaw, headYaw: p.yaw, headPitch: gliding ? 0 : p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),
         walkPhase: p.walkPhase, walkAmount: p.flags & FLAG.RIDE ? 0 : p.walkAmount, swing: p.swing, hurtTime: p.hurtTime, deathTime: p.deathTime,
         gliding, glidePitch: gliding ? -p.pitch * 0.6 : 0, sitting: !!(p.flags & FLAG.RIDE), blocking: !!(p.flags & FLAG.BLOCK),
         wings: !!(chest && chest.elytra), offhand: p.offhand || 0,

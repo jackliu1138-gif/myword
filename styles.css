@@ -858,6 +858,7 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
 .touch-break { right: calc(22px + 96px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(148px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
 .touch-place { right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(178px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
 .touch-fly { --size: calc(48px * var(--touch-scale)); right: calc(22px + 170px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(86px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); font-size: calc(12px * var(--touch-scale)); }
+.touch-carry { --size: calc(54px * var(--touch-scale)); right: calc(22px + 176px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(160px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); font: 700 calc(16px * var(--touch-scale)) var(--font-ui); color: var(--ink); }
 .touch-top { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); display: flex; gap: 10px; }
 .touch-top .touch-btn { position: static; --size: calc(44px * var(--touch-scale)); border-radius: 12px; }
 .touch-rotate {

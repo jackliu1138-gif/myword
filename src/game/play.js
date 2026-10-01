@@ -537,6 +537,14 @@ export function installPlay(Game) {
     const usePressed = input.clicked.has(2) || (pad.connected && pad.pressed(PAD.LT)) || tc.tap;
     const held = this.heldSlot();
     const def = itemDef(held ? held.id : 0);
+    // carrying something (or someone), or carried ourselves: our hands are full
+    if (this.carrying || this.carriedBy) {
+      this.breaking = null;
+      this.selection = null;
+      if (this.carrying && (input.clicked.has(2) || (pad.connected && pad.pressed(PAD.LT)))) this.putDown();
+      tc.tap = false;
+      return;
+    }
 
     // ---- attack / break
     if (aimMob) {
@@ -792,7 +800,7 @@ export function installPlay(Game) {
 
   P.handState = function handState() {
     const held = this.heldSlot();
-    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode) return null;
+    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode || this.carrying || this.carriedBy) return null;
     const id = held.id;
     const p = this.player;
     const bob = this.settings.viewBobbing ? p.bobAmount : 0;

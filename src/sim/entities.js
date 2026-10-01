@@ -503,6 +503,14 @@ export class Mob extends Entity {
       if (this.deathTime > 1.0) this.removed = true;
       return;
     }
+    // in someone's arms: placed there each frame, kicking its legs a little
+    if (this.carriedBy) {
+      b.vel[0] = b.vel[1] = b.vel[2] = 0;
+      this.walkPhase += TICK * 3;
+      this.walkAmount = 0.25;
+      this.fallStart = null;
+      return;
+    }
     const ticker = TICKERS[this.type];
     if (ticker && ticker(this, env)) return;
     if (this.def.fixed) { this.walkAmount = 0; return; }

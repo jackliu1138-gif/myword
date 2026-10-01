@@ -117,6 +117,7 @@ export class RemoteMob {
     const p = this.body.pos;
     this.prevPos[0] = p[0]; this.prevPos[1] = p[1]; this.prevPos[2] = p[2];
     this.prevYaw = this.yaw;
+    if (this.carriedBy) { this.stale = 0; return; } // (in someone's arms: placed there each frame)
     if (this.goal) {
       const k = 0.35;
       const dx = (this.goal[0] - p[0]) * k, dz = (this.goal[2] - p[2]) * k;

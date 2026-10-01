@@ -185,6 +185,7 @@ export class TouchControls {
       ${btn('touch-break', 'breakBtn', ICONS.break, 'touch.break')}
       ${btn('touch-place', 'placeBtn', ICONS.place, 'touch.place')}
       ${btn('touch-fly', 'toggleFly', ICONS.fly, 'touch.fly')}
+      ${btn('touch-carry', 'carry', '', 'touch.carry')}
       <div class="touch-top">
         ${btn('touch-mic', 'mic', ICONS.mic, 'touch.mic')}
         ${btn('touch-chat', 'chat', ICONS.chat, 'touch.chat')}
@@ -200,6 +201,7 @@ export class TouchControls {
     this.knob = el.querySelector('.touch-knob');
     this.rotateHint = el.querySelector('.touch-rotate');
     this.setMultiplayer(false);
+    this.setCarry(null);
     const fsOk = document.fullscreenEnabled || document.webkitFullscreenEnabled;
     if (!fsOk) el.querySelector('.touch-full').hidden = true;
 
@@ -282,6 +284,15 @@ export class TouchControls {
 
   setFlyVisible(v) {
     this.el.querySelector('.touch-fly').hidden = !v;
+  }
+
+  // the carry button: 'up' (something to pick up in front of us), 'down' (carrying), or null
+  setCarry(state) {
+    if (state === this.carryState) return;
+    this.carryState = state;
+    const b = this.el.querySelector('.touch-carry');
+    b.hidden = !state;
+    if (state) b.textContent = (this.opts.t || ((k) => k))(state === 'down' ? 'carry.down' : 'carry.up');
   }
 
   // drop every held control (menus opened, focus lost)
