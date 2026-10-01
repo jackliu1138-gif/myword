@@ -62,7 +62,7 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
   let dayStamp = new Date(now()).toDateString(), dayCount = 0;
   let inFlight = 0;
   let pausedUntil = 0; // after a 429: wait as the endpoint asks
-  let noReasoningParam = false; // the endpoint refused reasoning_effort once: don't send it again
+  const refused = new Set(); // optional parameters the endpoint refused once: not sent again
   const perAddress = new Map(); // ip -> { hour: [times], day: count, stamp }
   const stats = { model: 0, offline: 0, failed: 0, lastError: '' };
 
@@ -82,8 +82,11 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
 
   async function callModel(messages) {
     const body = { model: llm.model, messages, temperature: 0.85, stream: false, max_tokens: llm.reasoning && llm.reasoning !== 'none' ? 1500 : 400 };
-    if (llm.reasoning && !noReasoningParam) body.reasoning_effort = llm.reasoning;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // how much to think before answering: reasoning_effort as OpenAI has it, and for "none" the
+    // switch GLM-style models such as ATRIA have (thinking takes ATRIA 5 to 25 seconds a reply)
+    const optional = { reasoning_effort: llm.reasoning || undefined, thinking: llm.reasoning === 'none' ? { type: 'disabled' } : undefined };
+    for (const [k, v] of Object.entries(optional)) if (v !== undefined && !refused.has(k)) body[k] = v;
+    for (let attempt = 0; attempt < 3; attempt++) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), llm.timeout);
       let res;
@@ -94,11 +97,12 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
           body: JSON.stringify(body),
         });
       } finally { clearTimeout(timer); }
-      if ((res.status === 400 || res.status === 422) && body.reasoning_effort !== undefined && attempt === 0) {
-        // an endpoint that doesn't know the parameter (or the value: ATRIA answers 422 to
+      const drop = Object.keys(optional).find((k) => body[k] !== undefined);
+      if ((res.status === 400 || res.status === 422) && drop) {
+        // an endpoint that doesn't know a parameter (or its value: ATRIA answers 422 to
         // reasoning_effort "none"): once more without it, and never again
-        noReasoningParam = true;
-        delete body.reasoning_effort;
+        refused.add(drop);
+        delete body[drop];
         await res.text().catch(() => '');
         continue;
       }

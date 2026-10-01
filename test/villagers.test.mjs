@@ -143,6 +143,13 @@ test('single player: the server asks the model and checks what comes back; no mo
     assert.equal(fm.seen[1].auth, 'Bearer test-key');
     assert.equal(fm.seen[1].body.model, 'Atria-Dawn-Preview');
     assert.equal(fm.seen[1].body.reasoning_effort, undefined);
+    assert.deepEqual(fm.seen[1].body.thinking, { type: 'disabled' }, 'thinking switched off (ATRIA answers in seconds then)');
+    // the next question goes without the refused parameter straight away
+    const r2 = await post({ u: 'l.abc.1', j: 'farmer', l: 'zh', name: '阿杰', x: '再见', r: { f: 90 }, day: 3 });
+    assert.equal(r2.offline, false);
+    assert.equal(fm.seen.length, 3);
+    assert.equal(fm.seen[2].body.reasoning_effort, undefined);
+    assert.deepEqual(fm.seen[2].body.thinking, { type: 'disabled' });
     assert.ok(fm.seen[1].body.messages[0].content.includes('农民'));
     const bad = await fetch(`http://127.0.0.1:${port}/api/talk`, { method: 'POST', body: 'not json' });
     assert.equal(bad.status, 400);
