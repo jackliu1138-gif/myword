@@ -47,6 +47,7 @@ export class Simulation {
     this.spawnMobs = opts.spawnMobs !== false;
     this.pathBudget = 0;
     this.day = true;
+    this.storm = 0;
     this.daylight = 1;
     this.pickup = null; // (playerId, itemId, count, wear) => number taken
     // multiplayer: players marked remote are simulated on their own machines (only their
@@ -868,6 +869,7 @@ export class Simulation {
     this.ticks++;
     const sun = Math.sin((env.dayTime ?? 0.25) * Math.PI * 2);
     this.day = sun > 0.05;
+    this.storm = env.storm | 0; // 0 fair, 1 raining, 2 a thunderstorm (villagers go indoors)
     this.daylight = Math.max(0.27, Math.min(1, sun * 4 + 0.5));
     this.pathBudget = 6;
     this.tickPlayers();

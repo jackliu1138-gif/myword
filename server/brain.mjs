@@ -12,7 +12,8 @@
 
 import {
   personaFor, personaName, buildMessages, parseReply, offlineReply, cleanAction, applyAction, cleanRecord, cleanRumor, newRecord,
-  remember, befriend, feelingFor, JOBS, stuffId, clip, rumorText,
+  remember, befriend, feelingFor, JOBS, stuffId, clip, rumorText, cleanPlaces, PLACE_KINDS, placeName, foeName,
+  buildDialogueMessages, parseDialogue, offlineDialogue,
 } from '../src/sim/brain.js';
 
 const MAX_SOULS = 3000;
@@ -37,7 +38,10 @@ export function llmConfig(pick, env = process.env) {
 }
 
 const LANGS = new Set(['zh', 'en']);
-const EVENTS = new Set(['hit', 'gift', 'deliver', 'trade']);
+const EVENTS = new Set(['hit', 'gift', 'deliver', 'trade', 'hero', 'house', 'found']);
+// things a villager only takes note of (how it feels about the player, what it remembers): no answer
+const NOTES = new Set(['hero', 'house', 'found']);
+const UID = /^[\w.:-]{1,40}$/;
 const vec3 = (a) => (Array.isArray(a) && a.length >= 3 && a.slice(0, 3).every(Number.isFinite) ? a.slice(0, 3).map((v) => Math.max(-3e7, Math.min(3e7, v))) : null);
 
 // What the game says about the moment (time, weather, the player's looks): checked and trimmed.
@@ -48,6 +52,7 @@ export function cleanContext(c) {
   return {
     time: s(o.time, 12), phase: ['morning', 'day', 'evening', 'night'].includes(o.phase) ? o.phase : 'day', weather: s(o.weather, 16), biome: s(o.biome, 16),
     held: stuffId(o.held) ? o.held : '', armor: s(o.armor, 12), hp: n(o.hp, 0, 40), food: n(o.food, 0, 20), danger: n(o.danger, 0, 50) | 0,
+    places: cleanPlaces(o.places),
   };
 }
 const cleanNeighbors = (l) => (Array.isArray(l) ? l.slice(0, 6).filter((x) => x && typeof x.name === 'string').map((x) => ({ name: clip(x.name, 12), job: JOBS[x.job] ? x.job : 'none' })) : []);
@@ -80,8 +85,8 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     return true;
   }
 
-  async function callModel(messages) {
-    const body = { model: llm.model, messages, temperature: 0.85, stream: false, max_tokens: llm.reasoning && llm.reasoning !== 'none' ? 1500 : 400 };
+  async function callModel(messages, tokens = 400) {
+    const body = { model: llm.model, messages, temperature: 0.85, stream: false, max_tokens: llm.reasoning && llm.reasoning !== 'none' ? 1500 + tokens : tokens };
     // how much to think before answering: reasoning_effort as OpenAI has it, and for "none" the
     // switch GLM-style models such as ATRIA have (thinking takes ATRIA 5 to 25 seconds a reply)
     const optional = { reasoning_effort: llm.reasoning || undefined, thinking: llm.reasoning === 'none' ? { type: 'disabled' } : undefined };
@@ -147,8 +152,30 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
       } finally { inFlight--; }
     }
     if (!out) { out = offlineReply(base); stats.offline++; }
-    const action = cleanAction(out.action, { job: persona.job, rec, day });
+    const action = cleanAction(out.action, { job: persona.job, rec, day, places: base.ctx.places });
     return { say: out.say, mood: out.mood, action, offline };
+  }
+
+  // Two villagers who meet have a word: input { a: { uid, job }, b: { uid, job }, lang, ctx,
+  // rumors, day, player, useModel }. Returns { lines: [[who, say, mood], ...], offline }.
+  async function dialogue(input) {
+    const lang = LANGS.has(input.lang) ? input.lang : 'zh';
+    const a = personaFor(input.a.uid, input.a.job), b = personaFor(input.b.uid, input.b.job);
+    const base = { a, b, lang, ctx: input.ctx || {}, rumors: input.rumors || [], day: input.day | 0, player: input.player || '' };
+    if (input.useModel !== false && allowModel()) {
+      inFlight++;
+      try {
+        const lines = parseDialogue(await callModel(buildDialogueMessages(base), 600));
+        if (lines) { stats.model++; return { lines, offline: false }; }
+        throw new Error('no conversation in the answer');
+      } catch (e) {
+        stats.failed++;
+        stats.lastError = e.name === 'AbortError' ? 'timeout' : clip(e.message, 120);
+        log(`villager brain: no conversation from the model (${stats.lastError}); a scripted one instead`);
+      } finally { inFlight--; }
+    }
+    stats.offline++;
+    return { lines: offlineDialogue(base), offline: true };
   }
 
   // the thing that happened, as the villager would put it (for the model)
@@ -218,7 +245,12 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     if (event === 'gift') { const nm = clip(m.n, 16); befriend(rec, feelingFor({ event })); note = lang === 'zh' ? `${c.name}送过你${nm || '礼物'}` : `${c.name} gave you ${nm || 'a present'}`; addRumor('gift', c.name, vname); }
     if (event === 'deliver' && rec.quest) { befriend(rec, feelingFor({ event })); rec.done++; note = lang === 'zh' ? `${c.name}帮你干过活（${rec.quest.count}个${clip(m.n, 12)}）` : `${c.name} did a task for you`; addRumor('quest', c.name, vname); }
     if (event === 'trade') befriend(rec, feelingFor({ event }));
+    // seen from a little way off: a monster seen off, its house knocked about, a place it told of found
+    if (event === 'hero') { const foe = /^[a-z_]{2,24}$/.test(m.it) ? m.it : ''; befriend(rec, 2); note = lang === 'zh' ? `${c.name}在村里打跑了${foeName(foe, 'zh')}` : `${c.name} saw off ${foeName(foe, 'en')} in the village`; if (m.first) addRumor('hero', c.name, foe); }
+    if (event === 'house') { befriend(rec, -3); note = lang === 'zh' ? `${c.name}拆过你家附近的东西` : `${c.name} knocked bits off your house`; }
+    if (event === 'found') { const k = PLACE_KINDS.includes(m.it) ? m.it : ''; if (!k) return; befriend(rec, 4); note = lang === 'zh' ? `${c.name}按你说的找到了${placeName(k, 'zh')}` : `${c.name} found the ${placeName(k, 'en')} you told them of`; addRumor('found', c.name, k); }
     if (note) { remember(rec, { note, day }); onChange(); }
+    if (NOTES.has(event)) return;
     // hits get one complaint every few seconds, not one per punch; trades rarely a word
     if (event === 'hit') { const t0 = lastHit.get(uid) || 0; if (now() - t0 < 5000) return; lastHit.set(uid, now()); }
     if (event === 'trade' && Math.random() < 0.7) return;
@@ -249,6 +281,34 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     return summary(recordFor(uid, c.key, day));
   }
 
+  // the two villagers of a conversation, as a game names them: { a: { uid, job }, b }
+  function villagerPair(m) {
+    const ok = (u) => typeof u === 'string' && UID.test(u);
+    if (!ok(m.a) || !ok(m.b) || m.a === m.b) return null;
+    return { a: { uid: m.a, job: JOBS[m.ja] ? m.ja : 'none' }, b: { uid: m.b, job: JOBS[m.jb] ? m.jb : 'none' } };
+  }
+
+  // Two villagers in a server game meet (the game that runs them says so): their conversation,
+  // for everyone near to see and hear. One a minute and a half per stretch of village at most.
+  const lastChat = new Map(); // area -> time
+  const chatting = new Set(); // players whose villagers' conversation is being written
+  async function onChat2(c, m, hooks) {
+    const pair = villagerPair(m);
+    const pos = vec3(m.p);
+    if (!pair || !pos || chatting.has(c.id)) return;
+    const dim = Number.isInteger(m.d) ? m.d : 0;
+    const area = `${dim}:${Math.floor(pos[0] / 48)}:${Math.floor(pos[2] / 48)}`;
+    const t = now();
+    if (t - (lastChat.get(area) || -1e12) < 90000) return;
+    lastChat.set(area, t);
+    if (lastChat.size > 2000) lastChat.delete(lastChat.keys().next().value);
+    chatting.add(c.id);
+    try {
+      const r = await dialogue({ ...pair, lang: LANGS.has(m.l) ? m.l : 'zh', ctx: cleanContext(m.c), rumors: rumors.slice(-8), day: hooks.day(), player: c.name });
+      hooks.hear(dim, pos, { t: 'vchat', a: pair.a.uid, b: pair.b.uid, l: r.lines, d: dim, off: r.offline ? 1 : 0 }, null);
+    } finally { chatting.delete(c.id); }
+  }
+
   // ---------------------------------------------------------------- single-player games
   function allowAddress(ip) {
     const t = now();
@@ -263,7 +323,8 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     return true;
   }
 
-  async function handleHttp(req, res) {
+  // POST /api/talk (a villager answers a player) and POST /api/chat2 (two villagers talk)
+  async function handleHttp(req, res, what = 'talk') {
     const send = (code, obj) => {
       res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       res.end(JSON.stringify(obj));
@@ -281,14 +342,23 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     let m;
     try { m = JSON.parse(raw); } catch (e) { return send(400, { error: 'bad json' }); }
     if (!m || typeof m !== 'object') return send(400, { error: 'bad request' });
-    const uid = typeof m.u === 'string' && /^[\w.:-]{1,40}$/.test(m.u) ? m.u : null;
-    if (!uid) return send(400, { error: 'no villager' });
     // behind the hub's nginx every request comes from 127.0.0.1: the real address is in X-Real-IP
     const sock = req.socket.remoteAddress || '';
     const local = /^(::1|127\.|::ffff:127\.)/.test(sock);
     const ip = (local && (req.headers['x-real-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim())) || sock;
-    const useModel = llm.singlePlayer && allowAddress(ip);
     const day = Number.isInteger(m.day) ? Math.max(0, m.day) : 0;
+    if (what === 'chat2') {
+      const pair = villagerPair(m);
+      if (!pair) return send(400, { error: 'no villagers' });
+      const r = await dialogue({
+        ...pair, lang: LANGS.has(m.l) ? m.l : 'zh', ctx: cleanContext(m.c), day, player: clip(m.name, 16),
+        rumors: (Array.isArray(m.rm) ? m.rm.slice(-8) : []).map(cleanRumor).filter(Boolean), useModel: llm.singlePlayer && allowAddress(ip),
+      });
+      return send(200, r);
+    }
+    const uid = typeof m.u === 'string' && UID.test(m.u) ? m.u : null;
+    if (!uid) return send(400, { error: 'no villager' });
+    const useModel = llm.singlePlayer && allowAddress(ip);
     const event = EVENTS.has(m.k) ? m.k : null;
     const r = await reply({
       uid, job: JOBS[m.j] ? m.j : 'none', lang: LANGS.has(m.l) ? m.l : 'zh', playerName: clip(m.name, 16), line: event ? '' : clip(m.x, 200),
@@ -319,7 +389,7 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
   }
 
   return {
-    enabled, reply, onTalk, recordSummary, handleHttp, addRumor, serialize, load, stats,
+    enabled, reply, dialogue, onTalk, onChat2, recordSummary, handleHttp, addRumor, serialize, load, stats,
     setDay(fn) { gameDay = fn; },
     rumors: () => rumors.slice(),
     rumorText: (r, lang) => rumorText(r, lang, gameDay()),

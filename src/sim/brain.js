@@ -43,6 +43,8 @@ export function clip(s, n = 160) {
   return t;
 }
 const fill = (s, vars) => s.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? vars[k] : m));
+// a sentence without its closing stop (to go inside another)
+const bare = (s) => String(s).replace(/[。！!？?．.，,]+$/, '');
 
 // ---------------------------------------------------------------- things villagers deal in
 // An item or block by its key ('wheat', 'white_wool'): its id, or 0.
@@ -128,6 +130,15 @@ const QUIRKS = [
   ['相信月亮上住着人', 'believes people live on the moon'], ['每天早上第一个起床', 'is always first up in the morning'],
   ['偷偷攒绿宝石，想盖一座大房子', 'is secretly saving emeralds for a big house'], ['觉得羊会说话，只是不想说', 'thinks sheep could talk if they wanted to'],
 ];
+// a quirk as the villager would say it of itself ('i'), or as told to it ('you'); in English the
+// list has them as of someone else ("is terrified of creepers")
+export function quirkText(p, lang, person = 'they') {
+  const q = QUIRKS[p.quirk % QUIRKS.length][lang === 'zh' ? 0 : 1];
+  if (lang === 'zh' || person === 'they') return q;
+  const [w, ...rest] = q.split(' ');
+  const verb = w === 'is' ? (person === 'i' ? 'am' : 'are') : w === 'has' ? 'have' : w === 'can' ? 'can' : w.replace(/ies$/, 'y').replace(/(ss|sh|ch|x)es$/, '$1').replace(/s$/, '');
+  return [verb, ...rest].join(' ');
+}
 const CATCH = { zh: ['哎呀', '嘿嘿', '我跟你说啊', '俺寻思', '可不是嘛', '哼哼', '嗯呐', '哈哈'], en: ['Well now', 'Hmm-hmm', 'I tell you', 'Goodness', 'Ha!', 'Mind you', 'Oh my', 'Right then'] };
 
 // Everything about a villager that never changes: the same for everyone, from its uid.
@@ -208,9 +219,74 @@ export function discounted(cost, pct) {
   return cost.map(([id, n]) => [id, id === ITEM.EMERALD ? Math.max(1, Math.ceil(n * (1 - pct / 100))) : n]);
 }
 
+// ---------------------------------------------------------------- places worth the trip
+// What a villager has heard of round about: the game finds the real places (a kind, which way
+// and how far: { k, dir, d }) and a villager may tell of one, as a rumour of treasure.
+export const PLACE_KINDS = ['temple', 'hut', 'outpost', 'monument', 'mansion', 'mineshaft', 'village', 'stronghold'];
+const PLACES = {
+  temple: ['沙漠神殿', 'desert temple'], hut: ['女巫小屋', 'witch hut'], outpost: ['掠夺者前哨站', 'pillager outpost'],
+  monument: ['海底神殿', 'ocean monument'], mansion: ['林地府邸', 'woodland mansion'], mineshaft: ['废弃矿井', 'abandoned mineshaft'],
+  village: ['另一个村子', 'another village'], stronghold: ['要塞', 'stronghold'],
+};
+const PLACE_TIPS = {
+  zh: {
+    temple: '里面好像埋着宝箱，可千万别踩中间那块压力板！', hut: '那儿住着个女巫，会朝人扔药水。', outpost: '那儿驻扎着掠夺者，手里拿着弩，可别一个人去。',
+    monument: '在深深的海底，有守卫者看着，得带上水下呼吸药水。', mansion: '里面全是卫道士和唤魔者，凶得很，不过听说藏着好东西。',
+    mineshaft: '地底下全是铁轨和宝箱，还有蜘蛛，火把要带够！', village: '那边的人烤的面包可香了，你去了替我问个好。', stronghold: '老人们说，那底下有一扇通往末地的门。',
+  },
+  en: {
+    temple: 'They say there\'s treasure buried inside. Don\'t step on the pressure plate in the middle!', hut: 'A witch lives there, and she throws potions at people.',
+    outpost: 'Pillagers camp there with crossbows. Don\'t go alone.', monument: 'It\'s deep under the sea, with guardians. Take a potion of water breathing.',
+    mansion: 'It\'s full of vindicators and evokers, nasty lot, but they say there\'s treasure.', mineshaft: 'Rails and chests all through it, and spiders. Take plenty of torches!',
+    village: 'They bake lovely bread over there. Say hello from me.', stronghold: 'The old folk say there\'s a door to the End down there.',
+  },
+};
+export const DIRS8 = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+const DIR_NAMES = { n: ['北边', 'north'], ne: ['东北边', 'north-east'], e: ['东边', 'east'], se: ['东南边', 'south-east'], s: ['南边', 'south'], sw: ['西南边', 'south-west'], w: ['西边', 'west'], nw: ['西北边', 'north-west'] };
+export const placeName = (k, lang) => (PLACES[k] || PLACES.village)[lang === 'zh' ? 0 : 1];
+export const dirName = (d, lang) => (DIR_NAMES[d] || DIR_NAMES.n)[lang === 'zh' ? 0 : 1];
+// the way along (dx, dz) as a point of the compass (north is -Z, east +X)
+export function compass(dx, dz) {
+  const a = Math.atan2(dx, -dz);
+  return DIRS8[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+}
+// places as a game sends them: checked, one of each kind, distances rounded to ten blocks
+export function cleanPlaces(l) {
+  if (!Array.isArray(l)) return [];
+  const out = [];
+  for (const p of l.slice(0, 8)) {
+    if (!p || !PLACE_KINDS.includes(p.k) || !DIRS8.includes(p.dir) || !Number.isFinite(p.d) || out.some((q) => q.k === p.k)) continue;
+    out.push({ k: p.k, dir: p.dir, d: clamp(Math.round(p.d / 10) * 10, 10, 5000) });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+// "沙漠神殿在东北边，大约350格远" / "a desert temple to the north-east, about 350 blocks away"
+export function placeLine(p, lang) {
+  if (lang === 'zh') return `${placeName(p.k, 'zh')}在${dirName(p.dir, 'zh')}，大约${p.d}格远`;
+  const name = placeName(p.k, 'en');
+  return `${p.k === 'village' ? '' : /^[aeiou]/.test(name) ? 'an ' : 'a '}${name} to the ${dirName(p.dir, 'en')}, about ${p.d} blocks away`;
+}
+export const placeTip = (k, lang) => PLACE_TIPS[lang === 'zh' ? 'zh' : 'en'][k] || '';
+
+// the time of day and the weather in words (the game sends them as keys)
+const PHASE_WORDS = { morning: ['早上', 'morning'], day: ['白天', 'daytime'], evening: ['傍晚', 'evening'], night: ['晚上', 'night'] };
+const WEATHER_WORDS = { clear: ['天气晴朗', 'fair weather'], rain: ['正在下雨', 'raining'], snow: ['正在下雪', 'snowing'], storm: ['电闪雷鸣', 'a thunderstorm'] };
+const phaseWords = (ctx, zh) => (PHASE_WORDS[ctx.phase] || [ctx.time || '白天', ctx.time || 'daytime'])[zh ? 0 : 1];
+const weatherWords = (ctx, zh) => (WEATHER_WORDS[ctx.weather] || [ctx.weather || '天气不错', ctx.weather || 'fair weather'])[zh ? 0 : 1];
+
+// hostile creatures a player may see off in a village, by name
+const FOES = {
+  zombie: ['僵尸', 'a zombie'], husk: ['尸壳', 'a husk'], drowned: ['溺尸', 'a drowned'], skeleton: ['骷髅', 'a skeleton'], stray: ['流浪者', 'a stray'],
+  creeper: ['苦力怕', 'a creeper'], spider: ['蜘蛛', 'a spider'], cave_spider: ['洞穴蜘蛛', 'a cave spider'], witch: ['女巫', 'a witch'], slime: ['史莱姆', 'a slime'],
+  pillager: ['掠夺者', 'a pillager'], vindicator: ['卫道士', 'a vindicator'], evoker: ['唤魔者', 'an evoker'], ravager: ['劫掠兽', 'a ravager'],
+  phantom: ['幻翼', 'a phantom'], enderman: ['末影人', 'an enderman'], silverfish: ['蠹虫', 'a silverfish'],
+};
+export const foeName = (k, lang) => (FOES[k] ? FOES[k][lang === 'zh' ? 0 : 1] : lang === 'zh' ? '怪物' : 'a monster');
+
 // ---------------------------------------------------------------- the village's gossip
 // A rumour: { k: what happened, who, s: detail, day }
-export const RUMOR_KINDS = ['death', 'nether', 'end', 'dragon', 'wither', 'join', 'space', 'moon', 'mars', 'jupiter', 'saturn', 'quest', 'gift', 'hit', 'talk'];
+export const RUMOR_KINDS = ['death', 'nether', 'end', 'dragon', 'wither', 'join', 'space', 'moon', 'mars', 'jupiter', 'saturn', 'quest', 'gift', 'hit', 'talk', 'hero', 'found'];
 export function cleanRumor(r) {
   if (!r || !RUMOR_KINDS.includes(r.k)) return null;
   return { k: r.k, who: clip(r.who, 16), s: clip(r.s, 40), day: r.day | 0 };
@@ -238,13 +314,15 @@ export function rumorText(r, lang, today = 0) {
     case 'gift': return zh ? `${who}${when}给${r.s}送了礼物` : `${who} gave ${r.s} a present ${when}`;
     case 'hit': return zh ? `${who}${when}打了${r.s}，真没礼貌` : `${who} hit ${r.s} ${when}, how rude`;
     case 'talk': return zh ? `${who}${when}说：“${r.s}”` : `${who} said "${r.s}" ${when}`;
+    case 'hero': return zh ? `${who}${when}在村子里打跑了${foeName(r.s, 'zh')}，大家都在夸` : `${who} saw off ${foeName(r.s, 'en')} in the village ${when}, and everyone's talking about it`;
+    case 'found': return zh ? `${who}${when}找到了${PLACES[r.s] ? placeName(r.s, 'zh') : '一个神秘的地方'}` : `${who} found ${!PLACES[r.s] ? 'a mysterious place' : r.s === 'village' ? 'another village' : 'the ' + placeName(r.s, 'en')} ${when}`;
     default: return '';
   }
 }
 
 // ---------------------------------------------------------------- the model's prompt
 // input: { persona, lang, playerName, line, rec, ctx, neighbors: [{ name, job }], rumors, note, day }
-// ctx: { time, weather, biome, held, armor, hp, food, danger, dim, mode }
+// ctx: { phase, weather, biome, held, armor, hp, food, danger, places: [{ k, dir, d }] }
 export function buildMessages(input) {
   const { persona: p, lang, playerName = '', line = '', note = '' } = input;
   const rec = input.rec || newRecord();
@@ -252,13 +330,14 @@ export function buildMessages(input) {
   const zh = lang === 'zh';
   const job = JOBS[p.job] || JOBS.none;
   const traits = p.traits.map((k) => TRAITS[k][zh ? 0 : 1]).join(zh ? '、' : ', ');
-  const quirk = QUIRKS[p.quirk % QUIRKS.length][zh ? 0 : 1];
+  const quirk = quirkText(p, lang, 'you');
   const day = input.day | 0;
   const wants = (WANTS[p.job] || WANTS.none).map(([k]) => `${k}(${stuffName(k, lang)})`).join(', ');
   const rewards = Object.keys(REWARDS).map((k) => `${k}(${stuffName(k, lang)})≤${REWARDS[k]}`).join(', ');
   const gifts = Object.keys(GIFTS).map((k) => `${k}(${stuffName(k, lang)})`).join(', ');
   const neighbors = (input.neighbors || []).slice(0, 6).map((n) => `${clip(n.name, 12)}（${jobName(n.job, lang)}）`).join(zh ? '、' : ', ');
   const rumors = (input.rumors || []).slice(-6).map((r) => rumorText(r, lang, day)).filter(Boolean);
+  const places = cleanPlaces(ctx.places);
   const facts = rec.facts.slice(-MAX_FACTS);
   const who = clip(playerName, 16) || (zh ? '这位玩家' : 'this player');
   const f = rec.f;
@@ -274,9 +353,10 @@ export function buildMessages(input) {
   const lines = zh ? [
     '你在扮演《光影方块世界》（一个和《我的世界》很像的方块游戏）里的一个村民。用第一人称、口语化的中文说话，像真人聊天一样。',
     `你是谁：${p.full.zh}${p.name.zh !== p.full.zh ? `，大家叫你“${p.name.zh}”` : ''}，${p.gender === 'male' ? '男' : '女'}，${{ young: '年轻人', middle: '中年人', old: '老人' }[p.age]}，职业是${job[0]}（${job[2]}）。性格：${traits}。你${quirk}。口头禅是“${catchOf(p, 'zh')}”（偶尔用，别每句都用）。`,
-    `你住的村子在${clip(ctx.biome || '平原', 12)}。现在是第${day + 1}天的${clip(ctx.time || '白天', 8)}，${clip(ctx.weather || '天气不错', 12)}。${danger}`,
+    `你住的村子在${clip(ctx.biome || '平原', 12)}。现在是第${day + 1}天的${phaseWords(ctx, true)}，${weatherWords(ctx, true)}。${danger}`,
     neighbors ? `村里的邻居有：${neighbors}。` : '',
     rumors.length ? `最近村里流传的事：${rumors.join('；')}。` : '',
+    places.length ? `你听人说起过附近这些地方（方向和距离都是真的）：${places.map((q) => placeLine(q, 'zh')).join('；')}。` : '',
     `你和${who}：${rec.met ? `见过${rec.met}回了` : '这是第一次见面'}，好感度${f}/100（${mood}）。${facts.length ? '你记得：' + facts.join('；') + '。' : ''}`,
     quest,
     looks.length ? `${who}现在${looks.join('，')}。` : '',
@@ -291,15 +371,17 @@ export function buildMessages(input) {
     `  2. 送个小礼物，只在关系好（好感度50以上）而且今天还没送过的时候：${gifts}。`,
     '  3. 对方讲价、说好话打动了你，就打折（5到30）。',
     '  4. 对方请你跟着他走的时候，跟着走一会儿（15到120秒）；请你别跟了，就停下（秒数写0）。',
+    places.length ? '  5. 对方问起宝藏、探险或者附近有什么好玩的地方时，从上面挑一个地方告诉他（方向和距离要说对，再提醒一句那儿的危险），同时用action rumor写上那个地方，玩家的屏幕上就会标出它。' : '',
     '回复格式：只输出一个JSON对象，不要任何别的文字：',
     '{"say":"你说的话","mood":"happy|sad|angry|scared|surprised|neutral","action":null}',
-    'action可以是：{"type":"quest","want":"wheat","count":10,"reward":"emerald","rewardCount":3}、{"type":"gift","item":"bread","count":2}、{"type":"discount","pct":10}、{"type":"follow","seconds":60}。物品用括号前面的英文名。',
+    `action可以是：{"type":"quest","want":"wheat","count":10,"reward":"emerald","rewardCount":3}、{"type":"gift","item":"bread","count":2}、{"type":"discount","pct":10}、{"type":"follow","seconds":60}${places.length ? `、{"type":"rumor","place":"${places[0].k}"}（place只能是${places.map((q) => q.k).join('、')}之一）` : ''}。物品用括号前面的英文名。`,
   ] : [
     'You are playing a villager in Lumencraft, a block game much like Minecraft. Speak in the first person, casually, like a real person chatting, in English.',
     `Who you are: ${p.full.en}${p.name.en !== p.full.en ? `, known as "${p.name.en}"` : ''}, ${p.gender}, ${{ young: 'young', middle: 'middle-aged', old: 'old' }[p.age]}, the village ${job[1]} (${job[3]}). Character: ${traits}. You ${quirk}. Your pet phrase is "${catchOf(p, 'en')}" (now and then, not every time).`,
-    `Your village is in a ${clip(ctx.biome || 'plains', 16)}. It is the ${clip(ctx.time || 'daytime', 12)} of day ${day + 1}, ${clip(ctx.weather || 'fair weather', 16)}. ${danger}`,
+    `Your village is in a ${clip(ctx.biome || 'plains', 16)}. It is the ${phaseWords(ctx, false)} of day ${day + 1}, ${weatherWords(ctx, false)}. ${danger}`,
     neighbors ? `Your neighbours: ${neighbors}.` : '',
     rumors.length ? `Village gossip lately: ${rumors.join('; ')}.` : '',
+    places.length ? `You have heard of these places round about (the directions and distances are true): ${places.map((q) => placeLine(q, 'en')).join('; ')}.` : '',
     `You and ${who}: ${rec.met ? `you have met ${rec.met} times` : 'this is your first meeting'}, friendship ${f}/100 (${mood}). ${facts.length ? 'You remember: ' + facts.join('; ') + '.' : ''}`,
     quest,
     looks.length ? `${who} is ${looks.join(', ')}.` : '',
@@ -314,9 +396,10 @@ export function buildMessages(input) {
     `  2. Give a small present, only to a friend (friendship 50+) and not twice in a day: ${gifts}.`,
     '  3. Knock something off your prices (5 to 30 percent) when haggled with or charmed.',
     '  4. Follow the player for a while (15 to 120 seconds) when asked; when asked to stop, stop (seconds 0).',
+    places.length ? '  5. When asked about treasure, adventures or anything worth seeing round about, tell them of one of the places above (get the direction and distance right, and warn them of its dangers), with the action rumor naming it: the place then shows on their screen.' : '',
     'Answer format: output one JSON object and nothing else:',
     '{"say":"what you say","mood":"happy|sad|angry|scared|surprised|neutral","action":null}',
-    'action may be: {"type":"quest","want":"wheat","count":10,"reward":"emerald","rewardCount":3}, {"type":"gift","item":"bread","count":2}, {"type":"discount","pct":10}, {"type":"follow","seconds":60}. Use the item names before the brackets.',
+    `action may be: {"type":"quest","want":"wheat","count":10,"reward":"emerald","rewardCount":3}, {"type":"gift","item":"bread","count":2}, {"type":"discount","pct":10}, {"type":"follow","seconds":60}${places.length ? `, {"type":"rumor","place":"${places[0].k}"} (place one of ${places.map((q) => q.k).join(', ')})` : ''}. Use the item names before the brackets.`,
   ];
   const messages = [{ role: 'system', content: lines.filter((s) => s !== '').join('\n') }];
   for (const [a, b] of rec.mem.slice(-MAX_MEM)) {
@@ -347,9 +430,9 @@ export function parseReply(text) {
   return { say: clip(plain, 160) || '……', mood: 'neutral', action: null };
 }
 
-// Something a villager wants to do, checked against what it may do. state: { job, rec, day }.
-// Returns the action as it will be carried out, or null.
-export function cleanAction(a, { job = 'none', rec = null, day = 0 } = {}) {
+// Something a villager wants to do, checked against what it may do. state: { job, rec, day,
+// places (what it knows of round about) }. Returns the action as it will be carried out, or null.
+export function cleanAction(a, { job = 'none', rec = null, day = 0, places = [] } = {}) {
   if (!a || typeof a !== 'object') return null;
   const f = rec ? rec.f : 30;
   switch (a.type) {
@@ -376,6 +459,11 @@ export function cleanAction(a, { job = 'none', rec = null, day = 0 } = {}) {
     }
     case 'follow':
       return { type: 'follow', seconds: clamp(Math.round(Number(a.seconds) || 0), 0, 120) };
+    case 'rumor': {
+      // (only a place that is really there: the game marks it on the player's screen)
+      const p = (places || []).find((q) => q && q.k === a.place);
+      return p ? { type: 'rumor', place: p.k } : null;
+    }
     default: return null;
   }
 }
@@ -395,6 +483,7 @@ const INTENTS = [
   ['thanks', /谢谢|多谢|感谢|谢啦|thank/i],
   ['stop', /别跟|不用跟|停下|别走了|回去吧|stop following|go home|stay here|stop/i],
   ['follow', /跟我|跟着我|一起走|过来|带你|follow|come with|come here/i],
+  ['treasure', /宝藏|宝贝|宝物|宝箱|寻宝|藏宝|好玩的地方|哪里好玩|哪儿好玩|附近有什么|有什么地方|神殿|遗迹|府邸|矿井|要塞|探险|冒险|treasure|explor|adventure|temple|ruins?\b|mansion|mineshaft|stronghold|where should i go|anything interesting|interesting place|worth seeing|\bloot\b/i],
   ['quest', /任务|帮忙|帮你|需要什么|要什么|有活|干活|活儿|quest|task|help you|need anything|any work|job for me/i],
   ['gift', /送我|给我|礼物|免费|白送|gift|present|free|give me/i],
   ['discount', /便宜|打折|优惠|讲价|太贵|贵了|discount|cheaper|price|too expensive|deal/i],
@@ -459,6 +548,8 @@ const L = {
     gotGiftMeh: ['呃……{item}？好吧，心意我领了。', '谢谢……虽然我不太用得上{item}。'],
     deliver: ['太好了，{count}个{want}都齐了！这是答应你的{rewardCount}个{reward}。', '真靠谱！拿着，{rewardCount}个{reward}。下回还找你！'],
     trade: ['谢谢惠顾！', '成交！下次再来。'],
+    treasure: ['{catch}，听说{place}。{tip}', '我跟你说个秘密：{place}。{tip}', '想去探险？{place}。{tip}', '我爷爷说过，{place}。{tip}'],
+    treasureNone: ['附近？除了田就是树，没听说有什么好玩的地方。', '我从没出过村子，外面有什么我可不知道。'],
   },
   en: {
     first: ['A new face! I\'m {name}, the village {job}. And you must be {player}?', '{catch}, hello there! Name\'s {name}, I\'m the {job} here.', 'Welcome to our village! I\'m {name}, just ask if you need anything.'],
@@ -499,6 +590,8 @@ const L = {
     gotGiftMeh: ['Er... {item}? Well, it\'s the thought that counts.', 'Thanks... though I\'m not sure what to do with {item}.'],
     deliver: ['Wonderful, all {count} {want}! Here are the {rewardCount} {reward} I promised.', 'Reliable as anything! {rewardCount} {reward} for you. I\'ll ask you again!'],
     trade: ['Pleasure doing business!', 'Deal! Come again.'],
+    treasure: ['{catch}, I hear there\'s {place}. {tip}', 'Here\'s a secret: there\'s {place}. {tip}', 'Fancy an adventure? There\'s {place}. {tip}', 'My grandad always said there\'s {place}. {tip}'],
+    treasureNone: ['Round here? Fields and trees. Never heard of anything worth seeing.', 'I\'ve never been out of the village. No idea what\'s out there.'],
   },
 };
 
@@ -515,7 +608,7 @@ export function offlineReply(input) {
   const q = rec.quest;
   const vars = {
     name: personaName(p, lang), full: p.full[zh ? 'zh' : 'en'], job: jobName(p.job, lang), jobDesc: (JOBS[p.job] || JOBS.none)[zh ? 2 : 3],
-    player: clip(playerName, 16) || (zh ? '朋友' : 'friend'), catch: catchOf(p, lang), quirk: QUIRKS[p.quirk % QUIRKS.length][zh ? 0 : 1],
+    player: clip(playerName, 16) || (zh ? '朋友' : 'friend'), catch: catchOf(p, lang), quirk: quirkText(p, lang, 'i'),
     quirkSpace: zh ? '一直想知道天上有什么' : 'have always wondered what\'s up in the sky',
     short: clip(line, 12),
     word: clip((String(line).match(/手机|电脑|网络|城市|学校|汽车|飞机|电视|phone|computer|internet|school|car|plane|tv/i) || [''])[0], 8),
@@ -531,7 +624,7 @@ export function offlineReply(input) {
   }
   if (event === 'deliver' && q) return say(T.deliver, 'happy', null, { count: q.count, want: stuffName(q.want, lang), rewardCount: q.rewardCount, reward: stuffName(q.reward, lang) });
   const intent = intentOf(line);
-  const night = ctx.time === (zh ? '晚上' : 'night') || ctx.time === 'night';
+  const night = ctx.phase === 'night' || ctx.time === '晚上' || ctx.time === 'night';
   if (rec.f < 15 && intent !== 'bye' && intent !== 'thanks' && rnd() < 0.7) return say(T.cold, 'angry');
   switch (intent) {
     case 'greet':
@@ -566,8 +659,15 @@ export function offlineReply(input) {
       return say(T.discNo);
     }
     case 'news':
-      if (rumors.length) return say(T.newsSome, 'surprised', null, { rumor: rumorText(pick(rnd, rumors.slice(-5)), lang, day) });
+      if (rumors.length) return say(T.newsSome, 'surprised', null, { rumor: bare(rumorText(pick(rnd, rumors.slice(-5)), lang, day)) });
       return say(T.newsNone);
+    case 'treasure': {
+      // (the nearest place mostly, now and then another)
+      const places = cleanPlaces(ctx.places);
+      if (!places.length) return say(T.treasureNone);
+      const at = rnd() < 0.65 ? places[0] : pick(rnd, places);
+      return say(T.treasure, 'surprised', { type: 'rumor', place: at.k }, { place: placeLine(at, lang), tip: placeTip(at.k, lang) });
+    }
     case 'danger': return say(ctx.danger > 0 ? T.dangerNow : T.danger, ctx.danger > 0 ? 'scared' : 'neutral');
     case 'weather': return say([vars.weatherLine]);
     case 'story': return say(rnd() < 0.3 ? T.joke : T.story, 'happy');
@@ -652,4 +752,185 @@ const PAIRS = {
 };
 export function chatterPair(lang, rnd = Math.random) {
   return pick(rnd, PAIRS[lang === 'zh' ? 'zh' : 'en']);
+}
+
+// ---------------------------------------------------------------- what a villager sees happen
+// A word for something it saw: a friend coming by, a monster seen off, its house knocked about,
+// a storm, someone dropping out of the sky (from space, on wings, a long fall, a flying saucer),
+// a place it told of found.
+const REACT = {
+  zh: {
+    friend: ['{player}！我的好朋友来啦！', '嘿，{player}！见到你真高兴！', '{player}，快过来，我正想你呢！', '哟，这不是{player}嘛！'],
+    cheer: ['好样的，{player}！', '太厉害了！把它打跑了！', '哇！{player}是我们村的英雄！', '谢谢你保护我们！', '打得好！再来一个！'],
+    house: ['喂！那是我家！', '别拆我的房子！', '哎呀，我家的墙！', '你在我家这儿捣什么乱呢？', '住手！我好不容易才盖起来的！'],
+    storm: ['要打雷了，快回家！', '雷公发火了，我得躲起来！', '这么大的雨，快进屋吧！', '哎呀，衣服还晾在外面呢！'],
+    space: ['哇！你是从星星上掉下来的吗？', '天哪，你从天上下来的！', '你去过星星那里？快给我讲讲！', '那么高的地方，你不怕吗？'],
+    glide: ['哇，你会飞！像鸟一样！', '那对翅膀是哪儿来的？我也想要！', '刚才那是你在天上飞吗？'],
+    fall: ['天上掉下来一个人！', '哎哟，摔疼了没有？', '你是从哪儿掉下来的？'],
+    saucer: ['那、那是什么大飞盘？！', '天上来了个会发光的大锅盖！', '你是从那个飞盘里出来的？', '我的妈呀，它还会喷火！'],
+    found: ['你真找到{place}啦？我就说吧！', '{place}！你去过啦？里面有什么？', '我就知道你能找到{place}！'],
+  },
+  en: {
+    friend: ['{player}! My good friend!', 'Hey, {player}! Lovely to see you!', '{player}, come here, I was just thinking of you!', 'Well, if it isn\'t {player}!'],
+    cheer: ['Well done, {player}!', 'Brilliant! You saw it off!', 'Wow! {player}\'s the village hero!', 'Thank you for protecting us!', 'Great shot! Do it again!'],
+    house: ['Hey! That\'s my house!', 'Don\'t knock my house down!', 'Oh no, my wall!', 'What are you doing to my house?', 'Stop that! It took me ages to build!'],
+    storm: ['Thunder! Get home, quick!', 'The sky\'s angry, I\'m hiding!', 'Look at that rain, get indoors!', 'Oh no, my washing\'s still out!'],
+    space: ['Wow! Did you fall from the stars?', 'Goodness, you came down from the sky!', 'You\'ve been up to the stars? Tell me everything!', 'Weren\'t you scared, up so high?'],
+    glide: ['Wow, you can fly! Like a bird!', 'Where did you get those wings? I want some!', 'Was that you up in the sky just now?'],
+    fall: ['Someone fell out of the sky!', 'Ouch, are you hurt?', 'Where did you fall from?'],
+    saucer: ['Wh-what is that great flying dish?!', 'A glowing pot lid came down from the sky!', 'Did you come out of that flying saucer?', 'Goodness me, it breathes fire!'],
+    found: ['You really found the {place}? Told you so!', 'The {place}! You went? What was inside?', 'I knew you\'d find the {place}!'],
+  },
+};
+export const REACT_KINDS = Object.keys(REACT.zh);
+export function reactLine(kind, { lang, playerName = '', place = '', rnd = Math.random } = {}) {
+  const list = REACT[lang === 'zh' ? 'zh' : 'en'][kind];
+  if (!list) return '';
+  return clip(fill(pick(rnd, list), { player: clip(playerName, 16) || (lang === 'zh' ? '朋友' : 'friend'), place: place ? placeName(place, lang).replace(/^another /, '') : '' }), 80);
+}
+
+// ---------------------------------------------------------------- two villagers talking
+// A few lines between two neighbours who meet: from the model, or scripted. Lines are
+// [who (0: a, 1: b), what they say, mood].
+// input: { a, b: personas, lang, ctx, rumors, day, player: a name (someone listening) }
+const AGES = { young: ['年轻人', 'young'], middle: ['中年人', 'middle-aged'], old: ['老人', 'old'] };
+function sketch(p, zh) {
+  const job = JOBS[p.job] || JOBS.none;
+  const traits = p.traits.map((k) => TRAITS[k][zh ? 0 : 1]).join(zh ? '、' : ', ');
+  const quirk = QUIRKS[p.quirk % QUIRKS.length][zh ? 0 : 1];
+  return zh
+    ? `${p.name.zh}（${p.gender === 'male' ? '男' : '女'}，${AGES[p.age][0]}，${job[0]}，${traits}，${quirk}，口头禅“${catchOf(p, 'zh')}”）`
+    : `${p.name.en} (${p.gender}, ${AGES[p.age][1]}, the ${job[1]}, ${traits}; ${quirk}; says "${catchOf(p, 'en')}" now and then)`;
+}
+export function buildDialogueMessages(input) {
+  const { a, b, lang } = input;
+  const zh = lang === 'zh';
+  const ctx = input.ctx || {};
+  const day = input.day | 0;
+  const rumors = (input.rumors || []).slice(-5).map((r) => rumorText(r, lang, day)).filter(Boolean);
+  const places = cleanPlaces(ctx.places).slice(0, 2).map((q) => placeLine(q, lang));
+  const player = clip(input.player, 16);
+  const danger = ctx.danger > 0 ? (zh ? `附近有${ctx.danger}个怪物在转悠。` : `There are ${ctx.danger} monsters prowling nearby.`) : '';
+  const lines = zh ? [
+    '你在为《光影方块世界》（一个和《我的世界》很像的方块游戏）写村子里的一小段闲聊：两个村民碰上了，站着聊几句。',
+    `A：${sketch(a, true)}`,
+    `B：${sketch(b, true)}`,
+    `村子在${clip(ctx.biome || '平原', 12)}，现在是第${day + 1}天的${phaseWords(ctx, true)}，${weatherWords(ctx, true)}。${danger}`,
+    rumors.length ? `村里最近在传：${rumors.join('；')}。` : '',
+    places.length ? `他们听说过：${places.join('；')}。` : '',
+    player ? `玩家“${player}”就在旁边，听得见他们说话（可以提到他，但别跟他说话）。` : '',
+    '',
+    '要求：',
+    '- 写3到6句，A和B轮流说，A先开口；每句不超过30个字，口语化，像真的邻居唠嗑，符合各自的性格、职业和怪癖。',
+    '- 聊点具体的：活计、天气、村里的传闻、邻居、怪物、远处的地方、自己的小毛病……可以拌嘴、开玩笑、说八卦，结尾自然。',
+    '- 只知道方块世界里的事；内容适合小朋友；不提AI。',
+    '只输出一个JSON对象，不要别的文字：{"lines":[{"who":"A","say":"……","mood":"happy"},{"who":"B","say":"……","mood":"neutral"}]}',
+    'mood只能是happy、sad、angry、scared、surprised、neutral之一。',
+  ] : [
+    'You are writing a little exchange in a village in Lumencraft, a block game much like Minecraft: two villagers meet and stop for a chat.',
+    `A: ${sketch(a, false)}`,
+    `B: ${sketch(b, false)}`,
+    `The village is in a ${clip(ctx.biome || 'plains', 16)}; it is the ${phaseWords(ctx, false)} of day ${day + 1}, ${weatherWords(ctx, false)}. ${danger}`,
+    rumors.length ? `Village gossip lately: ${rumors.join('; ')}.` : '',
+    places.length ? `They have heard of: ${places.join('; ')}.` : '',
+    player ? `A player called "${player}" is standing near and can hear them (they may mention them, but don't talk to them).` : '',
+    '',
+    'Rules:',
+    '- Three to six lines, A and B taking turns, A first; each line at most 20 words, casual, like real neighbours chatting, true to their characters, trades and quirks.',
+    '- Talk about something definite: work, the weather, village gossip, the neighbours, monsters, far-off places, their own little foibles... they may bicker, joke or gossip; end naturally.',
+    '- They only know the block world; keep it suitable for children; never mention AI.',
+    'Output one JSON object and nothing else: {"lines":[{"who":"A","say":"...","mood":"happy"},{"who":"B","say":"...","mood":"neutral"}]}',
+    'mood is one of happy, sad, angry, scared, surprised, neutral.',
+  ];
+  return [{ role: 'system', content: lines.filter((x) => x !== '').join('\n') }, { role: 'user', content: zh ? '写这段对话。' : 'Write the conversation.' }];
+}
+
+// The model's conversation: [[who, say, mood], ...] (2 to 6 lines), or null.
+export function parseDialogue(text) {
+  let s = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+  if (fence) s = fence[1].trim();
+  const i = s.indexOf('{'), j = s.lastIndexOf('}');
+  const k = s.indexOf('['), l = s.lastIndexOf(']');
+  let o = null;
+  try { o = i >= 0 && j > i && (k < 0 || i < k) ? JSON.parse(s.slice(i, j + 1)) : k >= 0 && l > k ? JSON.parse(s.slice(k, l + 1)) : null; } catch (e) { return null; }
+  const list = o && Array.isArray(o.lines) ? o.lines : Array.isArray(o) ? o : null;
+  if (!list) return null;
+  return cleanDialogue(list.map((x) => (x && typeof x === 'object' && !Array.isArray(x) ? [/^\s*b\s*$/i.test(String(x.who)) || x.who === 1 ? 1 : 0, x.say, x.mood] : x)));
+}
+// lines as sent (by a server, from a model): checked and trimmed
+export function cleanDialogue(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const x of list.slice(0, 8)) {
+    if (!Array.isArray(x) || typeof x[1] !== 'string') continue;
+    const say = clip(x[1], 90);
+    if (say) out.push([x[0] === 1 ? 1 : 0, say, MOODS.includes(x[2]) ? x[2] : 'neutral']);
+  }
+  return out.length >= 2 ? out.slice(0, 6) : null;
+}
+
+const D = {
+  zh: {
+    open: { morning: ['早啊，{b}！', '{b}，起这么早？'], day: ['{b}，忙啥呢？', '哟，{b}！'], evening: ['{b}，吃了没？', '{b}，收工啦？'], night: ['{b}，还不睡？', '嘘，{b}，你也睡不着？'] },
+    reply: ['{catch}，是{a}啊！', '哎，{a}！', '嗯呐，你也在呀。', '是{a}啊，正想找你呢。'],
+    rumor: ['你听说了吗？{rumor}。', '我跟你说，{rumor}！', '{catch}，听说{rumor}。'],
+    rumorBack: [['真的假的？', 'surprised'], ['天哪！', 'surprised'], ['我早就听说啦。', 'neutral'], ['这可是大新闻！', 'surprised'], ['啧啧，真不得了。', 'happy']],
+    place: ['我听人说，{place}。', '{catch}，你知道吗？{place}。'],
+    placeBack: [['那么远？我可不敢去。', 'scared'], ['真的？哪天咱们一起去看看？', 'happy'], ['可别乱跑，外面有怪物！', 'scared']],
+    quirk: ['我跟你说，我{quirk}。', '不瞒你说，我{quirk}。'],
+    quirkBack: [['你都说了八百遍啦！', 'happy'], ['哈哈，我知道我知道。', 'happy'], ['真的吗？头一回听说。', 'surprised']],
+    work: ['今天活儿可真多。', '我得赶紧把手头的活儿干完。', '最近生意还不错。'],
+    workBack: [['那敢情好。', 'happy'], ['别累着自己。', 'neutral'], ['我也是，忙得团团转。', 'neutral']],
+    weather: { rain: [['这雨下个没完。', 'sad'], ['地里的庄稼倒是高兴了。', 'happy']], storm: [['打雷了，好吓人！', 'scared'], ['快回屋吧！', 'scared']], snow: [['下雪了，冷死了。', 'sad'], ['回家烤火去！', 'happy']] },
+    danger: [['附近好像有怪物，你听见了吗？', 'scared'], ['嘘！别出声，快躲起来。', 'scared']],
+    player: [['你看，{player}又来了。', 'happy'], ['{player}这人挺好的，上回还跟我打招呼。', 'happy']],
+    close: [['好了，我得干活去了。', '回见！'], ['不说了，回家吃饭去。', '慢走！'], ['走了走了。', '嗯，回头聊。'], ['下回再聊！', '好嘞！']],
+  },
+  en: {
+    open: { morning: ['Morning, {b}!', 'Up early, {b}?'], day: ['Busy, {b}?', 'Oh, hello {b}!'], evening: ['Had your supper, {b}?', 'Finished for the day, {b}?'], night: ['Still up, {b}?', 'Shh, {b}, can\'t you sleep either?'] },
+    reply: ['{catch}, it\'s {a}!', 'Oh, {a}!', 'Hello there.', '{a}! I was hoping to see you.'],
+    rumor: ['Did you hear? {rumor}.', 'Guess what: {rumor}!', '{catch}, word is {rumor}.'],
+    rumorBack: [['No! Really?', 'surprised'], ['Goodness!', 'surprised'], ['I heard that already.', 'neutral'], ['Now that\'s news!', 'surprised'], ['Well I never.', 'happy']],
+    place: ['Someone told me there\'s {place}.', '{catch}, did you know there\'s {place}?'],
+    placeBack: [['That far? Not for me.', 'scared'], ['Really? Shall we go and look one day?', 'happy'], ['Don\'t go wandering, there are monsters out there!', 'scared']],
+    quirk: ['I tell you, I {quirk}.', 'Between you and me, I {quirk}.'],
+    quirkBack: [['You\'ve told me a hundred times!', 'happy'], ['Ha, I know, I know.', 'happy'], ['Really? First I\'ve heard of it.', 'surprised']],
+    work: ['So much to do today.', 'I must get on with my work.', 'Business is good lately.'],
+    workBack: [['Glad to hear it.', 'happy'], ['Don\'t wear yourself out.', 'neutral'], ['Me too, run off my feet.', 'neutral']],
+    weather: { rain: [['This rain won\'t stop.', 'sad'], ['The crops are happy, at least.', 'happy']], storm: [['Thunder! How frightening!', 'scared'], ['Get indoors, quick!', 'scared']], snow: [['Snow! I\'m freezing.', 'sad'], ['Home to the fire, then!', 'happy']] },
+    danger: [['I think there are monsters about. Did you hear that?', 'scared'], ['Shh! Quiet, let\'s hide.', 'scared']],
+    player: [['Look, {player}\'s here again.', 'happy'], ['{player}\'s all right. Said hello to me last time.', 'happy']],
+    close: [['Right, back to work.', 'See you!'], ['Must dash, supper\'s waiting.', 'Take care!'], ['Off I go.', 'Talk later.'], ['Next time, then!', 'Next time!']],
+  },
+};
+export function offlineDialogue({ a, b, lang, ctx = {}, rumors = [], day = 0, player = '', rnd = Math.random }) {
+  const zh = lang === 'zh';
+  const T = D[zh ? 'zh' : 'en'];
+  const name = (p) => personaName(p, lang);
+  const vars = (p, extra = {}) => ({ a: name(a), b: name(b), catch: catchOf(p, lang), quirk: quirkText(p, lang, 'i'), player: clip(player, 16) || (zh ? '那个外乡人' : 'that stranger'), ...extra });
+  const out = [];
+  const line = (who, text, mood, extra) => out.push([who, clip(fill(text, vars(who ? b : a, extra)), 90), mood]);
+  const both = (pair) => { line(0, pair[0][0], pair[0][1]); line(1, pair[1][0], pair[1][1]); };
+  const open = T.open[ctx.phase] || T.open.day;
+  line(0, pick(rnd, open), 'happy');
+  line(1, pick(rnd, T.reply), 'happy');
+  // something to talk about: what's going on first, then whatever comes to mind
+  const topics = [];
+  if (ctx.danger > 0) topics.push(() => both(T.danger));
+  if (T.weather[ctx.weather]) topics.push(() => both(T.weather[ctx.weather]));
+  if (rumors.length) topics.push(() => { line(0, pick(rnd, T.rumor), 'surprised', { rumor: bare(rumorText(pick(rnd, rumors.slice(-5)), lang, day)) }); const r = pick(rnd, T.rumorBack); line(1, r[0], r[1]); });
+  const places = cleanPlaces(ctx.places);
+  if (places.length && rnd() < 0.6) topics.push(() => { line(0, pick(rnd, T.place), 'surprised', { place: placeLine(pick(rnd, places), lang) }); const r = pick(rnd, T.placeBack); line(1, r[0], r[1]); });
+  if (player && rnd() < 0.35) topics.push(() => both(T.player.map((x) => [x[0], x[1]])));
+  const filler = [
+    () => { line(0, pick(rnd, T.quirk), 'neutral'); const r = pick(rnd, T.quirkBack); line(1, r[0], r[1]); },
+    () => { const p = chatterPair(lang, rnd); line(0, p[0], 'neutral'); line(1, p[1], 'happy'); },
+    () => { line(0, pick(rnd, T.work), 'neutral'); const r = pick(rnd, T.workBack); line(1, r[0], r[1]); },
+  ];
+  const chosen = topics.length ? [topics[0]] : [];
+  while (chosen.length < 1 + (rnd() < 0.35 ? 1 : 0)) chosen.push(filler.splice(Math.floor(rnd() * filler.length), 1)[0]);
+  for (const f of chosen) f();
+  if (out.length < 6 && rnd() < 0.6) { const c = pick(rnd, T.close); line(0, c[0], 'neutral'); line(1, c[1], 'happy'); }
+  return out.slice(0, 6);
 }

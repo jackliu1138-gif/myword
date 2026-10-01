@@ -28,13 +28,13 @@ import { createBrain, llmConfig } from './brain.mjs';
 // (id | state << 8), shared dropped items, chests, furnaces and signs; 4: the 384-high world and
 // its generator version, shared weather, brewing stands, loot chests, enchanted items, the
 // creatures of structures (spawned once) and the creatures that stay (kept by the server); 5: villagers
-// that talk (talk / vnote / vopen / vclose, say / said / vact / vrec / vdo; a villager's uid and trade seed in
-// its snapshots), the villagers' memories and gossip kept with the world, and space (dimensions 3-5)
+// that talk (talk / vnote / vopen / vclose / vchat, say / said / vact / vrec / vdo / vchat; a villager's uid
+// and trade seed in its snapshots), the villagers' memories and gossip kept with the world, space
+// (dimensions 3-7) and carrying one another (carry)
 export const PROTOCOL = 5;
 const CURRENT_GEN = 2;
 const MAX_PMOBS = 3000; // creatures kept per dimension
-// the dimensions: 0 the overworld, 1 the nether, 2 the end, 3 space (no ground), 4 the Moon, 5 Mars
-// 0 the overworld, 1 the Nether, 2 the End, 3 space, 4 the Moon, 5 Mars, 6 and 7 the stations
+// the dimensions: 0 the overworld, 1 the Nether, 2 the End, 3 space (no ground), 4 the Moon, 5 Mars, 6 and 7 the stations
 // over Jupiter and Saturn
 const DIMS = [0, 1, 2, 3, 4, 5, 6, 7];
 const GROUND_DIMS = [0, 1, 2, 4, 5, 6, 7];
@@ -632,6 +632,9 @@ export function startServer(overrides = {}) {
       case 'talk': case 'vnote': // a player talking to a villager, or doing something to one
         brain.onTalk(c, m, villagerHooks).catch((e) => log('villager talk failed: ' + e.message));
         break;
+      case 'vchat': // two villagers (that this player's game runs) meet: what they say to each other
+        brain.onChat2(c, m, villagerHooks).catch((e) => log('villager chat failed: ' + e.message));
+        break;
       case 'vopen': case 'vclose': { // the talk screen: the villager stops and faces them (whoever runs it)
         const u = typeof m.u === 'string' && /^[\w.:-]{1,40}$/.test(m.u) ? m.u : null;
         if (!u) return;
@@ -706,8 +709,9 @@ export function startServer(overrides = {}) {
 
   const http = createServer((req, res) => {
     // single-player games ask their villagers here (the memories travel with the request)
-    if (req.url === '/api/talk' || req.url.startsWith('/api/talk?')) {
-      brain.handleHttp(req, res).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
+    const api = /^\/api\/(talk|chat2)(\?|$)/.exec(req.url);
+    if (api) {
+      brain.handleHttp(req, res, api[1]).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
       return;
     }
     serveFile(req, res).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });

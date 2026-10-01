@@ -85,14 +85,31 @@ function villager(m) {
     }
   }
   m.followId = null;
+  // a word with a neighbour (see villagerlife.js): up to them, then face to face for a while
+  const w = m.chatWith;
+  if (w && m.age < (m.chatUntil || 0) && !w.removed && !(w.deathTime > 0) && w.body) {
+    const q = w.body.pos;
+    const dist = Math.sqrt(d2(q, b.pos));
+    if (dist < 14) {
+      m.mode = 'chat';
+      if (dist > 2.3 && !m.chatHere) return m.followPath(q, d.speed);
+      m.chatHere = true; // (there: no more shuffling about while they talk)
+      m.faceTowards(q[0], q[2], 8);
+      m.headYaw = m.yaw;
+      return standOn(m);
+    }
+  }
+  m.chatWith = null;
+  m.chatHere = false;
   if (m.watch && Math.sqrt(d2(m.watch.pos, b.pos)) < 6) {
     const p = m.watch.pos;
     const want = Math.atan2(-(p[0] - b.pos[0]), -(p[2] - b.pos[2]));
     m.headYaw += Math.atan2(Math.sin(want - m.headYaw), Math.cos(want - m.headYaw)) * 0.15;
   }
-  // evenings at home
-  if (!sim.day && m.home) {
-    if (Math.sqrt(d2(m.home, b.pos)) > 2.5) return m.followPath(m.home, d.speed);
+  // evenings at home, and storms (in rain, about half of them)
+  const shelter = sim.storm >= 2 || (sim.storm === 1 && m.id % 2 === 0);
+  if ((!sim.day || shelter) && m.home) {
+    if (Math.sqrt(d2(m.home, b.pos)) > 2.5) return m.followPath(m.home, d.speed * (shelter && sim.day ? 1.6 : 1));
     return standOn(m);
   }
   return m.idleWander({ home: m.home, radius: 18 });

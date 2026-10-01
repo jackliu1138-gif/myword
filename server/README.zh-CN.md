@@ -204,6 +204,7 @@ sudo ATRIA_API_KEY=你的key bash /opt/games/lumencraft/server/deploy/set-llm-ke
 最后一行显示 `OK: the language model is answering` 就成功了。之后每次更新游戏，Key 都会保留。
 村民的记忆和八卦保存在 `world.json` 的 `brain` 里，和世界一起备份。
 单人游戏如果是从这个服务器的网址打开的，也会问这里的大模型（记忆存在玩家自己的浏览器里）；为了防止被滥用，每个 IP 每小时最多 120 次、每天 600 次。
+两个村民碰到一起闲聊时，聊天内容也由大模型来写（单人游戏走 `POST /api/chat2`，联机时附近的玩家看到的是同一段对话）；同一片村子最多一分半钟聊一次，也算在上面的次数限制里，超过时用脚本对话。
 
 ## 防火墙端口一览
 

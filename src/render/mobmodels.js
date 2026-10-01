@@ -441,6 +441,35 @@ export const NEW_MODELS = {
 };
 
 // ---------------------------------------------------------------- poses
+// A villager's gesture (see villagerlife.js): { kind, t0, until } in performance.now() seconds.
+// The folded arms go up to wave or cheer; r.__lift raises the whole creature (a hop), in blocks.
+function gesture(r, g, t) {
+  const k = t - g.t0;
+  const env = Math.max(0, Math.min(1, k * 5, (g.until - t) * 4)); // (in and out smoothly)
+  switch (g.kind) {
+    case 'nod': r.head[0] -= Math.max(0, Math.sin(k * 9)) * 0.38 * env; break;
+    case 'shake': r.head[1] += Math.sin(k * 12) * 0.5 * env; break;
+    // (the folded arms come up to the chest and rock from side to side; the head tilts with them)
+    case 'wave': { const s = Math.sin(k * 8); r.arms = [0.75 + 0.55 * env, s * 0.22 * env, s * 0.55 * env]; r.head[2] = s * 0.16 * env; r.head[0] += 0.1 * env; break; }
+    // (the arms pumped up and down in front, bouncing on the spot, looking up)
+    case 'cheer': { const s = Math.sin(k * 12); r.arms = [0.75 + (0.95 + s * 0.45) * env, 0, 0]; r.head[0] += 0.35 * env; r.__lift = Math.abs(Math.sin(k * 6)) * 0.3 * env; break; }
+    case 'hop': r.__lift = Math.abs(Math.sin(k * 8)) * 0.28 * env; r.head[0] += 0.15 * env; break;
+    case 'stomp': {
+      const s = Math.sin(k * 10);
+      r.rightLeg = [Math.max(0, s) * 0.7 * env, 0, 0];
+      r.leftLeg = [Math.max(0, -s) * 0.7 * env, 0, 0];
+      r.head[0] -= 0.28 * env;
+      r.head[1] += Math.sin(k * 5) * 0.15 * env;
+      r.arms = [0.75 - 0.25 * env, 0, 0];
+      r.__lift = Math.abs(s) * 0.06 * env;
+      break;
+    }
+    case 'droop': r.head[0] -= 0.5 * env; r.arms = [0.75 - 0.3 * env, 0, 0]; break;
+    case 'tremble': r.head[1] += Math.sin(k * 38) * 0.07 * env; r.arms = [0.75 + 0.5 * env, 0, Math.sin(k * 40) * 0.05]; break;
+    default: break;
+  }
+}
+
 // r: the rotations being built; k: { sw (walk swing), walk, amt, headYaw, headPitch }
 export function newPose(r, e, type, t, k) {
   const { sw, walk, amt, headYaw, headPitch } = k;
@@ -455,6 +484,7 @@ export function newPose(r, e, type, t, k) {
       r.rightLeg = [sw, 0, 0];
       r.leftLeg = [-sw, 0, 0];
       if (type === 'witch' && e.mode === 'drink') r.arms = [1.35, 0, 0];
+      if (e.gesture && t < e.gesture.until) gesture(r, e.gesture, t);
       break;
     }
     case 'pillager': case 'vindicator': case 'evoker': {

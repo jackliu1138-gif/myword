@@ -23,6 +23,7 @@ import { installSurvival } from './survival.js';
 import { installVillagers } from './villagers.js';
 import { installSpace } from './space.js';
 import { installCarry } from './carry.js';
+import { installVillagerLife } from './villagerlife.js';
 import { moonPhase } from '../world/space.js';
 import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
@@ -255,7 +256,9 @@ export class Game {
     this.player.onStep = (b) => this.audio.play('step', b < 0 ? 'water' : materialOf(BLOCKS[b]), 0.8);
     this.player.onLand = (speed, b) => {
       if (speed > 6) this.audio.play('step', materialOf(BLOCKS[b]), 1.4);
+      const fromSpace = !!this.suit;
       this.onLandDamage(speed);
+      this.noticeLanding(speed, fromSpace); // (villagers come to look)
     };
     this.player.onSplash = () => this.audio.play('splash');
     this.renderer.resetHistory();
@@ -426,6 +429,7 @@ export class Game {
     ui.on('invTrash', () => this.inventoryTrash());
     ui.on('invClose', () => { if (this.state === 'inventory') this.closeInventory(); });
     ui.on('cycleCamera', () => this.cycleCamera());
+    ui.on('clearWaypoint', () => this.clearWaypoint());
     ui.on('talkSend', (text) => this.talkSend(text));
     ui.on('talkClose', () => this.closeTalk());
     ui.on('talkDeliver', () => this.talkDeliver());
@@ -1237,3 +1241,4 @@ installMultiplayer(Game);
 installVillagers(Game);
 installSpace(Game);
 installCarry(Game);
+installVillagerLife(Game);

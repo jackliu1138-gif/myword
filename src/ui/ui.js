@@ -265,6 +265,7 @@ export class UI {
     click('btn-resume', 'resume');
     click('btn-pause-settings', 'openSettings');
     click('btn-camera', 'cycleCamera');
+    click('btn-waypoint', 'clearWaypoint');
     click('btn-pause-help', 'openHelp');
     click('btn-title', 'toTitle');
     click('btn-settings-done', 'back');
@@ -492,7 +493,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'village', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -771,6 +772,27 @@ export class UI {
     const on = amount > 0.01;
     if (el.hidden === on) el.hidden = !on;
     if (on) el.style.opacity = Math.min(1, amount).toFixed(2);
+  }
+
+  // A place a villager told of: { name, dist, at: [x, y], angle: null on the screen, or the way
+  // to turn (radians, screen space) at its edge }; null hides it.
+  setWaypoint(info) {
+    const el = $('waypoint');
+    if (!info) { if (!el.hidden) el.hidden = true; return; }
+    el.hidden = false;
+    if (el.children[1].textContent !== info.name) el.children[1].textContent = info.name;
+    if (el.children[2].textContent !== info.dist) el.children[2].textContent = info.dist;
+    const edge = info.angle !== null && info.angle !== undefined;
+    el.classList.toggle('edge', edge);
+    el.children[0].style.transform = edge ? `rotate(${info.angle.toFixed(3)}rad)` : '';
+    el.style.transform = `translate(${info.at[0].toFixed(1)}px, ${info.at[1].toFixed(1)}px) translate(-50%, -12px)`;
+  }
+
+  // the pause menu's button that takes the marker away (name: the place; null: no marker)
+  setWaypointButton(name) {
+    const b = $('btn-waypoint');
+    b.hidden = !name;
+    if (name) b.textContent = t('wp.clear', { place: name });
   }
 
   // the name of the villager under the crosshair (info = { at, name, job, hint, dist } or null)

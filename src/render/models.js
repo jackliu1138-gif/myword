@@ -765,7 +765,7 @@ export function emitModel(out, o, e, type, pos, yaw, cam, light, skins, t, tint,
   const layer = skins.layerOf[skinKey] ?? skins.layerOf[type];
   const rots = pose(e, type, t);
   let scale = 1 / 16;
-  let root = mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1], pos[2] - cam[2]);
+  let root = mat(0, yaw, 0, pos[0] - cam[0], pos[1] - cam[1] + (rots.__lift || 0), pos[2] - cam[2]);
   if (e.lying) root = mul(root, mat(Math.PI / 2, Math.PI, 0, 0, 0.22, 1.0)); // asleep on the back (face up) along the bed, head on the pillow
   // in someone's arms, from their feet and facing their way: lying across them face up, head to
   // their left; an animal held up in front of them

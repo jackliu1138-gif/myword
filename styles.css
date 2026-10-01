@@ -1018,6 +1018,38 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
 }
 .vbubble b { display: block; font: 700 11px/1.2 var(--font-ui); color: #8a6324; margin-bottom: 2px; letter-spacing: 0.02em; }
 .vbubble.fade { opacity: 0; }
+/* a little picture rising beside a villager's face (a heart, a cross vein, a note, ! ?) */
+.vemote { position: absolute; left: 0; top: 0; transform-origin: 50% 100%; will-change: transform; }
+.vemote i {
+  display: block; width: 24px; height: 24px; background: center / contain no-repeat;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.7)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+  animation: vemote-rise 1.9s ease-out both;
+}
+@keyframes vemote-rise {
+  0% { transform: translateY(8px) scale(0.3); opacity: 0; }
+  14% { transform: translateY(0) scale(1.2); opacity: 1; }
+  26% { transform: translateY(-3px) scale(1); }
+  78% { opacity: 1; }
+  100% { transform: translateY(-30px) scale(0.92); opacity: 0; }
+}
+/* a place a villager told you of */
+.waypoint {
+  position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform;
+  display: grid; justify-items: center; gap: 3px;
+}
+.waypoint i {
+  width: 22px; height: 22px; background: #ffd23f; border: 2px solid #4a3200; border-radius: 3px;
+  transform: rotate(45deg) scale(0.75); box-shadow: 0 0 10px rgba(255, 210, 63, 0.75);
+  animation: wp-pulse 1.6s ease-in-out infinite;
+}
+.waypoint b { font: 700 12px/1.25 var(--font-ui); color: #fff; padding: 2px 8px 3px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); white-space: nowrap; }
+.waypoint small { font: 600 11px/1.2 var(--font-ui); color: #ffe7a0; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+/* off the screen: an arrow at its edge pointing the way */
+.waypoint.edge i {
+  width: 0; height: 0; background: none; border: 11px solid transparent; border-left: 18px solid #ffd23f; border-right: 0; border-radius: 0;
+  box-shadow: none; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7)); animation: none; transform-origin: 30% 50%;
+}
+@keyframes wp-pulse { 50% { box-shadow: 0 0 16px rgba(255, 210, 63, 1); } }
 .vtag {
   position: absolute; left: 0; top: 0; pointer-events: none;
   display: grid; justify-items: center; gap: 1px;

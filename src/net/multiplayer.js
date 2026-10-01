@@ -136,7 +136,10 @@ export function installMultiplayer(Game) {
     this.sim.onDrop = (d) => this.shareDrop(d);
     this.sim.onTake = (it) => { if (this.mp) this.mp.net.send({ t: 'take', i: it.netId }); };
     for (const it of Array.isArray(w.items) ? w.items : []) this.addSharedItem(it);
-    this.sim.onGhostHit = (ghost, damage, from) => net.send({ t: 'hit', to: ghost.owner, e: ghost.rid, d: Math.round(damage * 10) / 10, f: from });
+    this.sim.onGhostHit = (ghost, damage, from) => {
+      ghost.hitByMe = performance.now() / 1000; // (if it dies of it, villagers who saw cheer: villagerlife.js)
+      net.send({ t: 'hit', to: ghost.owner, e: ghost.rid, d: Math.round(damage * 10) / 10, f: from });
+    };
     this.sim.onRemoteLoot = (to, loot, pos) => net.send({ t: 'loot', to, l: loot, p: pos });
     this.voice = new Voice(net, () => (this.audio.ctx && this.audio.ctx.state !== 'closed' ? this.audio.ctx : null));
     this.voice.setIce(w.ice);

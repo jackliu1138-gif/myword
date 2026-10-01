@@ -4,12 +4,13 @@
 // its head and in its own voice, and what it does about it: a task (and handing it in), a
 // present, a discount on its trades, following you about. In a single-player game the villagers'
 // memories live in the save; on a server, with the server. Also: a word in passing when you walk
-// by, two villagers passing the time of day, and remembering being punched.
+// by, and remembering being punched. (What villagers show and do, what they make of what they
+// see, their conversations with each other and the places they tell of: villagerlife.js.)
 // Installed as methods on Game.prototype.
 
 import {
   personaFor, personaName, jobName, offlineReply, cleanAction, applyAction, remember, befriend, feelingFor, newRecord, cleanRecord,
-  cleanRumor, ambientLine, chatterPair, stuffId, stuffName, hearts, discountToday, clip,
+  cleanRumor, ambientLine, stuffId, stuffName, hearts, discountToday, clip,
 } from '../sim/brain.js';
 import { JOB_LIST } from '../sim/looks.js';
 import { itemDef } from '../sim/items.js';
@@ -45,12 +46,14 @@ export function installVillagers(Game) {
     if (!this.speech) this.speech = new Speech();
     this.speech.enabled = this.settings.villagerVoice !== false;
     this.speech.volume = this.settings.villagerVolume ?? 1;
+    this.mpFriends = new Map(); // (on a server: how much each villager likes us, as it last said)
+    this.setupVillagerLife(this.mp ? null : data);
   };
 
   P.serializeVillagers = function serializeVillagers() {
     // on a server the memories are the server's
     if (this.mp || !this.souls) return {};
-    return { souls: Object.fromEntries(this.souls), rumors: this.rumors || [] };
+    return { souls: Object.fromEntries(this.souls), rumors: this.rumors || [], wp: this.waypoint || null };
   };
 
   // Something the village will talk about (single player; a server keeps its own gossip).
@@ -120,9 +123,11 @@ export function installVillagers(Game) {
       if ((p[0] - q[0]) ** 2 + (p[2] - q[2]) ** 2 < 18 * 18) danger++;
     }
     const keyOf = (id) => (id >= 256 ? (itemDef(id) || {}).key : (BLOCKS[id] || {}).key) || '';
+    // the places round about it may have heard of (which way, how far)
+    const places = this.nearbyPlaces(m.body.pos).map((q) => ({ k: q.k, dir: q.dir, d: Math.round(q.d) }));
     return {
       phase, weather, biome, held: held ? keyOf(held.id) : '', armor: chest && chest.material ? chest.material : '',
-      hp: me ? me.health : 20, food: me && me.food !== undefined ? me.food : 20, danger, lang,
+      hp: me ? me.health : 20, food: me && me.food !== undefined ? me.food : 20, danger, lang, places,
     };
   };
 
@@ -290,7 +295,7 @@ export function installVillagers(Game) {
       r.offline = true;
     }
     if (this.talk && this.talk.uid === uid) this.talk.ai = r.offline ? (this.hostServer && this.hostServer.ai === 'atria' ? 'busy' : 'offline') : 'atria';
-    const action = cleanAction(r.action, { job, rec, day });
+    const action = cleanAction(r.action, { job, rec, day, places: ctx.places });
     if (event === 'deliver' && quest) rec.quest = null;
     applyAction(rec, action, day);
     remember(rec, { line: line || (event && item ? `（${itemName || item}）` : ''), reply: r.say, day });
@@ -335,6 +340,7 @@ export function installVillagers(Game) {
     }
     m.talkUntil = now() + bubbleTime(text) * 0.6;
     if (mood === 'angry' || mood === 'sad') this.audio.sfx('villagerNo', 0.35 * vol, 0);
+    this.villagerExpress(m, mood, text);
   };
 
   // What the villager decided to do for the player it was talking to.
@@ -358,6 +364,8 @@ export function installVillagers(Game) {
       this.ui.toast(t('talk.gotDiscount', { name, pct: a.pct }), 3000);
     } else if (a.type === 'follow' && m && !m.ghost && !this.mp) {
       this.villagerFollow(m, 'local', a.seconds);
+    } else if (a.type === 'rumor') {
+      this.setWaypoint(a.place, uid);
     }
     if (this.talk && this.talk.uid === uid) this.renderTalk();
   };
@@ -514,6 +522,7 @@ export function installVillagers(Game) {
     }
     // the villager we look at: its name over its head
     this.updateVillagerTag();
+    this.updateVillagerLife(dt);
     const tk = this.talk;
     if (tk) {
       const m = tk.mob, me = this.me();
@@ -543,7 +552,7 @@ export function installVillagers(Game) {
         for (const e of this.sim.entities.values()) {
           if (e.kind !== 'mob' || e.type !== 'villager' || e.removed || e.deathTime > 0) continue;
           const d = Math.hypot(e.body.pos[0] - me.pos[0], e.body.pos[2] - me.pos[2]);
-          if (d < bd && tnow > (e.nextGreet || 0) && !this.bubbles.has(e.uid || 'e' + e.id)) { best = e; bd = d; }
+          if (d < bd && tnow > (e.nextGreet || 0) && !e.chatWith && !this.bubbles.has(e.uid || 'e' + e.id)) { best = e; bd = d; }
         }
         // (in a crowded village not one after another: a few seconds between greetings)
         if (best && Math.random() < 0.55 && tnow - (this.lastAmbient || 0) > 8) {
@@ -554,35 +563,9 @@ export function installVillagers(Game) {
         }
       }
     }
-    // two villagers passing the time of day (the ones this game runs, near us)
+    // two villagers stop for a word (the ones this game runs, near us): see villagerlife.js
     this.chatterTimer -= dt;
-    if (this.chatterTimer <= 0) {
-      this.chatterTimer = 40 + Math.random() * 50;
-      this.villagerChatter();
-    }
-  };
-
-  P.villagerChatter = function villagerChatter() {
-    const me = this.me();
-    if (!me || this.dimension) return;
-    const near = [];
-    for (const e of this.sim.entities.values()) {
-      if (e.kind !== 'mob' || e.type !== 'villager' || e.removed || e.baby || e.deathTime > 0 || e.trading) continue;
-      if (Math.hypot(e.body.pos[0] - me.pos[0], e.body.pos[2] - me.pos[2]) < 16) near.push(e);
-    }
-    for (let i = 0; i < near.length; i++) {
-      for (let j = i + 1; j < near.length; j++) {
-        const a = near[i], b = near[j];
-        if (Math.hypot(a.body.pos[0] - b.body.pos[0], a.body.pos[2] - b.body.pos[2]) > 5) continue;
-        const pa = this.villagerPersona(a), pb = this.villagerPersona(b);
-        if (!pa || !pb) continue;
-        const [la, lb] = chatterPair(getLanguage());
-        if (!a.ghost) { a.headYaw = Math.atan2(-(b.body.pos[0] - a.body.pos[0]), -(b.body.pos[2] - a.body.pos[2])); }
-        this.onVillagerSay(pa.uid, la, 'neutral');
-        setTimeout(() => { if (!b.removed) this.onVillagerSay(pb.uid, lb, 'happy'); }, 2200 + la.length * 90);
-        return;
-      }
-    }
+    if (this.chatterTimer <= 0) this.chatterTimer = this.villagerChatter() ? 60 + Math.random() * 45 : 12;
   };
 
   P.updateVillagerTag = function updateVillagerTag() {
@@ -608,7 +591,20 @@ export function installVillagers(Game) {
       const per = v ? this.villagerPersona(v) : null;
       this.ui.addChat(m.n, (per ? '→ ' + personaName(per, getLanguage()) + '：' : '') + clip(m.x, 200));
     });
-    const keepDiscount = (u, r) => { if (r && r.disc) { if (!this.mpDiscounts) this.mpDiscounts = new Map(); this.mpDiscounts.set(u, r.disc); } };
+    const keepDiscount = (u, r) => {
+      if (r && r.disc) { if (!this.mpDiscounts) this.mpDiscounts = new Map(); this.mpDiscounts.set(u, r.disc); }
+      if (r && Number.isFinite(r.f)) {
+        if (!this.mpFriends) this.mpFriends = new Map();
+        this.mpFriends.set(u, r.f);
+        if (this.mpFriends.size > 500) this.mpFriends.delete(this.mpFriends.keys().next().value);
+      }
+    };
+    // two villagers' conversation (asked for by whichever game runs them)
+    net.on('vchat', (m) => {
+      if ((m.d | 0) !== (this.dimension | 0) || typeof m.a !== 'string' || typeof m.b !== 'string') return;
+      if (this.dialogue && this.dialogue.lines && this.dialogue.i < this.dialogue.lines.length) return; // (one at a time)
+      this.playDialogue(m.a, m.b, m.l);
+    });
     net.on('vact', (m) => { keepDiscount(String(m.u), m.r); this.onVillagerAction(String(m.u), m.a || null, m.r || null); });
     net.on('vrec', (m) => {
       const tk = this.talk;

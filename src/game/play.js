@@ -271,7 +271,7 @@ export function installPlay(Game) {
     if (!this.sim) return;
     const playing = this.state === 'playing';
     this.syncPlayerToSim();
-    if (this.mp || (this.state !== 'paused' && this.state !== 'title')) this.sim.update(dt, { dayTime: this.dayTime });
+    if (this.mp || (this.state !== 'paused' && this.state !== 'title')) this.sim.update(dt, { dayTime: this.dayTime, storm: this.villageWeather() });
     this.handleSimEvents();
     const me = this.me();
     if (me && me.dead && !this.deathShown && this.mode !== 'creative') this.onDeath();
@@ -348,6 +348,7 @@ export function installPlay(Game) {
           const [v, pan] = spatial(e.pos, 20);
           this.audio.sfx('death', v, pan);
           this.particles.burst(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]), BLOCK.WHITE_WOOL, 1, 0);
+          if (e.entity.lastAttacker === 'local') this.villagersSeeKill(e.entity); // (a cheer if villagers saw it)
           break;
         }
         case 'explosion': {
@@ -706,6 +707,7 @@ export function installPlay(Game) {
     if (IS_BED[block]) this.breakBed(x, y, z, block, drops);
     // what stood on it or hung from it comes off too
     this.breakAttached(x, y, z, drops);
+    this.villagersSeeBreak(x, y, z, block); // (a villager's house: it minds)
     const [sl, bl] = this.world.getLight(x + hit.normal[0], y + hit.normal[1], z + hit.normal[2]);
     this.particles.burst(x, y, z, block, sl / 15, bl / 15);
     this.audio.play('break', materialOf(BLOCKS[block]));
@@ -762,6 +764,7 @@ export function installPlay(Game) {
     if (!place) return;
     if (this.world.setBlock(x, y, z, place.id, { state: place.state })) {
       placed();
+      this.notePlaced(x, y, z); // (ours to take down again: no villager minds)
       if (IS_RAIL[place.id]) this.afterRailPlaced(x, y, z);
       this.checkSummon(x, y, z, place.id);
     }
