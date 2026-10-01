@@ -652,7 +652,7 @@ export class UI {
     hearts.setAttribute('aria-label', t('talk.hearts', { n: st.hearts }));
     const log = $('talk-log');
     const html = st.lines.map((l) => `<p class="tl ${l.me ? 'me' : 'them'}${l.mood && !l.me ? ' m-' + l.mood : ''}">${escapeHtml(l.text)}</p>`).join('')
-      + (st.waiting ? '<p class="tl them waiting" aria-label="…"><i></i><i></i><i></i></p>' : '');
+      + (st.waiting ? `<p class="tl them waiting" aria-label="…"><i></i><i></i><i></i><span>${escapeHtml(t('talk.thinking', { name: st.name }))}</span></p>` : '');
     if (this.talkHtml !== html) { this.talkHtml = html; log.innerHTML = html; log.scrollTop = log.scrollHeight; }
     $('talk-quest').hidden = !st.quest;
     if (st.quest) {

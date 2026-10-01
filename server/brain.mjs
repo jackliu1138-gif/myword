@@ -27,7 +27,8 @@ export function llmConfig(pick, env = process.env) {
     base: String(pick('llmBase', 'LLM_BASE_URL', 'https://api.atria-asi.ai/v1')).trim().replace(/\/+$/, ''),
     model: String(pick('llmModel', 'LLM_MODEL', 'Atria-Dawn-Preview')).trim(),
     reasoning: String(pick('llmReasoning', 'LLM_REASONING', 'none')).trim(),
-    timeout: Math.max(3, Number(pick('llmTimeout', 'LLM_TIMEOUT', 25)) || 25) * 1000,
+    // (ATRIA thinks before it answers: 10 to 30 seconds a reply)
+    timeout: Math.max(3, Number(pick('llmTimeout', 'LLM_TIMEOUT', 40)) || 40) * 1000,
     rpm: Math.max(1, Number(pick('llmRpm', 'LLM_RPM', 30)) || 30),
     daily: Math.max(1, Number(pick('llmDaily', 'LLM_DAILY', 4000)) || 4000),
     concurrent: Math.max(1, Number(pick('llmConcurrent', 'LLM_CONCURRENT', 4)) || 4),

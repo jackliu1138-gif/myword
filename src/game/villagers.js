@@ -275,7 +275,7 @@ export function installVillagers(Game) {
     if (this.hostServer && this.hostServer.ai === 'atria') {
       try {
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 32000);
+        const timer = setTimeout(() => ctl.abort(), 47000); // (the server gives the model 40 s)
         const res = await fetch('./api/talk', {
           method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ u: uid, j: job, l: lang, name: this.playerName(), x: line, r: rec, c: ctx, nb: neighbors, rm: this.rumors.slice(-8), day, k: event, it: item, n: itemName, b: m.baby ? 1 : 0 }),

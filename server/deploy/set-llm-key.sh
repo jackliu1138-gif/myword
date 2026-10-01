@@ -53,7 +53,7 @@ sleep 2
 echo "the game says its villagers are: $(curl -fsS "http://127.0.0.1:$PORT/lumen-server.json" | sed -n 's/.*"ai":"\([a-z]*\)".*/\1/p')"
 if [ -s "$FILE" ]; then
   # one question to a villager: offline:false means the model answered
-  ANSWER="$(curl -fsS -m 40 -X POST "http://127.0.0.1:$PORT/api/talk" -H 'Content-Type: application/json' \
+  ANSWER="$(curl -fsS -m 60 -X POST "http://127.0.0.1:$PORT/api/talk" -H 'Content-Type: application/json' \
     -d '{"u":"probe.check","j":"farmer","l":"zh","name":"管理员","x":"你好！你是谁呀？","day":0}' || true)"
   echo "a villager answers: $ANSWER"
   case "$ANSWER" in
