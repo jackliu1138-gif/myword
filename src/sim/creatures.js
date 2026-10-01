@@ -565,6 +565,13 @@ function boat(m) {
   return { wish: null, jump: false };
 }
 
+// A parked flying saucer stands on its legs where it was put.
+function saucer(m) {
+  const v = m.body.vel;
+  v[0] *= 0.4; v[2] *= 0.4;
+  return { wish: null, jump: false };
+}
+
 const RAIL_CHECK = [0, -1, 1];
 // A minecart runs along rails (up and down slopes and round curves); powered rails push it along.
 function minecart(m) {
@@ -676,7 +683,7 @@ export const BRAINS = {
   villager, iron_golem: ironGolem, wolf, cat, horse,
   cod: (m) => swimmer(m), salmon: (m) => swimmer(m), tropical_fish: (m) => swimmer(m), pufferfish,
   squid: (m) => swimmer(m, { bursts: true }), guardian, elder_guardian: guardian,
-  witch, slime, phantom, evoker, shulker, wither, boat, minecart,
+  witch, slime, phantom, evoker, shulker, wither, boat, minecart, saucer,
 };
 export const TICKERS = { tnt: tntTick, evoker_fangs: fangsTick };
 

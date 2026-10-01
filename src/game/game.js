@@ -24,6 +24,7 @@ import { installVillagers } from './villagers.js';
 import { installSpace } from './space.js';
 import { installCarry } from './carry.js';
 import { installVillagerLife } from './villagerlife.js';
+import { installSaucer } from './saucer.js';
 import { moonPhase } from '../world/space.js';
 import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
@@ -430,6 +431,14 @@ export class Game {
     ui.on('invClose', () => { if (this.state === 'inventory') this.closeInventory(); });
     ui.on('cycleCamera', () => this.cycleCamera());
     ui.on('clearWaypoint', () => this.clearWaypoint());
+    // the flying saucer's panel
+    ui.on('saucerGo', (dest, secs) => this.launchSaucer(dest, secs));
+    ui.on('saucerChoice', (c) => { this.saucerChoice = c; if (this.ride) this.ui.renderSaucer(this.saucerPanelInfo(), c); });
+    ui.on('saucerFuel', () => this.saucerFuelUp());
+    ui.on('saucerFly', () => this.flySaucer());
+    ui.on('saucerClose', () => this.closeSaucerPanel());
+    ui.on('saucerExit', () => { this.closeSaucerPanel(); this.leaveSaucer(); });
+    ui.on('saucerZoom', (k) => this.saucerZoom(k));
     ui.on('talkSend', (text) => this.talkSend(text));
     ui.on('talkClose', () => this.closeTalk());
     ui.on('talkDeliver', () => this.talkDeliver());
@@ -549,6 +558,7 @@ export class Game {
   handleBack() {
     if (this.state === 'chat') { this.closeChat(''); return true; }
     if (this.state === 'talk') { this.closeTalk(); return true; }
+    if (this.state === 'saucer') { this.closeSaucerPanel(); return true; }
     if (this.state === 'sign') { this.finishSign(this.ui.signLines()); return true; }
     if (this.sleeping && this.state === 'playing') { this.wakeUp(); return true; }
     if (this.state === 'dead' && this.ui.current === 'death') return true;
@@ -560,7 +570,7 @@ export class Game {
   }
 
   menuOpen() {
-    return this.state === 'inventory' || this.state === 'talk' || this.state === 'dead' || this.state === 'sign' || (this.state !== 'playing' && this.ui.current !== null);
+    return this.state === 'inventory' || this.state === 'talk' || this.state === 'saucer' || this.state === 'dead' || this.state === 'sign' || (this.state !== 'playing' && this.ui.current !== null);
   }
 
   // Arrow keys and OK / Enter in menus (TV remotes send these).
@@ -731,7 +741,8 @@ export class Game {
       for (let i = 0; i < 9; i++) {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
-      if (frameInput.wheel) this.selectSlot((this.selected + frameInput.wheel + 9) % 9);
+      // (in a flying saucer the wheel brings the camera closer or takes it further out)
+      if (frameInput.wheel) { if (this.ride || this.passengerOf) this.saucerZoom(frameInput.wheel); else this.selectSlot((this.selected + frameInput.wheel + 9) % 9); }
       if (pad.connected && this.state === 'playing') this.applyPadControls(pad, ctl, dt);
       if (!this.isCreative()) { ctl.toggleFly = false; if (this.player.flying) this.player.flying = false; }
       if (this.sleeping) {
@@ -747,6 +758,8 @@ export class Game {
     // arriving in another dimension: portals and platforms appear once the chunks are there
     this.updateTravel(dt);
     this.updateSpaceTravel(dt);
+    // a flying saucer: climbing out, its panel, its fire and smoke and roar
+    this.updateSaucer(dt, playing ? ctl : null);
 
     // hold on terrain until the spawn chunk exists
     const ready = this.world.isChunkReady(this.player.pos[0], this.player.pos[2]);
@@ -761,7 +774,9 @@ export class Game {
       let rem = dt;
       while (rem > 1e-6) {
         const step = Math.min(rem, 1 / 60);
-        if (this.carriedBy) this.followCarrier(ctl);
+        if (this.ride) this.saucerStep(step, ctl);
+        else if (this.passengerOf) this.followPilot(ctl);
+        else if (this.carriedBy) this.followCarrier(ctl);
         else if (this.dimension === 3) this.spaceFlight(step, ctl); else this.player.update(step, ctl);
         // a press counts once: one can't both jump and spread the elytra
         ctl.toggleFly = false;
@@ -1043,6 +1058,8 @@ export class Game {
       const l2 = Math.hypot(...f);
       return { pos, forward: f.map((v) => v / l2), fov: (70 * Math.PI) / 180 };
     }
+    // in a flying saucer: the camera swings round it
+    if (this.ride || this.passengerOf) return this.saucerCamera(dt);
     if (this.sleeping) {
       const s = this.sleeping;
       const d = [s.foot[0] - s.head[0], s.foot[2] - s.head[2]];
@@ -1242,3 +1259,4 @@ installVillagers(Game);
 installSpace(Game);
 installCarry(Game);
 installVillagerLife(Game);
+installSaucer(Game);

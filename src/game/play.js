@@ -84,6 +84,7 @@ export function installPlay(Game) {
     this.setupSurvival(data);
     this.setupCreatures(data);
     this.setupVillagers(data);
+    this.loadSaucer(data);
     this.player.onWallHit = (lost) => { const d = Math.floor(lost / 2 - 3); if (d > 0 && !this.isCreative()) this.sim.damagePlayer('local', d, 'wall'); };
     this.spawnPoint = data && data.spawn ? data.spawn : null;
     this.breaking = null;
@@ -265,6 +266,7 @@ export function installPlay(Game) {
     me.sneaking = p.sneaking;
     me.armor = this.inventory.armorValues();
     me.mode = this.mode;
+    me.sheltered = !!(this.ride || this.passengerOf); // (in or on a flying saucer nothing can hurt you)
   };
 
   P.updatePlay = function updatePlay(dt) {
@@ -517,6 +519,8 @@ export function installPlay(Game) {
 
   // ---------------------------------------------------------------- interaction
   P.interact = function interact(dt) {
+    // (in a flying saucer: nothing to dig or put down from inside it)
+    if (this.ride) { this.aimMob = null; this.selection = null; this.breaking = null; return; }
     const p = this.player;
     const eye = p.eye;
     const dir = p.forward();
@@ -538,6 +542,13 @@ export function installPlay(Game) {
     const usePressed = input.clicked.has(2) || (pad.connected && pad.pressed(PAD.LT)) || tc.tap;
     const held = this.heldSlot();
     const def = itemDef(held ? held.id : 0);
+    // aboard someone's flying saucer: nothing to do from up there
+    if (this.passengerOf) { this.breaking = null; this.selection = null; tc.tap = false; return; }
+    // another player's flying saucer (landed): ask to come aboard
+    if (this.mp && usePressed && !aimMob) {
+      const pilot = this.aimedSaucer(eye, dir, 7, hit ? hit.t : Infinity);
+      if (pilot) { tc.tap = false; this.askToBoard(pilot); return; }
+    }
     // carrying something (or someone), or carried ourselves: our hands are full
     if (this.carrying || this.carriedBy) {
       this.breaking = null;
@@ -584,6 +595,8 @@ export function installPlay(Game) {
         this.bowDraw = 0;
       } else this.bowDraw = 0;
       tc.tap = false;
+    } else if (def && def.kind === 'saucer') {
+      if (usePressed || tc.tap) { tc.tap = false; if (aimMob && aimMob.type === 'saucer') this.useSaucer(aimMob, def); else this.placeSaucer(hit); }
     } else if (def && (def.kind === 'boat' || def.kind === 'minecart')) {
       if (usePressed || tc.tap) {
         tc.tap = false;
@@ -785,7 +798,8 @@ export function installPlay(Game) {
     const players = this.mp ? this.remotePlayerModels() : [];
     const self = this.state !== 'title' && this.state !== 'boot' ? this.localPlayerModel() : null;
     if (self) players.push(self);
-    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip());
+    const saucers = this.saucerModels();
+    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip(), saucers.length ? saucers : null);
   };
 
   // Where our fishing line leaves the rod: out in front and to the right of the view, or from the
@@ -803,7 +817,7 @@ export function installPlay(Game) {
 
   P.handState = function handState() {
     const held = this.heldSlot();
-    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode || this.carrying || this.carriedBy) return null;
+    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode || this.carrying || this.carriedBy || this.ride || this.passengerOf) return null;
     const id = held.id;
     const p = this.player;
     const bob = this.settings.viewBobbing ? p.bobAmount : 0;
@@ -850,6 +864,7 @@ export function installPlay(Game) {
       survival: this.serializeSurvival(),
       ...this.serializeCreatures(),
       ...this.serializeVillagers(),
+      ...this.serializeSaucer(),
     };
   };
 

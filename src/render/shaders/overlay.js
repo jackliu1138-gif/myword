@@ -87,6 +87,19 @@ in vec3 vRel;
 in vec4 vTint;
 out vec4 oColor;
 void main() {
+  if (vTint.a > 2.5) {
+    // smoke or dust: a soft lumpy puff lit by the sky, blended over the scene (vLayer: its opacity)
+    vec2 q = vUV * 2.0 - 1.0;
+    float d = length(q);
+    float lump = 0.82 + 0.18 * sin(atan(q.y, q.x) * 5.0 + vLayer * 3.0);
+    float a = smoothstep(1.0, 0.25, d / lump) * vLayer;
+    if (a < 0.01) discard;
+    float sky = vLight.x;
+    vec3 light = uSkyColor.rgb * (0.35 + 0.65 * sky) + uLightColor.rgb * max(uLightDir.y, 0.0) * sky * 0.8 + 0.02;
+    vec3 col = srgbToLinear(vTint.rgb) * light;
+    oColor = vec4(col * a, a);
+    return;
+  }
   if (vTint.a > 1.5) {
     // a glowing spark: a soft round dot of light, added on top of the scene
     float d = length(vUV * 2.0 - 1.0);

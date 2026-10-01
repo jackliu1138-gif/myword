@@ -7,6 +7,7 @@
 import { BLOCK, BLOCKS, IS_SOLID, IS_RAIL, RAIL_SHAPES, FACING, railShapeFor, MODEL_OF, MODELS_BY_NAME } from '../world/blocks.js';
 import { ITEM, itemDef } from '../sim/items.js';
 import { ARMOR_REF } from '../sim/inventory.js';
+import { SAUCER_SEAT } from '../render/saucer.js';
 import { t } from '../ui/i18n.js';
 
 const M = MODELS_BY_NAME;
@@ -371,10 +372,26 @@ export function installVehicles(Game) {
 
   // The local player as the renderer draws it in the third-person views.
   P.localPlayerModel = function localPlayerModel() {
-    if (!this.camMode || !this.player) return null;
+    if (!this.player) return null;
+    const p = this.player;
+    // (in a flying saucer: sitting in its dome, the camera outside)
+    if (this.ride) {
+      const inv = this.inventory;
+      return {
+        id: 'local', pos: [p.pos[0], p.pos[1] + SAUCER_SEAT - 0.55, p.pos[2]], yaw: this.ride.yaw, headYaw: this.ride.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: inv.armorIds(),
+        walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, gliding: false, sitting: true, wings: false, offhand: 0,
+      };
+    }
+    // (a passenger on someone's saucer: sitting on its deck)
+    if (this.passengerOf) {
+      return {
+        id: 'local', pos: p.pos.slice(), yaw: this.passengerYaw ?? p.yaw, headYaw: p.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: this.inventory.armorIds(),
+        walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, gliding: false, sitting: true, wings: false, offhand: 0,
+      };
+    }
+    if (!this.camMode) return null;
     // a wall right behind pulls the camera into our own head: then there is nothing to draw
     if ((this.camDist ?? 4) < 0.9) return null;
-    const p = this.player;
     // (carried by someone: drawn in their arms)
     const by = this.carriedBy && this.mp && this.mp.players.get(this.carriedBy);
     const inv = this.inventory;

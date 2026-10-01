@@ -1449,6 +1449,22 @@ export class Renderer {
         }
         continue;
       }
+      if (p.kind === 'smoke') {
+        // a soft puff, growing as it thins out (alpha blended: tint.a 3)
+        const age = 1 - p.life / p.max;
+        const a = Math.min(1, age * 6) * Math.min(1, p.life / (p.max * 0.6)) * 0.55;
+        const sz = p.size + p.grow * age;
+        const ca = Math.cos(p.angle), sa = Math.sin(p.angle);
+        const c = p.color;
+        for (const [cx, cy] of corners) {
+          d[o++] = p.x - cam[0]; d[o++] = p.y - cam[1]; d[o++] = p.z - cam[2];
+          d[o++] = (cx * ca - cy * sa) * sz; d[o++] = (cx * sa + cy * ca) * sz;
+          d[o++] = cx * 0.5 + 0.5; d[o++] = 0.5 - cy * 0.5;
+          d[o++] = a; d[o++] = p.sky; d[o++] = 0;
+          d[o++] = c[0]; d[o++] = c[1]; d[o++] = c[2]; d[o++] = 3;
+        }
+        continue;
+      }
       const ca = Math.cos(p.angle || 0), sa = Math.sin(p.angle || 0);
       const tint = p.tint || [1, 1, 1];
       const cut = p.kind === 'leaf' ? 1 : 0;

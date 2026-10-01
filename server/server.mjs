@@ -604,7 +604,7 @@ export function startServer(overrides = {}) {
       case 'm': // creature snapshots from the client that simulates them
         if (Array.isArray(m.l) && m.l.length <= 96) broadcast({ t: 'm', id: c.id, l: m.l }, c, true);
         break;
-      case 'hit': case 'hurt': case 'knock': case 'loot': case 'rtc': { // to one player
+      case 'hit': case 'hurt': case 'knock': case 'loot': case 'rtc': case 'board': case 'aboard': case 'sgrab': case 'sgive': { // to one player
         const to = byId(m.to);
         if (!to || to === c) return;
         const out = { ...m, from: c.id };

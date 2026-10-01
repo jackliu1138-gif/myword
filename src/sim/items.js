@@ -219,6 +219,8 @@ export const EGG_ITEMS = {};
 for (const [type, [c1, c2, zh]] of Object.entries(EGG_MOBS)) {
   EGG_ITEMS[type] = item(type + '_spawn_egg', { zh: zh + '刷怪蛋', kind: 'egg', mob: type, colors: [c1, c2] });
 }
+// (new items go after the eggs, so the ids of the ones before never change)
+item('flying_saucer', { name: 'Flying Saucer', zh: '飞碟', kind: 'saucer', stack: 1 });
 
 export const ITEMS = defs;
 
@@ -518,6 +520,17 @@ export const RECIPES = [
   RECIPES.push([BLOCK.PRISMARINE_BRICKS, 1, [[ITEM.PRISMARINE_SHARD, 9]]]);
   RECIPES.push([BLOCK.DARK_PRISMARINE, 1, [[ITEM.PRISMARINE_SHARD, 8], [ITEM.INK_SAC, 1]]]);
   RECIPES.push([BLOCK.SEA_LANTERN, 1, [[ITEM.PRISMARINE_SHARD, 4], [ITEM.PRISMARINE_CRYSTALS, 5]]]);
+  // to the planets
+  RECIPES.push([ITEM.FLYING_SAUCER, 1, [[BLOCK.IRON_BLOCK, 4], [BLOCK.GLASS, 4], [BLOCK.LANTERN, 2], [ITEM.DIAMOND, 2]]]);
+}
+
+// What a flying saucer's tank takes, in units (a full tank holds SAUCER_TANK).
+export const SAUCER_TANK = 64;
+export function saucerFuel(id) {
+  if (id === ITEM.COAL || id === ITEM.CHARCOAL) return 1;
+  if (id === ITEM.BLAZE_ROD) return 2;
+  if (id === ITEM.LAVA_BUCKET) return 8;
+  return 0;
 }
 
 // ---------------------------------------------------------------- the furnace

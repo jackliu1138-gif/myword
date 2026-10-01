@@ -4,6 +4,8 @@
 // snapshots; hits, damage and loot travel as messages). Installed as methods on Game.prototype.
 
 import { NetClient, serverUrl } from './net.js';
+import { SAUCER_FLAGS } from '../game/saucer.js';
+import { SAUCER_SEAT } from '../render/saucer.js';
 import { Voice } from './voice.js';
 import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
 import { loadEntity } from '../sim/containers.js';
@@ -17,7 +19,8 @@ import { t } from '../ui/i18n.js';
 const STATE_INTERVAL = 1 / 12;
 const MOB_INTERVAL = 1 / 8;
 const SHARE_RADIUS = 72; // our creatures within this distance of another player are sent to them
-const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512, CARRY: 1024 };
+// (2048, 4096 and 8192: in a flying saucer, its engine going, its legs down; see game/saucer.js)
+const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512, CARRY: 1024, ...SAUCER_FLAGS };
 const PMOB_INTERVAL = 5; // how often the server hears of the creatures that stay
 const MP_KEY = 'lumencraft.multiplayer';
 
@@ -126,6 +129,7 @@ export function installMultiplayer(Game) {
       player: me.player && Array.isArray(me.player.pos) ? me.player : undefined,
       blockEntities: w.bents && typeof w.bents === 'object' ? w.bents : undefined,
       survival: me.survival && typeof me.survival === 'object' ? me.survival : undefined,
+      saucer: me.saucer && typeof me.saucer === 'object' ? me.saucer : undefined,
     };
     this.loadWorld(w.seed, data);
     // the server's weather, straight away
@@ -160,6 +164,7 @@ export function installMultiplayer(Game) {
       const p = mp.players.get(m.id);
       if (p) this.ui.addChat(null, t('mp.left', { name: p.name }));
       this.removeRemotePlayer(m.id);
+      this.passengerGone(String(m.id));
     });
     net.on('st', (m) => {
       const p = mp.players.get(m.id);
@@ -216,6 +221,11 @@ export function installMultiplayer(Game) {
     net.on('chat', (m) => { this.ui.addChat(m.n, m.x); if (m.id !== mp.id) this.audio.sfx('pickup', 0.35, 0); });
     // someone picking up (or putting down) a creature or a player, or wriggling free
     net.on('carry', (m) => this.onCarryMessage(m));
+    // flying saucers: coming aboard someone's, and parked ones handed over to whoever climbs in
+    net.on('board', (m) => this.onBoardMessage(m));
+    net.on('aboard', (m) => this.onAboardMessage(m));
+    net.on('sgrab', (m) => this.onSaucerGrab(m));
+    net.on('sgive', (m) => this.onSaucerGive(m));
     // villagers: what they say, what they did for us, and the ones we run told to stop or follow
     this.bindVillagerNet(net);
     net.on('ev', (m) => {
@@ -340,11 +350,13 @@ export function installMultiplayer(Game) {
       mp.stateTimer = STATE_INTERVAL;
       const pl = this.player;
       const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0)
-        | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0) | (this.carrying ? FLAG.CARRY : 0);
+        | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding || this.passengerOf ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0) | (this.carrying ? FLAG.CARRY : 0)
+        | (this.ride ? FLAG.SAUCER | (this.ride.engine > 0.3 ? FLAG.THRUST : 0) | (this.ride.legs > 0.5 ? FLAG.LEGS : 0) : 0);
       // (in space: where we are over the body nearest us, the same for everyone)
       const sb = this.dimension === 3 && this.spaceState ? this.spaceBodyCoords() : null;
       const at = sb ? sb.q : pl.pos;
-      const msg = { t: 'st', p: [round2(at[0]), round2(at[1]), round2(at[2])], y: round2(pl.yaw), pi: round2(pl.pitch), h: this.heldId(), f };
+      // (flying a saucer: the way it faces, not where our camera looks from)
+      const msg = { t: 'st', p: [round2(at[0]), round2(at[1]), round2(at[2])], y: round2(this.ride ? this.ride.yaw : this.passengerOf && this.passengerYaw !== undefined ? this.passengerYaw : pl.yaw), pi: this.ride || this.passengerOf ? 0 : round2(pl.pitch), h: this.heldId(), f };
       if (sb) msg.b = BODY_NAMES.indexOf(sb.body);
       if (this.inventory && this.inventory.offhand) msg.o = this.inventory.offhand.id;
       const armor = this.inventory ? this.inventory.armorIds() : null;
@@ -386,7 +398,7 @@ export function installMultiplayer(Game) {
       for (let i = 0; i < 3; i++) p.pos[i] += (p.goal[i] - p.pos[i]) * k;
       p.yaw = lerpAngle(p.yaw, p.goalYaw, k);
       const speed = Math.hypot(p.pos[0] - ox, p.pos[2] - oz) / Math.max(dt, 1e-3);
-      p.walkAmount += ((p.flags & FLAG.FLY ? 0 : Math.min(1, speed / 4)) - p.walkAmount) * Math.min(1, dt * 10);
+      p.walkAmount += ((p.flags & (FLAG.FLY | FLAG.SAUCER) ? 0 : Math.min(1, speed / 4)) - p.walkAmount) * Math.min(1, dt * 10);
       p.walkPhase += speed * dt * 2.2;
       p.swing = Math.max(0, p.swing - dt * 3);
       p.hurtTime = p.rec.hurtTime > 0 ? 0.3 : Math.max(0, p.hurtTime - dt);
@@ -518,6 +530,8 @@ export function installMultiplayer(Game) {
       dimension: this.dimension || 0,
       survival: this.serializeSurvival ? this.serializeSurvival() : undefined,
       ...this.serializeSpace(),
+      // (in a flying saucer: back in it next time)
+      ...this.serializeSaucer(),
     };
   };
 
@@ -543,6 +557,11 @@ export function installMultiplayer(Game) {
       const chest = p.armor && p.armor[1] ? itemDef(p.armor[1]) : null;
       // (carried by us or by someone else: drawn lying in their arms)
       const by = p.carriedBy === 'local' ? this.player : p.carriedBy ? mp.players.get(p.carriedBy) : null;
+      // (flying a saucer: sitting in its dome)
+      if (p.flags & FLAG.SAUCER) {
+        out.push({ id: p.id, pos: [p.pos[0], p.pos[1] + SAUCER_SEAT - 0.55, p.pos[2]], yaw: p.yaw, headYaw: p.yaw, headPitch: 0, skin: p.skin, held: 0, armor: p.armor, sitting: true, walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, offhand: 0 });
+        continue;
+      }
       out.push({
         ...(by && by.pos ? { carried: 'arms' } : null), carrying: !!(p.flags & FLAG.CARRY),
         id: p.id, pos: by && by.pos ? by.pos : p.pos, yaw: by && by.pos ? by.yaw : p.yaw, headYaw: p.yaw, headPitch: gliding ? 0 : p.pitch, skin: p.skin, held: p.held, armor: p.armor, lying: !!(p.flags & FLAG.SLEEP),

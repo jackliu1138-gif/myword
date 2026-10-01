@@ -291,7 +291,7 @@ export function installVillagers(Game) {
       } catch (e) { r = null; }
     }
     if (!r || typeof r.say !== 'string') {
-      r = offlineReply({ persona, lang, playerName: this.playerName(), line, rec, ctx, neighbors, rumors: this.rumors, day, event, item, baby: !!m.baby });
+      r = offlineReply({ persona, lang, playerName: this.playerName(), line, rec, ctx, neighbors, rumors: this.rumors, day, event, item, itemName, baby: !!m.baby });
       r.offline = true;
     }
     if (this.talk && this.talk.uid === uid) this.talk.ai = r.offline ? (this.hostServer && this.hostServer.ai === 'atria' ? 'busy' : 'offline') : 'atria';

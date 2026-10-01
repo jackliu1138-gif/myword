@@ -50,6 +50,13 @@ export class Particles {
     this.list.push({ kind: 'spark', x, y, z, vx, vy, vz, life, max: life, size, color, gravity, drag, twinkle, fade, sky: 1, block: 1, layer: 0, u: 0, v: 0, angle: 0, spin: 0 });
   }
 
+  // A puff of smoke or dust: soft, spreading as it slows and rises, fading away (blended over the
+  // scene, not glowing). color: rgb 0..1 (lit by the sky where it is).
+  smoke(x, y, z, vx, vy, vz, color, { life = 2.5, size = 0.8, rise = 0.6, drag = 1.8 } = {}) {
+    if (this.list.length > 2400) return;
+    this.list.push({ kind: 'smoke', x, y, z, vx, vy, vz, life, max: life, size, grow: size * 1.6, color, rise, drag, sky: 1, block: 0, layer: 0, u: 0, v: 0, angle: Math.random() * 6.28, spin: (Math.random() - 0.5) * 0.6 });
+  }
+
   // A firework's burst: a ball of stars in its colours that fall and fade, with a few crackles.
   fireworkBurst(pos, colors) {
     const n = 110;
@@ -72,6 +79,15 @@ export class Particles {
     for (const p of this.list) {
       p.life -= dt;
       if (p.life <= 0) continue;
+      if (p.kind === 'smoke') {
+        const k = Math.exp(-p.drag * dt);
+        p.vx *= k; p.vz *= k;
+        p.vy = p.vy * k + p.rise * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        p.angle += p.spin * dt;
+        out.push(p);
+        continue;
+      }
       if (p.kind === 'spark') {
         const k = Math.exp(-p.drag * dt);
         p.vx *= k; p.vy *= k; p.vz *= k;

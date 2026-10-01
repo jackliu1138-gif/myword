@@ -235,6 +235,13 @@ export function installSpace(Game) {
     p.thrustFloor = dim >= 6 ? STATION_Y : dim >= 4 ? this.bodyBase(DIM_BODY[dim]) + 120 : 200;
     // (the server may have set the clock since the last frame)
     if (dim === 3 && this.spaceState) this.carryInSpace();
+    // (a flying saucer's autopilot takes us between the worlds itself: saucer.js)
+    if (this.ride || this.passengerOf) {
+      if (dim === 3 && this.spaceState) this.updateSpaceHud();
+      else if (this.spaceHudShown) { this.ui.setSpaceHud(null); this.spaceHudShown = false; }
+      this.ui.setReentry(0);
+      return;
+    }
     if (this.state !== 'playing' || this.spawnPending || this.arrival || this.sleeping) return;
     if (dim === 0 && y > 450 && !this.thinAirHinted) { this.thinAirHinted = true; this.ui.toast(t('space.thinAir'), 4000); }
     if (ON_BODY(dim)) {
@@ -271,7 +278,8 @@ export function installSpace(Game) {
     p.gliding = false;
     this.suit = true;
     this.addRumor && this.addRumor('space');
-    this.ui.toast(t('space.enter'), 3200);
+    // (in a flying saucer it says where it is going instead)
+    if (!this.ride && !this.passengerOf) this.ui.toast(t('space.enter'), 3200);
     this.audio.sfx('travel', 0.5, 0);
   };
 
@@ -315,7 +323,7 @@ export function installSpace(Game) {
     this.descent = body !== 'earth';
     p.flying = this.isCreative() && p.flying && !this.descent;
     this.suit = true;
-    this.ui.toast(t('space.land.' + body), 3200);
+    if (!this.ride && !this.passengerOf) this.ui.toast(t('space.land.' + body), 3200);
     this.audio.sfx('travel', 0.4, 0);
   };
 

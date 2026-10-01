@@ -6,7 +6,8 @@ const ATTRIBS = `
 layout(location = 0) in vec3 aPos;     // camera relative
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
-layout(location = 3) in vec4 aInfo;    // layer, sky light, block light, mode (0 skin, 1 block, 2 item sprite, 3 sign text)
+layout(location = 3) in vec4 aInfo;    // layer, sky light, block light, mode (0 skin, 1 block, 2 item sprite, 3 sign text,
+                                       // 4 + e*0.95 a block texture glowing with strength e, 5 + r*0.95 one as metal of roughness r)
 layout(location = 4) in vec4 aTint;    // rgb + amount (>0 overlay, -1 masked tint, -2 cutout block, -3 cutout tinted)
 `;
 
@@ -44,7 +45,13 @@ layout(location = 0) out vec4 oAlbedo;
 layout(location = 1) out vec4 oNormal;
 layout(location = 2) out vec4 oLight;
 void main() {
-  int mode = int(vInfo.w + 0.5);
+  int mode = int(floor(vInfo.w + 0.001));
+  float modeArg = clamp((vInfo.w - float(mode)) / 0.95, 0.0, 1.0);
+  // glowing and metal surfaces (a flying saucer's lights and hull): block textures with a material
+  int mat = 0;
+  float metal = 0.0;
+  if (mode == 4) { mat = 3; mode = 1; }
+  else if (mode == 5) { mat = 4; metal = 0.85; mode = 1; }
   vec4 c;
   float rough = 0.78;
   if (mode == 0) c = texture(uSkins, vec3(vUV, vInfo.x));
@@ -58,9 +65,12 @@ void main() {
   else if (vTint.a < -2.5) albedo *= vTint.rgb;
   else if (vTint.a < -0.5 && vTint.a > -1.5) albedo *= mix(vec3(1.0), vTint.rgb, c.a);
   vec3 N = normalize(gl_FrontFacing ? vN : -vN);
+  // (an emissive surface keeps its strength where the roughness goes)
+  if (mat == 3) rough = modeArg;
+  else if (mat == 4) rough = modeArg;
   oAlbedo = vec4(albedo, rough);
   oNormal = vec4(octEncode(N), octEncode(N));
-  oLight = vec4(vInfo.y, vInfo.z, packAO(1.0, 1.0), 0.0);
+  oLight = vec4(vInfo.y, vInfo.z, packAO(1.0, 1.0), (float(mat) * 16.0 + floor(metal * 15.0 + 0.5)) / 255.0);
 }
 `;
 
@@ -85,7 +95,7 @@ uniform sampler2DArray uItems;
 in vec2 vUV;
 flat in vec4 vInfo;
 void main() {
-  int mode = int(vInfo.w + 0.5);
+  int mode = int(floor(vInfo.w + 0.001));
   if (mode == 0 && texture(uSkins, vec3(vUV, vInfo.x)).a < 0.5) discard;
   if (mode == 2 && texture(uItems, vec3(vUV, vInfo.x)).a < 0.5) discard;
   if (mode == 3) discard; // sign text casts no shadow of its own

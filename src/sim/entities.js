@@ -82,6 +82,8 @@ export const MOBS = {
   horse: { animal: true, hw: 0.7, h: 1.6, eye: 1.5, health: 22, speed: 1.6, ride: true, step: 1.05, drops: [[ITEM.LEATHER, 0, 2]], xp: 1 },
   boat: { vehicle: 'boat', hw: 0.7, h: 0.56, eye: 0.3, health: 3, seat: 0.25, drops: [[ITEM.OAK_BOAT, 1, 1]] },
   minecart: { vehicle: 'minecart', hw: 0.49, h: 0.7, eye: 0.35, health: 4, seat: 0.35, drops: [[ITEM.MINECART, 1, 1]] },
+  // (parked: flown, it is part of its pilot; see game/saucer.js)
+  saucer: { vehicle: 'saucer', persistent: true, hw: 1.5, h: 1.6, eye: 1.2, health: 16, seat: 1.8, drops: [[ITEM.FLYING_SAUCER, 1, 1]] },
   tnt: { fixed: true, invulnerable: true, hw: 0.49, h: 0.98, eye: 0.5, health: 1, drops: [] },
   evoker_fangs: { fixed: true, invulnerable: true, hw: 0.25, h: 0.8, eye: 0.4, health: 1, drops: [] },
 };

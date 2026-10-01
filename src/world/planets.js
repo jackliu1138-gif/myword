@@ -57,6 +57,10 @@ function craterField(seed, layers, x, z, density, opt) {
   return [h, fresh];
 }
 
+// the launch pad's deck reaches this far from the world's middle; the ground is levelled further out
+export const PAD_R = 7.5;
+const PAD_CLEAR = 9.5;
+
 class PlanetGenerator {
   constructor(seed, body) {
     this.seed = seed | 0;
@@ -97,6 +101,39 @@ class PlanetGenerator {
     return { lon, lat, d: dirOf(lon, lat) };
   }
 
+  // The launch pad flying saucers set down on, at the world's middle: its deck's height.
+  padHeight() {
+    if (this.padY === undefined) this.padY = Math.max(8, Math.min(H - 40, Math.floor(this.surface(0, 0).h)));
+    return this.padY;
+  }
+
+  // The pad: a round deck of smooth stone with a yellow ring and a glowing middle, lights round its
+  // edge and four lamp posts, on ground levelled out round it.
+  pad(blocks, x0, z0) {
+    const py = this.padHeight();
+    for (let z = 0; z < CS; z++) {
+      for (let x = 0; x < CS; x++) {
+        const wx = x0 + x, wz = z0 + z;
+        const d = Math.hypot(wx, wz);
+        if (d > PAD_CLEAR) continue;
+        const l = this.layers(this.surface(wx, wz), 0);
+        for (let y = py + 1; y <= py + 16; y++) blocks[idx(x, y, z)] = 0;
+        for (let y = py - 4; y < py; y++) if (!blocks[idx(x, y, z)]) blocks[idx(x, y, z)] = l.rock;
+        let top = l[0];
+        if (d <= 1.5) top = B.SEA_LANTERN;
+        else if (d > 5.5 && d <= 6.5) top = B.YELLOW_WOOL;
+        else if (d <= PAD_R) top = B.SMOOTH_STONE;
+        const ax = Math.abs(wx), az = Math.abs(wz);
+        if ((ax === 7 && az === 0) || (ax === 0 && az === 7) || (ax === 5 && az === 5)) top = B.SEA_LANTERN;
+        blocks[idx(x, py, z)] = top;
+        if (ax === 6 && az === 6) {
+          for (let y = py + 1; y <= py + 3; y++) blocks[idx(x, y, z)] = B.IRON_BARS;
+          blocks[idx(x, py + 4, z)] = B.SEA_LANTERN;
+        }
+      }
+    }
+  }
+
   generateChunk(cx, cz) {
     const blocks = new Uint8Array(CS * CS * H);
     const x0 = cx * CS, z0 = cz * CS;
@@ -132,6 +169,7 @@ class PlanetGenerator {
         }
       }
     }
+    if (x0 <= PAD_CLEAR && x0 + CS > -PAD_CLEAR - 1 && z0 <= PAD_CLEAR && z0 + CS > -PAD_CLEAR - 1) this.pad(blocks, x0, z0);
     return blocks;
   }
 

@@ -100,7 +100,7 @@ export class Simulation {
 
   damagePlayer(id, amount, source, from = null) {
     const p = this.players.get(id);
-    if (!p || p.dead || p.mode === 'creative' || amount <= 0) return false;
+    if (!p || p.dead || p.mode === 'creative' || p.sheltered || amount <= 0) return false;
     const ticking = source === 'drown' || source === 'fire' || source === 'void' || source === 'poison' || source === 'wither' || source === 'starve';
     if (p.hurtTime > 0.4 && !ticking) return false;
     if (p.remote) {

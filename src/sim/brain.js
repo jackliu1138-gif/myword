@@ -549,6 +549,13 @@ const L = {
     deliver: ['太好了，{count}个{want}都齐了！这是答应你的{rewardCount}个{reward}。', '真靠谱！拿着，{rewardCount}个{reward}。下回还找你！'],
     trade: ['谢谢惠顾！', '成交！下次再来。'],
     treasure: ['{catch}，听说{place}。{tip}', '我跟你说个秘密：{place}。{tip}', '想去探险？{place}。{tip}', '我爷爷说过，{place}。{tip}'],
+    trip: {
+      lift: ['哇啊啊！我们飞起来了！', '抱紧我！地面越来越远了！', '{catch}，这、这是要去{place}吗？'],
+      space: ['天哪……那个蓝色的大球就是我们住的地方吗？', '好黑啊，星星好多！', '{catch}，我是全村第一个上天的村民！'],
+      arrive: ['我们到{place}啦？我要跟全村人讲！', '这里的地面怎么是这个颜色……', '{player}，你真了不起！'],
+      home: ['终于回家了！还是地球最好。', '回来啦！我要跟全村讲我去过太空！', '{player}，下次还带我去！'],
+      stay: ['飞碟？我、我还是在这儿等你吧！', '我恐高，就在下面看着你飞！'],
+    },
     treasureNone: ['附近？除了田就是树，没听说有什么好玩的地方。', '我从没出过村子，外面有什么我可不知道。'],
   },
   en: {
@@ -591,6 +598,13 @@ const L = {
     deliver: ['Wonderful, all {count} {want}! Here are the {rewardCount} {reward} I promised.', 'Reliable as anything! {rewardCount} {reward} for you. I\'ll ask you again!'],
     trade: ['Pleasure doing business!', 'Deal! Come again.'],
     treasure: ['{catch}, I hear there\'s {place}. {tip}', 'Here\'s a secret: there\'s {place}. {tip}', 'Fancy an adventure? There\'s {place}. {tip}', 'My grandad always said there\'s {place}. {tip}'],
+    trip: {
+      lift: ['Waaah! We\'re flying!', 'Hold on to me! The ground\'s getting smaller!', '{catch}, are we really going to {place}?'],
+      space: ['Goodness... is that big blue ball where we live?', 'It\'s so dark, and so many stars!', '{catch}, I\'m the first villager ever to go to the sky!'],
+      arrive: ['Are we on {place}? Wait till I tell the village!', 'Why is the ground that colour here...', '{player}, you\'re amazing!'],
+      home: ['Home at last! There\'s nowhere like the Earth.', 'We\'re back! Wait till the village hears I\'ve been to space!', '{player}, take me again next time!'],
+      stay: ['A flying saucer? I-I\'ll wait for you here!', 'I\'m scared of heights. I\'ll watch from down here!'],
+    },
     treasureNone: ['Round here? Fields and trees. Never heard of anything worth seeing.', 'I\'ve never been out of the village. No idea what\'s out there.'],
   },
 };
@@ -623,6 +637,10 @@ export function offlineReply(input) {
     return say(liked ? T.gotGift : T.gotGiftMeh, liked ? 'happy' : 'neutral', null, { item: stuffName(input.item, lang) });
   }
   if (event === 'deliver' && q) return say(T.deliver, 'happy', null, { count: q.count, want: stuffName(q.want, lang), rewardCount: q.rewardCount, reward: stuffName(q.reward, lang) });
+  if (event === 'trip') {
+    const [stage, to] = tripOf(input.itemName);
+    return say(T.trip[stage], stage === 'stay' ? 'scared' : stage === 'home' ? 'happy' : 'surprised', null, { place: TRIP_PLACES[to] ? TRIP_PLACES[to][zh ? 0 : 1] : '' });
+  }
   const intent = intentOf(line);
   const night = ctx.phase === 'night' || ctx.time === '晚上' || ctx.time === 'night';
   if (rec.f < 15 && intent !== 'bye' && intent !== 'thanks' && rnd() < 0.7) return say(T.cold, 'angry');
@@ -684,6 +702,21 @@ export function offlineReply(input) {
     case 'end': return say(T.end, 'surprised');
     default: return say(T.other);
   }
+}
+
+// A trip in a flying saucer, as a game tells a villager carried along of it: 'stage:where'.
+export const TRIP_STAGES = ['lift', 'space', 'arrive', 'home', 'stay'];
+const TRIP_PLACES = { earth: ['地球', 'the Earth'], moon: ['月球', 'the Moon'], mars: ['火星', 'Mars'], jupiter: ['木星的空间站', 'the Jupiter station'], saturn: ['土星的空间站', 'the Saturn station'] };
+export function tripOf(s) {
+  const [stage, to] = String(s || '').split(':');
+  return [TRIP_STAGES.includes(stage) ? stage : 'lift', TRIP_PLACES[to] ? to : 'moon'];
+}
+export function tripNote(s, who, lang) {
+  const [stage, to] = tripOf(s);
+  const zh = lang === 'zh';
+  const place = TRIP_PLACES[to][zh ? 0 : 1];
+  if (zh) return { lift: `${who}抱着你坐进了一个会飞的大飞碟，正喷着火往天上飞，要去${place}`, space: `你们坐着飞碟飞出了天空，到了漆黑的太空里，能看见整个世界变成一个大球，正在去${place}的路上`, arrive: `飞碟刚刚降落在${place}，你是第一个来这里的村民`, home: `你们坐着飞碟从太空回到了地球，刚刚降落`, stay: `${who}要坐飞碟去${place}，想带上你` }[stage];
+  return { lift: `${who} is carrying you in a great flying saucer, roaring up into the sky with fire under it, on the way to ${place}`, space: `the saucer has flown right out of the sky into the black of space; you can see the whole world as a ball, on the way to ${place}`, arrive: `the saucer has just landed on ${place}; you are the first villager ever to come here`, home: `the saucer has brought you back from space to the Earth; it has just landed`, stay: `${who} wants to take you with them in a flying saucer to ${place}` }[stage];
 }
 
 // How what was said or done changes a villager's feelings.

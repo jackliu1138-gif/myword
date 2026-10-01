@@ -13,7 +13,7 @@
 import {
   personaFor, personaName, buildMessages, parseReply, offlineReply, cleanAction, applyAction, cleanRecord, cleanRumor, newRecord,
   remember, befriend, feelingFor, JOBS, stuffId, clip, rumorText, cleanPlaces, PLACE_KINDS, placeName, foeName,
-  buildDialogueMessages, parseDialogue, offlineDialogue,
+  buildDialogueMessages, parseDialogue, offlineDialogue, tripNote,
 } from '../src/sim/brain.js';
 
 const MAX_SOULS = 3000;
@@ -38,7 +38,7 @@ export function llmConfig(pick, env = process.env) {
 }
 
 const LANGS = new Set(['zh', 'en']);
-const EVENTS = new Set(['hit', 'gift', 'deliver', 'trade', 'hero', 'house', 'found']);
+const EVENTS = new Set(['hit', 'gift', 'deliver', 'trade', 'hero', 'house', 'found', 'trip']);
 // things a villager only takes note of (how it feels about the player, what it remembers): no answer
 const NOTES = new Set(['hero', 'house', 'found']);
 const UID = /^[\w.:-]{1,40}$/;
@@ -135,7 +135,7 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
     const lang = LANGS.has(input.lang) ? input.lang : 'zh';
     const day = input.day | 0;
     const rec = input.rec || newRecord(day);
-    const base = { persona, lang, playerName: input.playerName, line: input.line || '', rec, ctx: input.ctx || {}, neighbors: input.neighbors || [], rumors: input.rumors || [], day, event: input.event || null, item: input.item, baby: !!input.baby };
+    const base = { persona, lang, playerName: input.playerName, line: input.line || '', rec, ctx: input.ctx || {}, neighbors: input.neighbors || [], rumors: input.rumors || [], day, event: input.event || null, item: input.item, itemName: input.itemName, baby: !!input.baby };
     let out = null, offline = true;
     if (!input.baby && input.useModel !== false && allowModel()) {
       inFlight++;
@@ -188,6 +188,7 @@ export function createBrain({ cfg, log = () => {}, onChange = () => {}, fetchFn 
       case 'gift': return zh ? `${who}送给你一个${item}` : `${who} gives you ${item}`;
       case 'deliver': { const q = input.rec && input.rec.quest; return q ? (zh ? `${who}把你要的${q.count}个东西都带来了，你按约定给了奖励` : `${who} brought all ${q.count} of what you asked for, and you paid the reward`) : ''; }
       case 'trade': return zh ? `${who}刚跟你做了笔买卖` : `${who} just traded with you`;
+      case 'trip': return tripNote(input.itemName, who, lang);
       default: void persona; return '';
     }
   }

@@ -18,13 +18,15 @@ export const BREED_FOOD = {
   wolf: [ITEM.RAW_BEEF, ITEM.COOKED_BEEF, ITEM.RAW_PORKCHOP, ITEM.COOKED_PORKCHOP, ITEM.RAW_CHICKEN, ITEM.COOKED_CHICKEN, ITEM.RAW_MUTTON, ITEM.COOKED_MUTTON, ITEM.ROTTEN_FLESH],
   cat: [ITEM.RAW_COD, ITEM.RAW_SALMON], horse: [ITEM.GOLDEN_CARROT, ITEM.GOLDEN_APPLE],
 };
-const PERSIST_FIELDS = ['tamed', 'sitting', 'saddled', 'sheared', 'growth', 'home', 'trades', 'tradeSeed', 'tradeDay', 'stats', 'temper', 'size', 'persistent', 'love'];
+const PERSIST_FIELDS = ['tamed', 'sitting', 'saddled', 'sheared', 'growth', 'home', 'trades', 'tradeSeed', 'tradeDay', 'stats', 'temper', 'size', 'persistent', 'love', 'fuel'];
 
 export function installCreaturePlay(Game) {
   const P = Game.prototype;
 
   // ---------------------------------------------------------------- right click on a creature
   P.useOnMob = function useOnMob(mob, def) {
+    // a flying saucer: fuel for its tank, or climb in
+    if (mob.type === 'saucer' && mob.deathTime === 0) return this.useSaucer(mob, def);
     // (another player's game runs that one: only a villager can be talked to, or traded with)
     if (mob.deathTime > 0 || (mob.ghost && mob.type !== 'villager')) return false;
     const me = this.me();

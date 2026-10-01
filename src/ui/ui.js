@@ -19,7 +19,7 @@ const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'sno
 const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'potions', 'transport', 'eggs', 'misc'];
 function paletteTab(d) {
   if (d.kind === 'block') return IS_RAIL[d.id] ? 'transport' : NATURE.has(d.key) ? 'nature' : 'building';
-  if (d.elytra || ['boat', 'minecart', 'saddle', 'firework'].includes(d.kind)) return 'transport';
+  if (d.elytra || ['boat', 'minecart', 'saddle', 'firework', 'saucer'].includes(d.kind)) return 'transport';
   if (['sword', 'bow', 'arrow', 'armor', 'crossbow', 'shield', 'totem'].includes(d.kind)) return 'combat';
   if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye', 'bucket', 'fertilizer', 'shears', 'fishing_rod'].includes(d.kind)) return 'tools';
   if (d.kind === 'food' || d.kind === 'milk') return 'food';
@@ -228,7 +228,7 @@ export function clockText(tm) {
 
 export class UI {
   constructor() {
-    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer', 'signedit', 'worlds', 'talk'];
+    this.screens = ['title', 'pause', 'settings', 'help', 'newworld', 'inventory', 'device', 'death', 'multiplayer', 'signedit', 'worlds', 'talk', 'saucer'];
     this.mp = null;
     this.chatLines = [];
     this.newWorld = { mode: 'survival', difficulty: 'normal' };
@@ -310,6 +310,34 @@ export class UI {
       e.stopPropagation();
     });
     click('btn-talk-close', 'talkClose');
+    // the flying saucer's panel, and the zoom buttons on the trip display
+    click('btn-saucer-close', 'saucerClose');
+    click('btn-saucer-exit', 'saucerExit');
+    click('btn-saucer-fuel', 'saucerFuel');
+    click('btn-saucer-fly', 'saucerFly');
+    $('btn-saucer-go').addEventListener('click', () => {
+      this.emit('click');
+      const c = this.saucerChoice;
+      if (c && c.dest) this.emit('saucerGo', c.dest, c.secs);
+    });
+    for (const b of $('saucer-times').querySelectorAll('button')) {
+      b.addEventListener('click', () => {
+        this.emit('click');
+        const c = { ...(this.saucerChoice || {}) };
+        c.custom = b.dataset.secs === 'custom';
+        c.secs = c.custom ? Number($('saucer-custom-range').value) : Number(b.dataset.secs);
+        this.emit('saucerChoice', c);
+      });
+    }
+    $('saucer-custom-range').addEventListener('input', (e) => {
+      const c = { ...(this.saucerChoice || {}), custom: true, secs: Number(e.target.value) };
+      this.saucerChoice = c;
+      $('saucer-custom-text').textContent = this.tripTime(c.secs);
+    });
+    $('saucer-custom-range').addEventListener('change', () => this.emit('saucerChoice', this.saucerChoice));
+    for (const [id, k] of [['btn-zoom-in', -2], ['btn-zoom-out', 2]]) {
+      $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.emit('saucerZoom', k); });
+    }
     click('btn-talk-deliver', 'talkDeliver');
     click('btn-talk-gift', 'talkGift');
     click('btn-talk-trade', 'talkTrade');
@@ -493,7 +521,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'village', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'village', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space', 'saucer'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -772,6 +800,72 @@ export class UI {
     const on = amount > 0.01;
     if (el.hidden === on) el.hidden = !on;
     if (on) el.style.opacity = Math.min(1, amount).toFixed(2);
+  }
+
+  // ------------------------------------------------------------ the flying saucer
+  // a trip's time in words: "45 s", "1 min 30 s", "3 min"
+  tripTime(secs) {
+    const m = Math.floor(secs / 60), sec = Math.round(secs % 60);
+    if (!m) return t('saucer.secs', { n: sec });
+    return sec ? t('saucer.minSecs', { m, s: sec }) : t('saucer.mins', { m });
+  }
+
+  // The flight panel. info: { fuel (null: creative), max, dests: [{ body, cost, why, home }], here },
+  // choice: { dest, secs, custom }
+  renderSaucer(info, choice) {
+    const c = { ...choice };
+    // (nothing chosen, or a choice that can't be made: the first that can)
+    const ok = (d) => d && !d.why;
+    if (!ok(info.dests.find((d) => d.body === c.dest))) { const first = info.dests.find(ok); c.dest = first ? first.body : null; }
+    this.saucerChoice = c;
+    const creative = info.fuel === null;
+    $('saucer-fuel-text').textContent = creative ? t('saucer.fuelInf') : t('saucer.fuel', { n: info.fuel, max: info.max });
+    $('saucer-fuel-fill').style.width = (creative ? 100 : (100 * info.fuel) / info.max).toFixed(1) + '%';
+    $('btn-saucer-fuel').hidden = creative;
+    const box = $('saucer-dests');
+    box.innerHTML = '';
+    for (const d of info.dests) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'saucer-dest' + (d.body === c.dest ? ' on' : '') + (d.why ? ' off' : '');
+      b.disabled = !!d.why;
+      b.setAttribute('aria-pressed', d.body === c.dest ? 'true' : 'false');
+      const sub = d.why ? t('saucer.why.' + d.why) : creative ? t('saucer.destSub.' + d.body) : t('saucer.cost', { n: d.cost });
+      b.innerHTML = `<i class="planet ${d.body}"></i><span><b>${escapeHtml(t(d.home ? 'saucer.home.' + d.body : 'saucer.dest.' + d.body))}</b><small>${escapeHtml(sub)}</small></span>`;
+      b.addEventListener('click', () => { this.emit('click'); this.emit('saucerChoice', { ...this.saucerChoice, dest: d.body }); });
+      box.appendChild(b);
+    }
+    for (const b of $('saucer-times').querySelectorAll('button')) {
+      const on = c.custom ? b.dataset.secs === 'custom' : Number(b.dataset.secs) === c.secs;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    $('saucer-custom').hidden = !c.custom;
+    if (c.custom) { $('saucer-custom-range').value = String(c.secs); $('saucer-custom-text').textContent = this.tripTime(c.secs); }
+    // (in the air, flying it ourselves: no climbing out; carry on, or let the autopilot take over)
+    $('btn-saucer-exit').hidden = !!info.flying;
+    $('btn-saucer-fly').textContent = t(info.flying ? 'saucer.flyOn' : 'saucer.fly');
+    $('btn-saucer-go').disabled = !c.dest;
+    $('btn-saucer-go').textContent = t('saucer.go') + (c.dest ? ' · ' + this.tripTime(c.secs) : '');
+  }
+
+  // The trip under way (progress: { left (s), frac, to } or null when landed); phase; hint: a line
+  // for when it stands landed. Nothing: hidden.
+  setTrip(progress, phase, hint = '') {
+    const el = $('trip');
+    if (!phase) { if (!el.hidden) el.hidden = true; return; }
+    el.hidden = false;
+    const flying = !!progress;
+    $('trip-line').hidden = !flying;
+    $('trip-track').hidden = !flying;
+    $('trip-hint').hidden = flying || !hint;
+    if (flying) {
+      const to = t('trip.to', { place: t('saucer.dest.' + progress.to) });
+      if ($('trip-to').textContent !== to) $('trip-to').textContent = to;
+      const left = phase === 'countdown' ? t('trip.countdown', { n: Math.max(1, Math.ceil(progress.count)) }) : t('trip.left', { t: this.tripTime(progress.left) });
+      if ($('trip-left').textContent !== left) $('trip-left').textContent = left;
+      $('trip-fill').style.width = (progress.frac * 100).toFixed(1) + '%';
+    } else if ($('trip-hint').textContent !== hint) $('trip-hint').textContent = hint;
   }
 
   // A place a villager told of: { name, dist, at: [x, y], angle: null on the screen, or the way

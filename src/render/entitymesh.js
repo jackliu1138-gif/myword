@@ -5,6 +5,7 @@ import { emitModel, emitBlockCube, emitSprite, emitArrow, emitSignText, modelVer
 import { mobFlags } from '../sim/remote.js';
 import { isBlockItem } from '../sim/items.js';
 import { BLOCK } from '../world/blocks.js';
+import { emitSaucer, SAUCER_FLOATS } from './saucer.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
@@ -30,10 +31,20 @@ export class EntityMesh {
   // extras: players drawn as models ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... }: the
   // others in multiplayer, and ourselves in the third-person views); signs: the words on signs in
   // view ({ layer, center, nrm, light }, see Game.visibleSigns); rodTip: where our fishing line
-  // starts
-  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null, rodTip = null) {
+  // starts; saucers: flying saucers being flown ({ pos, yaw, look }, see saucer.js)
+  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null, rodTip = null, saucers = null) {
     let o = 0;
     const p = [0, 0, 0];
+    if (saucers) {
+      for (const s of saucers) {
+        const q = s.pos;
+        const dx = q[0] - cam[0], dy = q[1] - cam[1], dz = q[2] - cam[2];
+        if (dx * dx + dy * dy + dz * dz > (maxDist * 2.5) ** 2) continue;
+        this.ensure(o + SAUCER_FLOATS);
+        const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + 1.5), Math.floor(q[2]));
+        o = emitSaucer(this.data, o, q, s.yaw, cam, [Math.max(sl / 15, s.lit || 0), bl / 15], t, s.look);
+      }
+    }
     if (signs) {
       this.ensure(o + signs.length * 6 * ENTITY_FLOATS);
       for (const s of signs) o = emitSignText(this.data, o, s.layer, s.center, s.nrm, cam, s.light);
@@ -59,6 +70,13 @@ export class EntityMesh {
       if (dx * dx + dy * dy + dz * dz > maxDist * maxDist) continue;
       const [sl, bl] = world.getLight(Math.floor(p[0]), Math.floor(p[1] + b.h * 0.6), Math.floor(p[2]));
       const light = [sl / 15, bl / 15];
+      if (e.kind === 'mob' && e.type === 'saucer') {
+        // a parked flying saucer, legs down
+        this.ensure(o + SAUCER_FLOATS);
+        const [sl2, bl2] = world.getLight(Math.floor(p[0]), Math.floor(p[1] + 1.5), Math.floor(p[2]));
+        o = emitSaucer(this.data, o, p, lerpAngle(e.prevYaw, e.yaw, alpha), cam, [sl2 / 15, bl2 / 15], t, { legs: 1, engine: e.hurtTime > 0.2 ? 0.6 : 0 });
+        continue;
+      }
       if (e.kind === 'mob') {
         if (!e.ghost) e.flags = mobFlags(e);
         this.ensure(o + (modelVertexCount(e.type) + GEAR_VERTICES) * ENTITY_FLOATS);

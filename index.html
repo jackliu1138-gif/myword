@@ -67,6 +67,15 @@
     <div id="vbubbles" class="vbubbles" aria-hidden="true"></div>
     <div id="vtag" class="vtag" hidden aria-hidden="true"><b></b><span></span><em></em></div>
     <div id="waypoint" class="waypoint" hidden aria-hidden="true"><i></i><b></b><small></small></div>
+    <div id="trip" class="trip-hud" hidden>
+      <div id="trip-line" class="trip-line"><b id="trip-to"></b><span id="trip-left"></span></div>
+      <div id="trip-track" class="trip-track"><i id="trip-fill"></i></div>
+      <p id="trip-hint" class="trip-hint"></p>
+      <div class="trip-btns">
+        <button id="btn-zoom-in" class="trip-btn" type="button" data-i18n-attr="aria-label:trip.zoomIn;title:trip.zoomIn">+</button>
+        <button id="btn-zoom-out" class="trip-btn" type="button" data-i18n-attr="aria-label:trip.zoomOut;title:trip.zoomOut">&minus;</button>
+      </div>
+    </div>
     <div id="voice-hud" class="voice-hud" hidden></div>
     <div id="chat" class="chat" hidden>
       <div id="chat-log" class="chat-log" role="log" aria-live="polite"></div>
@@ -330,6 +339,38 @@
         <button id="btn-talk-gift" class="btn subtle" type="button"></button>
         <button id="btn-talk-trade" class="btn subtle" type="button" data-i18n="talk.trade"></button>
         <span id="talk-brain" class="talk-brain"></span>
+      </footer>
+    </div>
+  </section>
+
+  <section id="saucer" class="screen dim saucer-screen" hidden>
+    <div class="sheet saucer-sheet" role="dialog" aria-labelledby="saucer-title">
+      <header class="saucer-head">
+        <h2 id="saucer-title" data-i18n="saucer.title"></h2>
+        <button id="btn-saucer-close" class="sheet-close" type="button" data-i18n-attr="aria-label:inv.close;title:inv.close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
+      </header>
+      <div id="saucer-fuel" class="saucer-fuel">
+        <div class="fuel-meta"><b id="saucer-fuel-text"></b><span class="hint" data-i18n="saucer.fuelHint"></span></div>
+        <div class="fuel-track"><i id="saucer-fuel-fill"></i></div>
+        <button id="btn-saucer-fuel" class="btn subtle small" type="button" data-i18n="saucer.addFuel"></button>
+      </div>
+      <h3 class="saucer-label" data-i18n="saucer.where"></h3>
+      <div id="saucer-dests" class="saucer-dests"></div>
+      <h3 class="saucer-label" data-i18n="saucer.howLong"></h3>
+      <div id="saucer-times" class="seg saucer-times" role="group" data-i18n-attr="aria-label:saucer.howLong" style="--cols:4">
+        <button type="button" data-secs="30" data-i18n="saucer.t30"></button>
+        <button type="button" data-secs="60" data-i18n="saucer.t60"></button>
+        <button type="button" data-secs="180" data-i18n="saucer.t180"></button>
+        <button type="button" data-secs="custom" data-i18n="saucer.tCustom"></button>
+      </div>
+      <div id="saucer-custom" class="saucer-custom" hidden>
+        <input id="saucer-custom-range" type="range" min="15" max="900" step="15" value="300" data-i18n-attr="aria-label:saucer.tCustom">
+        <span id="saucer-custom-text"></span>
+      </div>
+      <footer class="saucer-foot">
+        <button id="btn-saucer-exit" class="btn subtle" type="button" data-i18n="saucer.exit"></button>
+        <button id="btn-saucer-fly" class="btn" type="button" data-i18n="saucer.fly"></button>
+        <button id="btn-saucer-go" class="btn primary" type="button" data-i18n="saucer.go"></button>
       </footer>
     </div>
   </section>
