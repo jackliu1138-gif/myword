@@ -210,7 +210,7 @@ export function discounted(cost, pct) {
 
 // ---------------------------------------------------------------- the village's gossip
 // A rumour: { k: what happened, who, s: detail, day }
-export const RUMOR_KINDS = ['death', 'nether', 'end', 'dragon', 'wither', 'join', 'space', 'moon', 'mars', 'quest', 'gift', 'hit', 'talk'];
+export const RUMOR_KINDS = ['death', 'nether', 'end', 'dragon', 'wither', 'join', 'space', 'moon', 'mars', 'jupiter', 'saturn', 'quest', 'gift', 'hit', 'talk'];
 export function cleanRumor(r) {
   if (!r || !RUMOR_KINDS.includes(r.k)) return null;
   return { k: r.k, who: clip(r.who, 16), s: clip(r.s, 40), day: r.day | 0 };
@@ -232,6 +232,8 @@ export function rumorText(r, lang, today = 0) {
     case 'space': return zh ? `${who}${when}飞上了天，一直飞到了星星那里` : `${who} flew up into the sky ${when}, right up to the stars`;
     case 'moon': return zh ? `${who}${when}去了月亮上！` : `${who} went to the moon ${when}!`;
     case 'mars': return zh ? `${who}${when}去了一颗红色的星星` : `${who} went to a red star ${when}`;
+    case 'jupiter': return zh ? `${who}${when}去了一颗有花纹的大星星，住在云彩上面的房子里` : `${who} went to a great striped star ${when}, to a house floating on its clouds`;
+    case 'saturn': return zh ? `${who}${when}去了一颗戴着光环的星星` : `${who} went to a star with rings round it ${when}`;
     case 'quest': return zh ? `${who}${when}帮${r.s}干了活` : `${who} helped ${r.s} ${when}`;
     case 'gift': return zh ? `${who}${when}给${r.s}送了礼物` : `${who} gave ${r.s} a present ${when}`;
     case 'hit': return zh ? `${who}${when}打了${r.s}，真没礼貌` : `${who} hit ${r.s} ${when}, how rude`;

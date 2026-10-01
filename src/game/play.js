@@ -507,7 +507,7 @@ export function installPlay(Game) {
   // Fall damage in survival: speed at landing -> blocks fallen.
   P.onLandDamage = function onLandDamage(speed) {
     // (coming down from space the suit's thrusters set you down gently)
-    if (this.suit || this.dimension === 4 || this.dimension === 5) { this.suit = false; return; }
+    if (this.suit || this.dimension >= 4) { this.suit = false; return; }
     if (this.isCreative() || this.player.inWater) return;
     const fall = (speed * speed) / (2 * 28);
     const dmg = Math.floor(fall - 3.2);

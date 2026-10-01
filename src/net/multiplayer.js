@@ -117,7 +117,7 @@ export function installMultiplayer(Game) {
     const data = {
       version: 2, seed: w.seed, gen: Number.isInteger(w.gen) ? w.gen : 1, edits: w.edits, dimEdits: w.dimEdits || {}, dayTime: w.dayTime, dayCount: w.dayCount,
       mode: me.mode || w.mode, difficulty: w.difficulty, endState: w.endState || undefined,
-      dimension: Number.isInteger(me.dimension) && me.dimension >= 1 && me.dimension <= 5 ? me.dimension : 0,
+      dimension: Number.isInteger(me.dimension) && me.dimension >= 1 && me.dimension <= 7 ? me.dimension : 0,
       space: me.space && typeof me.space === 'object' ? me.space : undefined,
       inventory: Array.isArray(me.inventory) ? me.inventory : undefined,
       selected: me.selected, spawn: me.spawn || null,

@@ -139,7 +139,7 @@ test('everyone in the overworld asleep skips the night; each dimension keeps its
     await a.send({ t: 'hello', n: 'Ann', v: PROTOCOL });
     const wa = await a.next('welcome');
     // (the nether, the end, the Moon and Mars; space has no ground to edit)
-    assert.deepEqual(wa.dimEdits, { 1: {}, 2: {}, 4: {}, 5: {} });
+    assert.deepEqual(wa.dimEdits, { 1: {}, 2: {}, 4: {}, 5: {}, 6: {}, 7: {} });
     await b.send({ t: 'hello', n: 'Ben', v: PROTOCOL });
     await b.next('welcome');
     await a.send({ t: 'st', p: [0, 70, 0], y: 0, pi: 0, h: 0, f: 0 });

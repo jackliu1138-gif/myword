@@ -406,7 +406,9 @@ vec4 saturnRings(vec3 dir, float tMax, vec3 sun) {
   vec2 sh = raySph(q, sun, R);
   float lit = sh.y > 0.0 ? 0.08 : 1.0;
   vec3 col = srgbToLinear(mix(vec3(0.72, 0.66, 0.54), vec3(0.88, 0.82, 0.68), smoothstep(1.6, 1.9, rr)));
-  return vec4(col * SUN_E * 0.011 * 6.0 / PI * (0.35 + 0.65 * abs(dot(sun, n))) * lit, a);
+  // (from the station under them, bright across the day sky)
+  float near = uSpace.y > 3.5 ? 3.0 : 1.0;
+  return vec4(col * SUN_E * 0.011 * 6.0 / PI * (0.35 + 0.65 * abs(dot(sun, n))) * lit * near, a);
 }
 `;
 
@@ -612,6 +614,49 @@ vec4 marsAir(vec3 ro, vec3 dir, vec3 sun, float tEnd, out vec3 trans) {
   return vec4(ins * SUN_E * 0.43, 1.0);
 }
 
+// A gas giant's air seen from its station, high over the clouds: a deep blue-violet overhead
+// (hydrogen scatters blue), cream and ochre haze (Saturn's paler, golden) thickening to the
+// horizon, a glow round the sun, and the cloud sea below fading into it.
+vec4 giantAir(int i, vec3 dir, vec3 sun, float tEnd, out vec3 trans) {
+  float R = uBody[i].w;
+  vec3 rel = -uBody[i].xyz;
+  float H = 900.0;     // scale height (blocks)
+  float TAU0 = 2600.0; // blocks of air at the cloud tops' density to one optical depth
+  float top = R + 9000.0;
+  vec2 ta = raySph(rel, dir, top);
+  trans = vec3(1.0);
+  if (ta.y <= 0.0) return vec4(0.0);
+  float t0 = max(ta.x, 0.0), t1 = min(ta.y, tEnd);
+  if (t1 <= t0) return vec4(0.0);
+  vec3 haze = i == 3 ? vec3(0.95, 0.76, 0.56) : vec3(0.95, 0.86, 0.62);
+  vec3 blue = i == 3 ? vec3(0.26, 0.4, 1.0) : vec3(0.32, 0.48, 1.0);
+  float mu = dot(dir, sun);
+  float fwd = pow(max(mu, 0.0), 40.0) * 2.0 + pow(max(mu, 0.0), 6.0) * 0.35;
+  float od = 0.0;
+  vec3 ins = vec3(0.0);
+  const int N = 10;
+  float len = t1 - t0;
+  for (int k = 0; k < N; k++) {
+    float s0 = float(k) / float(N), s1 = float(k + 1) / float(N);
+    float ta2 = t0 + len * s0 * s0, tb2 = t0 + len * s1 * s1;
+    float dt = tb2 - ta2;
+    vec3 p = rel + dir * (0.5 * (ta2 + tb2));
+    float r = length(p);
+    float dens = exp(-(r - R) / H);
+    float muS = dot(p / r, sun);
+    float lit = smoothstep(-0.12, 0.08, muS);
+    float tauSun = 0.35 * dens / max(muS + 0.1, 0.04);
+    vec3 tsun = exp(-tauSun * vec3(0.8, 1.0, 1.25));
+    float dTau = dens * dt / TAU0;
+    // thin air high up scatters blue; the hazy low air (near the cloud tops), its own colour
+    vec3 c = mix(blue * 0.16, haze * 0.12, smoothstep(0.45, 0.95, dens)) * tsun + haze * fwd * 0.12 * tsun;
+    ins += c * lit * dTau * exp(-od);
+    od += dTau;
+  }
+  trans = exp(-od * vec3(0.92, 1.0, 1.08));
+  return vec4(ins * SUN_E * (i == 3 ? 0.16 : 0.11) * 4.0, 1.0);
+}
+
 void main() {
   vec3 rel = reconstructRel(vUV, 1.0);
   vec3 dir = normalize(rel);
@@ -632,7 +677,7 @@ void main() {
       vec3 s;
       if (i == 1) s = shadeMoon(P, N, -dir, sun, footprint);
       else if (i == 2) s = shadeMars(P, N, -dir, sun, footprint);
-      else s = shadeGiant(i, N, -dir, sun);
+      else s = shadeGiant(i, N, -dir, sun) * (uSpace.y > 2.5 ? 0.5 : 1.0); // (from its station: deep under the cloud tops)
       col = s;
       tBest = t.x;
     }
@@ -644,6 +689,12 @@ void main() {
     vec3 tr;
     vec4 ma = marsAir(vec3(0.0), dir, sun, tBest, tr);
     col = col * tr + ma.rgb;
+  }
+  // ---- a gas giant's air, from its station over the clouds
+  if (uSpace.y > 2.5) {
+    vec3 tr;
+    vec4 ga = giantAir(uSpace.y > 3.5 ? 4 : 3, dir, sun, tBest, tr);
+    col = col * tr + ga.rgb;
   }
   // ---- the Earth, its clouds and its air
   vec3 roM = -uBody[0].xyz * M_PER_BLOCK;

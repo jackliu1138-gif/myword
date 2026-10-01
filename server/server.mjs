@@ -34,10 +34,12 @@ export const PROTOCOL = 5;
 const CURRENT_GEN = 2;
 const MAX_PMOBS = 3000; // creatures kept per dimension
 // the dimensions: 0 the overworld, 1 the nether, 2 the end, 3 space (no ground), 4 the Moon, 5 Mars
-const DIMS = [0, 1, 2, 3, 4, 5];
-const GROUND_DIMS = [0, 1, 2, 4, 5];
-const OTHER_DIMS = [1, 2, 4, 5]; // with edits of their own (the overworld's are world.edits)
-const dimOf = (v) => (Number.isInteger(v) && v >= 0 && v <= 5 ? v : 0);
+// 0 the overworld, 1 the Nether, 2 the End, 3 space, 4 the Moon, 5 Mars, 6 and 7 the stations
+// over Jupiter and Saturn
+const DIMS = [0, 1, 2, 3, 4, 5, 6, 7];
+const GROUND_DIMS = [0, 1, 2, 4, 5, 6, 7];
+const OTHER_DIMS = [1, 2, 4, 5, 6, 7]; // with edits of their own (the overworld's are world.edits)
+const dimOf = (v) => (Number.isInteger(v) && v >= 0 && v <= 7 ? v : 0);
 const ADOPT_RADIUS = 64;
 const ITEM_LIFE = 5 * 60 * 1000; // dropped items vanish after five minutes, as they do in the game
 const MAX_ITEMS = 3000;
@@ -433,7 +435,7 @@ export function startServer(overrides = {}) {
         broadcast({ t: 'st', id: c.id, ...c.state }, c, true);
         if ((c.lastDim || 0) !== d) {
           c.lastDim = d; c.sleeping = false; checkEndHost(); checkSleep();
-          const went = { 1: 'nether', 2: 'end', 3: 'space', 4: 'moon', 5: 'mars' }[d];
+          const went = { 1: 'nether', 2: 'end', 3: 'space', 4: 'moon', 5: 'mars', 6: 'jupiter', 7: 'saturn' }[d];
           if (went) brain.addRumor(went, c.name);
         }
         break;

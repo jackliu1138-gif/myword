@@ -1,4 +1,5 @@
-// The Moon and Mars (dimensions 4 and 5), and the empty generator of space (3).
+// The Moon and Mars (dimensions 4 and 5), the floating stations over the clouds of Jupiter and
+// Saturn (6 and 7), and the empty generator of space (3).
 //  - The Moon: grey dust over pale highland rock, dark lava plains (maria, mostly on the side that
 //    faces the Earth) and craters of every size, the big ones with flat floors and central peaks.
 //  - Mars: rust-red dust over dark rock; the smooth lowlands of the north and the cratered highlands
@@ -288,4 +289,117 @@ export class SpaceGenerator {
   column(x, z, out = {}) { Object.assign(out, { height: 0, hf: 0, biome: BIOME.PLAINS, temp: 0.5, hum: 0, mountain: 0, river: 0, cont: 0 }); return out; }
   generateChunk() { return new Uint8Array(CS * CS * H); }
   findSpawn() { return [0.5, 100, 0.5]; }
+}
+
+// ------------------------------------------------------------------ the stations
+// High over the clouds of Jupiter and of Saturn (which have no ground) floats a station: a round
+// deck with a rail, a glass dome over a little garden, a landing pad, lamps and an antenna, and
+// underneath, the glowing engines that keep it up. Nothing else: below it the clouds (drawn by
+// the renderer), and falling off the suit's thrusters bring you back.
+export const STATION_Y = 120; // the deck
+export const STATION_R = 22;
+export const STATION_PAD = [0, 12]; // the landing pad's middle (x, z)
+const DOME = [0, -7], DOME_R = 9;
+
+export function stationBlock(x, y, z) {
+  const dy = y - STATION_Y;
+  const fx = x + 0.5, fz = z + 0.5;
+  const r = Math.hypot(fx, fz);
+  if (r >= STATION_R || dy < -12 || dy > 17) return 0;
+  const ddx = fx - DOME[0], ddz = fz - DOME[1];
+  const dd = Math.hypot(ddx, ddz, Math.max(0, dy));
+  // under the deck: a cone of hull narrowing to the engine, lit round its rim
+  if (dy < 0) {
+    const k = -dy / 12;
+    const rr = (STATION_R - 0.5) * (1 - k * k * 0.85);
+    if (r >= rr) return 0;
+    if (dy === -1) return B.IRON_BLOCK;
+    if (r > rr - 1.6) {
+      const ring = dy === -3 && Math.abs(r - (rr - 0.8)) < 0.9 && ((Math.floor(Math.atan2(fz, fx) / (Math.PI / 8)) & 1) === 0);
+      return ring ? B.SEA_LANTERN : B.IRON_BLOCK;
+    }
+    if (dy === -12 || (dy <= -10 && r < 2.2)) return B.SEA_LANTERN; // the engine's glow
+    return 0;
+  }
+  // the deck
+  if (dy === 0) {
+    if (r >= STATION_R - 1.5) return B.QUARTZ_BLOCK;
+    if (Math.hypot(ddx, ddz) < DOME_R - 0.5) return B.GRASS;
+    const px = fx - STATION_PAD[0], pz = fz - STATION_PAD[1];
+    if (Math.abs(px) < 5.5 && Math.abs(pz) < 5.5) {
+      // the pad: a yellow ring on grey, lights at its corners
+      if (Math.abs(px) > 4.5 && Math.abs(pz) > 4.5) return B.SEA_LANTERN;
+      const pr = Math.hypot(px, pz);
+      return pr > 2.6 && pr < 3.6 ? B.YELLOW_WOOL : B.LIGHT_GRAY_WOOL;
+    }
+    return B.SMOOTH_STONE;
+  }
+  // the rail round the edge
+  if (dy === 1 && r >= STATION_R - 1.5) return B.IRON_BARS;
+  // the dome (a door towards the pad) and its garden
+  if (Math.abs(dd - DOME_R) < 0.55 && dy >= 1) {
+    if (Math.abs(ddx) < 1.5 && ddz > 0 && dy <= 3) return 0;
+    return B.GLASS;
+  }
+  if (dd < DOME_R - 0.5 && dy >= 1) {
+    // a cherry tree, and flowers in the grass
+    const tx = ddx + 2.5, tz = ddz + 1.5;
+    if (Math.abs(tx) < 0.5 && Math.abs(tz) < 0.5 && dy <= 4) return B.CHERRY_LOG;
+    if (dy >= 4 && dy <= 6 && Math.hypot(tx, tz, (dy - 5) * 1.3) < 2.9) return B.CHERRY_LEAVES;
+    if (dy === 1) {
+      const h = hash2(x, z, 0x51a7);
+      if (h < 0.08) return B.POPPY;
+      if (h < 0.14) return B.DANDELION;
+      if (h < 0.3) return B.TALL_GRASS;
+    }
+    return 0;
+  }
+  // lamp posts round the deck
+  for (let i = 0; i < 8; i++) {
+    const a = (i + 0.5) * Math.PI / 4;
+    const lx = Math.round(Math.cos(a) * 17.5 - 0.5), lz = Math.round(Math.sin(a) * 17.5 - 0.5);
+    if (x === lx && z === lz && Math.hypot(lx + 0.5 - STATION_PAD[0], lz + 0.5 - STATION_PAD[1]) > 7) {
+      if (dy <= 2) return B.IRON_BARS;
+      if (dy === 3) return B.LANTERN;
+    }
+  }
+  // the antenna, a light at its tip
+  if (x === 13 && z === -12) {
+    if (dy <= 13) return B.IRON_BLOCK;
+    if (dy === 14) return B.END_ROD;
+    if (dy === 15) return B.SEA_LANTERN;
+  }
+  return 0;
+}
+
+export class StationGenerator {
+  constructor(seed, body) {
+    this.seed = seed | 0;
+    this.version = 1;
+    this.body = body;
+    this.dimension = BODIES[body].dim;
+    this.sea = -1000;
+  }
+  climate() { return [0.6, 0.3]; }
+  tintClimate() { return [140, 90]; }
+  caveEntrance() { return false; }
+  precipitation() { return 'none'; }
+  column(x, z, out = {}) {
+    const on = Math.hypot(x + 0.5, z + 0.5) < STATION_R;
+    Object.assign(out, { height: on ? STATION_Y : 0, hf: on ? STATION_Y : 0, biome: BIOME.PLAINS, temp: 0.6, hum: 0.3, mountain: 0, river: 0, cont: 0 });
+    return out;
+  }
+  findSpawn() { return [STATION_PAD[0] + 0.5, STATION_Y + 1, STATION_PAD[1] + 0.5]; }
+  generateChunk(cx, cz) {
+    const blocks = new Uint8Array(CS * CS * H);
+    const x0 = cx * CS, z0 = cz * CS;
+    if (x0 > STATION_R || x0 + CS < -STATION_R || z0 > STATION_R || z0 + CS < -STATION_R) return blocks;
+    for (let lz = 0; lz < CS; lz++) for (let lx = 0; lx < CS; lx++) {
+      for (let y = STATION_Y - 12; y <= STATION_Y + 17; y++) {
+        const b = stationBlock(x0 + lx, y, z0 + lz);
+        if (b) blocks[idx(lx, y, lz)] = b;
+      }
+    }
+    return blocks;
+  }
 }

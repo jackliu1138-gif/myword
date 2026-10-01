@@ -32,11 +32,13 @@ export const BODIES = {
   earth: { R: EARTH_R, g: 1, top: SPACE_ALT, dim: 0 },
   moon: { R: 34700, d: 2.57e6, incl: 0.105, g: 1 / 6, top: 1500, base: 100, dim: 4 },
   mars: { R: 67800, d: 2.5e7, elong: 2.62, lift: 0.04, g: 0.38, top: 1800, base: 90, dim: 5, tilt: 0.44 },
-  jupiter: { R: 1.425e6, d: 1.8e8, elong: 1.75, lift: -0.02, tilt: 0.05 },
-  saturn: { R: 1.2e6, d: 3.5e8, elong: -2.18, lift: 0.03, tilt: 0.47, rings: [1.24, 2.27] },
+  // (no ground: a station floats high over their clouds, at [lon, lat], with gravity of its own;
+  // base is the cloud tops, 380 blocks under its deck)
+  jupiter: { R: 1.425e6, d: 1.8e8, elong: 1.75, lift: -0.02, tilt: 0.05, g: 1, top: 1500, base: -260, dim: 6, station: [1.2, -0.37] },
+  saturn: { R: 1.2e6, d: 3.5e8, elong: -2.18, lift: 0.03, tilt: 0.47, rings: [1.24, 2.27], g: 1, top: 1500, base: -260, dim: 7, station: [0.4, 0.42] },
 };
 export const BODY_NAMES = ['earth', 'moon', 'mars', 'jupiter', 'saturn'];
-export const DIM_BODY = { 0: 'earth', 4: 'moon', 5: 'mars' };
+export const DIM_BODY = { 0: 'earth', 4: 'moon', 5: 'mars', 6: 'jupiter', 7: 'saturn' };
 
 // ------------------------------------------------------------------ vectors and frames
 export const v3 = {
@@ -109,16 +111,18 @@ export function lonLatOf(v) {
 }
 
 // blocks <-> longitude and latitude
+// (a station's world is a little map around where it floats)
 export function worldToLonLat(body, x, z) {
   if (body === 'earth') return [x / (EARTH_R * Math.cos(TILT)), TILT - z / EARTH_R];
-  const R = BODIES[body].R;
+  const b = BODIES[body], R = b.R;
+  if (b.station) return [b.station[0] + x / (R * Math.cos(b.station[1])), b.station[1] - z / R];
   return [x / R, -z / R];
 }
 export function lonLatToWorld(body, lon, lat) {
-  lon = wrapAngle(lon);
-  if (body === 'earth') return [lon * EARTH_R * Math.cos(TILT), (TILT - lat) * EARTH_R];
-  const R = BODIES[body].R;
-  return [lon * R, -lat * R];
+  if (body === 'earth') return [wrapAngle(lon) * EARTH_R * Math.cos(TILT), (TILT - lat) * EARTH_R];
+  const b = BODIES[body], R = b.R;
+  if (b.station) return [wrapAngle(lon - b.station[0]) * R * Math.cos(b.station[1]), (b.station[1] - lat) * R];
+  return [wrapAngle(lon) * R, -lat * R];
 }
 export function wrapAngle(a) {
   a = (a + Math.PI) % (2 * Math.PI);

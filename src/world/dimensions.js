@@ -11,13 +11,13 @@ import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT, layerTop } from './blocks.js';
 import { TerrainGenerator, BIOME } from './generator.js';
 import { TerrainGenerator2 } from './generator2.js';
 import { ChunkCtx, pasteEndCity } from './structures.js';
-import { MoonGenerator, MarsGenerator, SpaceGenerator } from './planets.js';
+import { MoonGenerator, MarsGenerator, SpaceGenerator, StationGenerator } from './planets.js';
 
 // 3 is space itself (no ground: see space.js), 4 the Moon and 5 Mars (planets.js)
-export const DIM = { OVERWORLD: 0, NETHER: 1, END: 2, SPACE: 3, MOON: 4, MARS: 5 };
-export const DIM_NAMES = ['overworld', 'nether', 'end', 'space', 'moon', 'mars'];
-// the dimensions with ground to build on (space has none)
-export const GROUND_DIMS = [0, 1, 2, 4, 5];
+export const DIM = { OVERWORLD: 0, NETHER: 1, END: 2, SPACE: 3, MOON: 4, MARS: 5, JUPITER: 6, SATURN: 7 };
+export const DIM_NAMES = ['overworld', 'nether', 'end', 'space', 'moon', 'mars', 'jupiter', 'saturn'];
+// the dimensions with ground to build on (space has none; Jupiter and Saturn, their stations)
+export const GROUND_DIMS = [0, 1, 2, 4, 5, 6, 7];
 
 // the Nether and the End are 128 blocks high, as in Minecraft (the arrays are WORLD_HEIGHT tall)
 const H = 128;
@@ -34,6 +34,8 @@ export function createGenerator(seed, dimension = 0, version = 1) {
   if (dimension === DIM.SPACE) return new SpaceGenerator(seed);
   if (dimension === DIM.MOON) return new MoonGenerator(seed);
   if (dimension === DIM.MARS) return new MarsGenerator(seed);
+  if (dimension === DIM.JUPITER) return new StationGenerator(seed, 'jupiter');
+  if (dimension === DIM.SATURN) return new StationGenerator(seed, 'saturn');
   return version >= 2 ? new TerrainGenerator2(seed) : new TerrainGenerator(seed);
 }
 

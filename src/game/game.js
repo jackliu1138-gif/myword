@@ -216,12 +216,14 @@ export class Game {
       2: World.deserializeEdits(de[2]),
       4: World.deserializeEdits(de[4]),
       5: World.deserializeEdits(de[5]),
+      6: World.deserializeEdits(de[6]),
+      7: World.deserializeEdits(de[7]),
     };
     this.dimItems = {};
     this.loadSpace(data);
     this.suit = false;
     // (in space only with the frame it was flown in)
-    const dimOk = (d) => d === 1 || d === 2 || d === 4 || d === 5 || (d === 3 && this.spaceState);
+    const dimOk = (d) => (Number.isInteger(d) && d >= 1 && d <= 7 && d !== 3) || (d === 3 && this.spaceState);
     this.dimension = data && dimOk(data.dimension) ? data.dimension : 0;
     this.genVersion = data ? (Number.isInteger(data.gen) && data.gen > 0 ? Math.min(data.gen, CURRENT_GEN) : 1) : CURRENT_GEN;
     this.world = this.createWorld(seed, this.dimension, this.dimEdits[this.dimension]);
@@ -283,7 +285,7 @@ export class Game {
       ...this.serializePlay(),
       ...this.serializeSpace(),
       edits: edits(0),
-      dimEdits: { 1: edits(1), 2: edits(2), 4: edits(4), 5: edits(5) },
+      dimEdits: { 1: edits(1), 2: edits(2), 4: edits(4), 5: edits(5), 6: edits(6), 7: edits(7) },
       savedAt: Date.now(),
     };
     this.world.dirtyEdits = false;
@@ -1117,7 +1119,7 @@ export class Game {
     const rain = this.weather && !dim ? this.weather.rain : 0;
     // (no air in space or on the Moon; a little dust in Mars's)
     const fog = dim === 1 ? { density: 0.011, falloff: 0.0005 } : dim === 2 ? { density: 0.0035, falloff: 0.0005 } : dim === 3 || dim === 4 ? { density: 0, falloff: 0.001 }
-      : dim === 5 ? { density: 0.0012, falloff: 0.004 } : {
+      : dim === 5 ? { density: 0.0012, falloff: 0.004 } : dim >= 6 ? { density: 0.0008, falloff: 0.0015 } : {
       density: (0.0011 + morning * 0.0045 + (sunY < 0 ? 0.001 : 0)) * (1 + rain * 3.5) + rain * 0.002,
       falloff: 0.03 * (1 - rain * 0.5),
     };

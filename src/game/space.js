@@ -18,6 +18,7 @@ import {
   placeOn, blendFrame, toC, fromC, v3, bodyPos, toBody, fromBody, carryWeight, relFrame, orthonormal,
 } from '../world/space.js';
 import { SEA_LEVEL } from '../world/blocks.js';
+import { STATION_Y, STATION_PAD } from '../world/planets.js';
 import { PlanetMaps } from './planetmaps.js';
 import { projectToScreen } from '../net/multiplayer.js';
 import { t } from '../ui/i18n.js';
@@ -30,7 +31,11 @@ const VIEW_FROM = 260;
 const VIEW_FULL = 900;
 // coming down: where the ground's dimension takes over (below each body's top, so as not to bounce)
 const LAND_MARGIN = 120;
-const DIM_OF = { earth: 0, moon: 4, mars: 5 };
+const DIM_OF = { earth: 0, moon: 4, mars: 5, jupiter: 6, saturn: 7 };
+// the dimensions with ground (or a station's deck) under a body's sky
+const ON_BODY = (dim) => dim === 0 || dim >= 4;
+// arriving over a station: this far above its deck, over the pad
+const STATION_ARRIVE = 260;
 
 // look direction <-> yaw and pitch (as Player.forward)
 const yawPitch = (f) => [Math.atan2(-f[0], -f[2]), Math.asin(Math.max(-1, Math.min(1, f[1])))];
@@ -177,7 +182,7 @@ export function installSpace(Game) {
     const view = skyView(pos, local, T, ef);
     const starRot = mat3Of(local);
     const sky = { sun: view.sun, moon: norm(view.bodies[1].centre), starRot, space: null };
-    if (mix > 0) sky.space = this.spaceViewOf(view, mix, dim === 4 ? 1 : dim === 5 ? 2 : 0, starRot, refXZ);
+    if (mix > 0) sky.space = this.spaceViewOf(view, mix, { 4: 1, 5: 2, 6: 3, 7: 4 }[dim] || 0, starRot, refXZ);
     if (dim >= 3) {
       // in the Earth's shadow?; the Earth's light on the Moon's night
       const e = view.bodies[0];
@@ -209,6 +214,7 @@ export function installSpace(Game) {
       if (n && n.body === 'earth') this.planetMaps.update(n.x, n.z, n.alt);
     } else if (this.dimension === 4 || this.dimension === 5) {
       const body = DIM_BODY[this.dimension];
+      // (the gas giants' stations: their clouds need no maps)
       const [x, y, z] = this.camera.pos;
       this.planetMaps.update(x, z, y - this.bodyBase(body), body);
     }
@@ -223,15 +229,19 @@ export function installSpace(Game) {
     const y = p.pos[1];
     p.flyBoost = dim === 0 ? 1 + Math.max(0, y - 300) / 80 : dim >= 4 ? 1 + Math.max(0, y - 400) / 80 : 1;
     p.thinAir = dim === 0 ? 1 + Math.max(0, y - 300) / 150 : 1;
-    p.gravity = dim === 4 ? BODIES.moon.g : dim === 5 ? BODIES.mars.g : 1;
-    p.jetpack = dim === 4 || dim === 5 || (!!this.suit && dim === 0 && !p.onGround);
+    p.gravity = dim >= 4 ? BODIES[DIM_BODY[dim]].g : 1;
+    p.jetpack = dim >= 4 || (!!this.suit && dim === 0 && !p.onGround);
+    // (the thrusters climb faster the higher above the ground you are)
+    p.thrustFloor = dim >= 6 ? STATION_Y : dim >= 4 ? this.bodyBase(DIM_BODY[dim]) + 120 : 200;
     // (the server may have set the clock since the last frame)
     if (dim === 3 && this.spaceState) this.carryInSpace();
     if (this.state !== 'playing' || this.spawnPending || this.arrival || this.sleeping) return;
     if (dim === 0 && y > 450 && !this.thinAirHinted) { this.thinAirHinted = true; this.ui.toast(t('space.thinAir'), 4000); }
-    if (dim === 0 || dim === 4 || dim === 5) {
+    if (ON_BODY(dim)) {
       const body = DIM_BODY[dim];
       if (y > this.bodyBase(body) + BODIES[body].top) { this.goToSpace(body); return; }
+      // fallen off a station: the suit's thrusters bring you back up onto its deck
+      if (dim >= 6 && y < STATION_Y - 70) { this.stationRescue(); return; }
       this.updateSuit(dt);
     } else if (dim === 3 && this.spaceState) {
       const n = this.spaceNadir();
@@ -274,6 +284,12 @@ export function installSpace(Game) {
     const bf = body === 'earth' ? this.earthFrameNow(T) : bodyFrame(body, T);
     const r = reachSurface(body, posC, T, bf);
     r.alt = Math.max(80, Math.min(BODIES[body].top - LAND_MARGIN, r.alt));
+    const station = !!BODIES[body].station;
+    if (station) {
+      // (no ground to come down to: the station's beacon guides you to it)
+      const [lon, lat] = BODIES[body].station;
+      Object.assign(r, { x: STATION_PAD[0] + 0.5, z: STATION_PAD[1] + 0.5, alt: STATION_Y + STATION_ARRIVE - this.bodyBase(body), local: localFrame(bf, lon, lat) });
+    }
     const fwd = fromC(r.local, toC(s.frame, p.forward()));
     const vel = fromC(r.local, toC(s.frame, p.vel));
     const sp = len(vel);
@@ -294,7 +310,10 @@ export function installSpace(Game) {
     p.pos = [r.x, this.bodyBase(body) + r.alt, r.z];
     p.vel = vel;
     [p.yaw, p.pitch] = yawPitch(fwd);
-    p.flying = this.isCreative() && p.flying;
+    // on the Moon, Mars and the stations the suit's thrusters bring you down (fast, slowing for
+    // the ground); on the Earth its air and gravity do
+    this.descent = body !== 'earth';
+    p.flying = this.isCreative() && p.flying && !this.descent;
     this.suit = true;
     this.ui.toast(t('space.land.' + body), 3200);
     this.audio.sfx('travel', 0.4, 0);
@@ -305,19 +324,38 @@ export function installSpace(Game) {
   P.updateSuit = function updateSuit(dt) {
     const p = this.player;
     const dim = this.dimension || 0;
-    // (on the Moon and Mars the suit is always on)
-    if (!this.suit && dim !== 4 && dim !== 5) { p.maxFall = 60; this.ui.setReentry(0); return; }
-    if (p.onGround || p.inWater || p.riding) { this.suit = false; p.maxFall = 60; this.ui.setReentry(0); return; }
-    if (p.flying || p.gliding) return;
+    // (on the Moon, Mars and the stations the suit is always on)
+    if (!this.suit && dim < 4) { p.maxFall = 60; this.ui.setReentry(0); return; }
+    if (p.onGround || p.inWater || p.riding) { this.suit = false; this.descent = false; p.maxFall = 60; this.ui.setReentry(0); return; }
+    if (p.flying || p.gliding) { this.descent = false; return; }
     const ground = this.world.isChunkReady(p.pos[0], p.pos[2]) ? this.world.surfaceHeight(Math.floor(p.pos[0]), Math.floor(p.pos[2])) : this.bodyBase(DIM_BODY[this.dimension || 0]);
     const h = Math.max(0, p.pos[1] - ground - 1);
-    const vmax = 4 + h * 0.25;
-    // (high up, falling faster than air would let you near the ground)
-    p.maxFall = Math.max(60, Math.min(260, vmax));
-    if (p.vel[1] < -vmax) p.vel[1] += (-vmax - p.vel[1]) * (1 - Math.exp(-dt * 4));
+    if (this.descent && p.thrusting) this.descent = false; // (thrusting up: you fly yourself)
+    if (this.descent) {
+      // coming down from space: the thrusters push you down fast and slow you for the ground,
+      // eight seconds or so from the top whatever the gravity
+      const want = -Math.min(300, 6 + h * 0.8);
+      p.vel[1] += (want - p.vel[1]) * (1 - Math.exp(-dt * 5));
+      p.maxFall = 320;
+    } else {
+      const vmax = 4 + h * 0.25;
+      // (high up, falling faster than air would let you near the ground)
+      p.maxFall = Math.max(60, Math.min(260, vmax));
+      if (p.vel[1] < -vmax) p.vel[1] += (-vmax - p.vel[1]) * (1 - Math.exp(-dt * 4));
+    }
     // glowing hot through the air on the way down from space
-    const hot = (this.dimension || 0) !== 4 ? smooth(30, 90, -p.vel[1]) * smooth(250, 900, p.pos[1]) : 0;
+    const hot = dim === 0 || dim === 5 ? smooth(30, 90, -p.vel[1]) * smooth(250, 900, p.pos[1]) : 0;
     this.ui.setReentry(hot);
+  };
+
+  // Fallen off a station into the clouds: back onto its pad.
+  P.stationRescue = function stationRescue() {
+    const p = this.player;
+    p.pos = [STATION_PAD[0] + 0.5, STATION_Y + 4, STATION_PAD[1] + 0.5];
+    p.vel = [0, 0, 0];
+    p.gliding = false;
+    this.ui.toast(t('space.rescue'), 3500);
+    this.audio.sfx('travel', 0.4, 0);
   };
 
   // ---------------------------------------------------------------- flying in space

@@ -95,6 +95,10 @@ uniform float uLightSteps;
 // x: how much the layer curves away with the planet (1 / 2R; 0 flat, as it is near the ground),
 // y: how much of it shows (high up the clouds give way to those of the view from on high)
 uniform vec2 uCloudCurve;
+// the clouds' colour (white on the Earth; the gas giants' cream, ochre and rust: w how banded) and
+// a haze to fade into in place of the Earth's sky (w 1 to use it)
+uniform vec4 uCloudTint;
+uniform vec4 uHaze;
 in vec2 vUV;
 layout(location = 0) out vec4 oColor;  // rgb in-scattered light, a transmittance
 layout(location = 1) out vec4 oDist;   // r: transmittance-weighted distance to the cloud
@@ -189,6 +193,12 @@ void main() {
       vec3 amb = mix(ambBot, ambTop, h) * (0.55 + 0.45 * h);
       float ext = d * SIGMA;
       vec3 Sc = (sun + amb) * ext;
+      if (uCloudTint.w > 0.0) {
+        // bands and swirls of colour drifting across a gas giant's clouds
+        float b = 0.5 + 0.5 * sin(p.z * 0.0011 + sin(p.x * 0.00037 + p.z * 0.0002) * 2.4);
+        vec3 alb = mix(uCloudTint.rgb, uCloudTint.rgb * vec3(0.86, 0.62, 0.46), b * uCloudTint.w);
+        Sc *= alb;
+      }
       float Ts = exp(-ext * dt);
       S += T * (Sc - Sc * Ts) / max(ext, 1e-6);
       tWeighted += t * T * (1.0 - Ts);
@@ -202,7 +212,7 @@ void main() {
   }
   // aerial perspective: distant clouds dissolve into the horizon haze
   float tMid = wSum > 0.0 ? tWeighted / wSum : mix(t0, t1, 0.5);
-  vec3 skyCol = texture(uSkyLut, skyLutUV(vec3(dir.x, max(dir.y, 0.0), dir.z))).rgb;
+  vec3 skyCol = uHaze.w > 0.5 ? uHaze.rgb : texture(uSkyLut, skyLutUV(vec3(dir.x, max(dir.y, 0.0), dir.z))).rgb;
   float fade = exp(-tMid / 7000.0) * smoothstep(0.0, 0.035, dir.y + 0.01);
   // (seen from above, a sea of cloud keeps its shape far out)
   fade = mix(fade, exp(-tMid / 16000.0), smoothstep(top, top + 60.0, ro.y));

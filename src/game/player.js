@@ -49,6 +49,7 @@ export class Player {
     this.maxFall = 60; // blocks a second (more coming down from space)
     this.jetpack = false; // a space suit's thrusters: holding jump in the air lifts you
     this.thrusting = false;
+    this.thrustFloor = 200; // where the thrusters' climb starts to speed up (about the ground)
   }
 
   get eye() {
@@ -222,7 +223,7 @@ export class Player {
       if (!ctl.jump) this.jumpHeld = false;
       this.thrusting = this.jetpack && ctl.jump && !this.onGround && !this.jumpHeld;
       if (this.thrusting) {
-        const climb = 9 + Math.max(0, this.pos[1] - 200) * 0.06;
+        const climb = 12 + Math.max(0, this.pos[1] - this.thrustFloor) * 0.12;
         this.vel[1] = Math.min(climb, this.vel[1] + (g + 18) * dt);
       }
       if (ctl.jump && this.onGround) {

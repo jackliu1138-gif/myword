@@ -11,6 +11,7 @@ import { Player } from '../src/game/player.js';
 import { HOME } from '../src/world/generator.js';
 import { BLOCK } from '../src/world/blocks.js';
 import { installSpace } from '../src/game/space.js';
+import { STATION_Y, STATION_PAD } from '../src/world/planets.js';
 
 const near = (a, b, e = 1e-6) => a.every((v, i) => Math.abs(v - b[i]) < e);
 
@@ -207,4 +208,53 @@ test('joining a server again later, you are back in space over the ground you le
     assert.equal(n.body, body);
     assert.ok(Math.abs(n.x - 800) < 0.01 && Math.abs(n.z - 250) < 0.01 && Math.abs(n.alt - 1200) < 0.01, body + ': ' + [n.x, n.z, n.alt].join(', '));
   }
+});
+
+test('Jupiter and Saturn: a station floating over the clouds, its pad where you arrive, nothing else', () => {
+  for (const dim of [DIM.JUPITER, DIM.SATURN]) {
+    const g = createGenerator(9, dim, 2);
+    const mid = generate(g, 0, 0), far = generate(g, 4, 4);
+    const dome = [...generate(g, 0, -1).blocks, ...generate(g, -1, -1).blocks];
+    assert.ok(mid.blocks.includes(BLOCK.SMOOTH_STONE) && mid.blocks.includes(BLOCK.SEA_LANTERN), 'the deck and the pad\'s lights');
+    assert.ok(dome.includes(BLOCK.GLASS) && dome.includes(BLOCK.CHERRY_LEAVES), 'the dome and its garden');
+    assert.ok(!far.blocks.some(Boolean), 'nothing but air away from it');
+    const [x, y, z] = g.findSpawn();
+    assert.equal(y, STATION_Y + 1);
+    assert.ok(Math.abs(x - STATION_PAD[0] - 0.5) < 1e-9 && Math.abs(z - STATION_PAD[1] - 0.5) < 1e-9);
+    // its little map round where it floats
+    const body = dim === DIM.JUPITER ? 'jupiter' : 'saturn';
+    const [lon, lat] = S.worldToLonLat(body, 0, 0);
+    assert.deepEqual([lon, lat], S.BODIES[body].station);
+    const back = S.lonLatToWorld(body, ...S.worldToLonLat(body, 25, -14));
+    assert.ok(near(back, [25, -14], 1e-6));
+  }
+});
+
+test('coming down from space onto the Moon takes seconds, not half a minute, and nobody is hurt', () => {
+  class G {}
+  installSpace(G);
+  const g = new G();
+  const FLOOR = 150;
+  const world = { getBlock: (x, y) => (y < FLOOR ? 1 : 0), getState: () => 0, isSolidAt: (x, y) => y < FLOOR, boxCollides: (x0, y0) => y0 < FLOOR, climbableAt: () => false, isChunkReady: () => true, surfaceHeight: () => FLOOR - 1 };
+  g.world = world;
+  g.dimension = DIM.MOON;
+  g.ui = { setReentry() {} };
+  const p = g.player = new Player(world);
+  p.pos = [0.5, FLOOR + 1380, 0.5];
+  p.vel = [0, -80, 0];
+  p.gravity = S.BODIES.moon.g;
+  g.suit = true;
+  g.descent = true;
+  const DT = 1 / 30;
+  let t = 0, landing = 0;
+  const idle = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false };
+  while (!p.onGround && t < 60) {
+    g.updateSuit(DT);
+    landing = -p.vel[1];
+    p.update(DT, idle);
+    t += DT;
+  }
+  assert.ok(p.onGround, 'landed');
+  assert.ok(t < 10, 'seconds to the ground: ' + t.toFixed(1));
+  assert.ok(landing < 12, 'gently at the end: ' + landing.toFixed(1) + ' blocks a second');
 });

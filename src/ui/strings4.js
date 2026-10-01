@@ -14,6 +14,10 @@ registerStrings('en', {
   'space.speed': 'Speed {v}/s',
   'space.mkm': '{n} million km',
   'space.noFire': 'There is no oxygen here: nothing will burn',
+  'space.land.jupiter': 'Jupiter has no ground: the beacon guides you down to the station floating over its clouds, above the Great Red Spot',
+  'space.land.saturn': 'Saturn has no ground: the beacon guides you down to the station floating over its clouds, under its rings',
+  'space.rescue': 'Your suit\'s thrusters caught you and brought you back to the station',
+  'dim.enter.jupiter': 'Jupiter Station', 'dim.enter.saturn': 'Saturn Station',
   'dim.enter.space': 'Space', 'dim.enter.moon': 'The Moon', 'dim.enter.mars': 'Mars',
   'adv.space': 'Fly high enough (creative flight, or elytra and fireworks: they push harder in the thin air) and the sky turns black: past the top of the air you are in space. Fly to the Moon or Mars and come down to land; on them, press jump again in the air and hold it to use your suit\'s thrusters, and fly up high to leave.',
 });
@@ -29,6 +33,10 @@ registerStrings('zh', {
   'space.speed': '速度 {v}/秒',
   'space.mkm': '{n} 百万公里',
   'space.noFire': '这里没有氧气，火点不着',
+  'space.land.jupiter': '木星没有地面：导航信标把你引到了漂浮在云层上的空间站，下面就是大红斑',
+  'space.land.saturn': '土星没有地面：导航信标把你引到了漂浮在云层上的空间站，头顶就是土星光环',
+  'space.rescue': '宇航服的推进器接住了你，把你送回了空间站',
+  'dim.enter.jupiter': '木星空间站', 'dim.enter.saturn': '土星空间站',
   'dim.enter.space': '太空', 'dim.enter.moon': '月球', 'dim.enter.mars': '火星',
   'adv.space': '一直往上飞（创造模式飞行，或者用鞘翅加烟花：空气越稀薄烟花推得越猛），天空会慢慢变黑：飞出大气层就进入太空了。飞到月球或火星附近就能降落；在那里，空中再按一次跳跃并按住就能用宇航服的推进器飞起来，飞得足够高就能离开。',
 });

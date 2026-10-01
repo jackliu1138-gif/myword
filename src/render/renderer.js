@@ -823,6 +823,21 @@ export class Renderer {
       L.night = 1;
       return;
     }
+    if (dim >= 6) {
+      // over the clouds of Jupiter or Saturn: a sun far off (drawn brighter than true), warmed
+      // through the haze, and the light of a hazy sky all round; their days are short
+      const fade = Math.min(1, Math.max(0, (el + 0.04) / 0.1));
+      const sunE = SUN_E * (dim === 6 ? 0.16 : 0.11) * fade;
+      L.lightColor = [sunE, sunE * 0.92, sunE * 0.8];
+      const day = Math.min(1, Math.max(0, (el + 0.15) / 0.35));
+      const k = dim === 6 ? [0.34, 0.26, 0.19] : [0.3, 0.27, 0.2];
+      L.skyUp = k.map((v) => v * (0.06 + 0.94 * day) * 0.6 + 0.003);
+      L.skySide = L.skyUp.map((v) => v * 0.9);
+      L.ground = k.map((v) => v * 0.3 * day);
+      L.light = sun; L.isSun = true; L.fadeSun = fade;
+      L.night = 1 - day;
+      return;
+    }
     // Mars: half the sunlight of the Earth, reddened through the dust low down; a butterscotch sky
     const fade = Math.min(1, Math.max(0, (el + 0.03) / 0.08));
     const tr = Math.exp(-0.5 / Math.max(el + 0.08, 0.04));
@@ -879,7 +894,8 @@ export class Renderer {
     // the nether and the end: no sun or moon, a constant light and a coloured haze instead
     const dim = state.dimension || 0;
     const DIM = [null, { amb: [0.2, 0.085, 0.06], sky: [0.05, 0.022, 0.02], fog: [0.085, 0.022, 0.015] }, { amb: [0.05, 0.045, 0.06], sky: [0.34, 0.3, 0.42], fog: [0.028, 0.022, 0.042] },
-      { amb: [0.004, 0.004, 0.005], fog: [0, 0, 0] }, { amb: [0.006, 0.006, 0.007], fog: [0, 0, 0] }, { amb: [0.01, 0.007, 0.005], fog: [0.2, 0.12, 0.07] }][dim];
+      { amb: [0.004, 0.004, 0.005], fog: [0, 0, 0] }, { amb: [0.006, 0.006, 0.007], fog: [0, 0, 0] }, { amb: [0.01, 0.007, 0.005], fog: [0.2, 0.12, 0.07] },
+      { amb: [0.012, 0.01, 0.008], fog: [0, 0, 0] }, { amb: [0.012, 0.011, 0.009], fog: [0, 0, 0] }][dim];
     if (dim >= 3) this.airlessLighting(L, state);
     else if (DIM) {
       L.lightColor = [0, 0, 0];
@@ -935,12 +951,14 @@ export class Renderer {
     // w: 0 above water, otherwise 1 + depth of the eye below the surface
     v4(164, near, far, this.frame, state.underwater ? 1 + (state.waterDepth || 0) : 0);
     const rain = (state.weather && state.weather.rain) || 0;
-    const coverage = (state.cloudCoverage ?? 0.5) + (0.96 - (state.cloudCoverage ?? 0.5)) * Math.min(1, rain * 1.3);
+    const coverage = dim >= 6 ? 0.93 : (state.cloudCoverage ?? 0.5) + (0.96 - (state.cloudCoverage ?? 0.5)) * Math.min(1, rain * 1.3);
     v4(168, rain, (state.wind ?? 1) * (1 + rain * 1.2), coverage, state.eyeSky ?? 1);
     const pc = this.prevCam || cam.pos;
     v4(172, px - pc[0], py - pc[1], pz - pc[2], 0);
     v4(176, R, D, 1 / this.shadowRes, 0.86);
-    v4(180, 185, 340, state.cloudOffset[0], state.cloudOffset[1]);
+    // (over Jupiter and Saturn: a sea of cloud below the station's deck)
+    if (dim >= 6) v4(180, -250, -110, state.cloudOffset[0], state.cloudOffset[1]);
+    else v4(180, 185, 340, state.cloudOffset[0], state.cloudOffset[1]);
     v4(184, L.moonDisk[0], L.moonDisk[1], L.moonDisk[2], L.night);
     v4(188, s.shadows ? 1 : 0, s.pcf, s.volSteps || 1, s.cloudSteps || 1);
     const wx = state.weather || {};
@@ -948,7 +966,9 @@ export class Renderer {
     // (night vision lifts the dark everywhere with a cool, even light)
     const nv = state.nightVision || 0;
     v4(196, dim, (DIM ? DIM.amb[0] : 0) + nv * 0.16, (DIM ? DIM.amb[1] : 0) + nv * 0.18, (DIM ? DIM.amb[2] : 0) + nv * 0.21);
-    v4(200, DIM ? DIM.fog[0] : 0, DIM ? DIM.fog[1] : 0, DIM ? DIM.fog[2] : 0, 0);
+    const haze = dim >= 6 ? L.skyUp.map((v, i) => v * 1.25 + L.lightColor[i] * 0.04) : DIM ? DIM.fog : [0, 0, 0];
+    this.haze = haze;
+    v4(200, haze[0], haze[1], haze[2], 0);
     this.ubo.upload();
   }
 
@@ -999,8 +1019,9 @@ export class Renderer {
     const cloudFade = sky ? 1 - smoothstep01(800, 1300, state.camera.pos[1]) : 1;
     if ((state.dimension || (cloudFade <= 0 && this.settings.clouds)) && !this.dimSettings) {
       const saved = this.settings;
-      const sunlit = state.dimension === 4 || state.dimension === 5;
-      this.settings = { ...saved, shadows: saved.shadows && (sunlit || !state.dimension), clouds: false, volumetric: false, ssr: saved.ssr };
+      const sunlit = state.dimension >= 4;
+      const clouds = saved.clouds && state.dimension >= 6;
+      this.settings = { ...saved, shadows: saved.shadows && (sunlit || !state.dimension), clouds, volumetric: false, ssr: saved.ssr };
       this.dimSettings = true;
       try { this.render(state, dt); } finally { this.settings = saved; this.dimSettings = false; }
       return;
@@ -1118,7 +1139,10 @@ export class Renderer {
       this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeatherMap', this.weatherTex).tex('uSkyLut', this.skyLut.texture)
         .f2('uCloudSize', t.cloudRaw.width, t.cloudRaw.height)
         .f1('uLightSteps', s.cloudLightSteps || 6)
-        .f2('uCloudCurve', smoothstep01(250, 450, state.camera.pos[1]) / (2 * EARTH_R), cloudFade);
+        .f2('uCloudCurve', state.dimension >= 6 ? 0 : smoothstep01(250, 450, state.camera.pos[1]) / (2 * EARTH_R), state.dimension >= 6 ? 1 : cloudFade)
+        // the gas giants' clouds: their colours, and their haze in place of the Earth's sky
+        .f4('uCloudTint', ...(state.dimension === 6 ? [1.0, 0.82, 0.64, 1] : state.dimension === 7 ? [1.0, 0.93, 0.76, 0.45] : [1, 1, 1, 0]))
+        .f4('uHaze', ...(this.haze || [0, 0, 0]), state.dimension >= 6 ? 1 : 0);
       this.fullscreen();
       const off = state.cloudOffset;
       const po = this.prevCloudOffset || off;
@@ -1479,7 +1503,7 @@ export class Renderer {
     else if (state.dimension === 2) env += 1.0;
     // out in space and on the Moon: the eye is set for sunlight on bright ground (or the dark)
     else if (state.dimension === 3 || state.dimension === 4) env = lum(L.lightColor) * 0.8 + 0.6;
-    else if (state.dimension === 5) env = lum(L.lightColor) * 0.8 + lum(L.skyUp) * 2.5 + 0.3;
+    else if (state.dimension >= 5) env = lum(L.lightColor) * 0.8 + lum(L.skyUp) * 2.5 + 0.3;
     // high up the eye is set for the sunlit Earth below, not for the dark sky
     // (set for the sun's light whether it is day or night below: the night side is dark there,
     // its villages' lights showing)
