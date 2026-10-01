@@ -10,6 +10,7 @@ import {
 import { ITEM, blockDrops } from '../sim/items.js';
 import { newEntity, entityKey, parseKey, tickFurnace, furnaceLit, tickBrewing, contentsOf, serializeEntity, loadEntity, loadEntities, serializeEntities } from '../sim/containers.js';
 import { TerrainGenerator2 } from '../world/generator2.js';
+import { GROUND_DIMS } from '../world/dimensions.js';
 import { rollLoot } from '../sim/loot.js';
 import { mulberry32, hash3 } from '../world/noise.js';
 import { raycast } from './player.js';
@@ -39,14 +40,16 @@ export function installBuilding(Game) {
   // ---------------------------------------------------------------- block entities
   P.setupBlockEntities = function setupBlockEntities(data) {
     const saved = (data && data.blockEntities) || {};
-    this.bents = { 0: loadEntities(saved[0]), 1: loadEntities(saved[1]), 2: loadEntities(saved[2]) };
+    // (every dimension with ground: the overworld, the Nether, the End, the Moon and Mars)
+    this.bents = {};
+    for (const d of GROUND_DIMS) this.bents[d] = loadEntities(saved[d]);
     this.openBlock = null;
     this.signLayers = new Map();
   };
 
   P.serializeBlockEntities = function serializeBlockEntities() {
     const out = {};
-    for (const d of [0, 1, 2]) out[d] = serializeEntities(this.bents && this.bents[d]);
+    for (const d of GROUND_DIMS) out[d] = serializeEntities(this.bents && this.bents[d]);
     return out;
   };
 

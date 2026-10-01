@@ -7,12 +7,14 @@ import { ITEMS, RECIPES, itemDef, COOK_TIME } from '../sim/items.js';
 import { ARMOR_REF, OFFHAND_REF, CONTAINER_REF } from '../sim/inventory.js';
 import { EFFECTS, ENCHANTS, ROMAN, BREW_TIME, BLAZE_FUEL } from '../sim/effects.js';
 import './strings3.js';
+import './strings4.js';
 
 // Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
 const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
   'oak_leaves', 'birch_leaves', 'spruce_leaves', 'tall_grass', 'fern', 'poppy', 'dandelion', 'cornflower', 'dead_bush', 'pumpkin',
   'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'obsidian', 'netherrack', 'soul_sand', 'nether_quartz_ore', 'magma_block',
-  'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water', 'oak_sapling', 'birch_sapling', 'spruce_sapling']);
+  'ancient_debris', 'glowstone', 'end_stone', 'dragon_egg', 'lava', 'water', 'oak_sapling', 'birch_sapling', 'spruce_sapling',
+  'moon_regolith', 'moon_rock', 'moon_basalt', 'mars_sand', 'mars_rock']);
 const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'potions', 'transport', 'eggs', 'misc'];
 function paletteTab(d) {
   if (d.kind === 'block') return IS_RAIL[d.id] ? 'transport' : NATURE.has(d.key) ? 'nature' : 'building';
@@ -486,7 +488,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -722,6 +724,49 @@ export class UI {
     const k = Math.max(0.6, Math.min(1, 12 / Math.max(dist, 1)));
     el.style.transform = `translate(${at[0].toFixed(1)}px, ${at[1].toFixed(1)}px) translate(-50%, -100%) scale(${k.toFixed(2)})`;
     el.classList.toggle('fade', !!fading);
+  }
+
+  // In space: markers on the planets (info.marks: { name, at: [x, y] | null, dist }), the height
+  // over the nearest and the speed; null hides it all.
+  setSpaceHud(info) {
+    const root = $('space-hud');
+    if (!info) { if (!root.hidden) root.hidden = true; return; }
+    root.hidden = false;
+    const box = $('space-marks');
+    if (!this.spaceMarks) this.spaceMarks = new Map();
+    for (const m of info.marks) {
+      let el = this.spaceMarks.get(m.name);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'smark';
+        el.innerHTML = '<i></i><b></b><small></small>';
+        box.appendChild(el);
+        this.spaceMarks.set(m.name, el);
+      }
+      el.hidden = !m.at;
+      if (!m.at) continue;
+      el.style.transform = `translate(${m.at[0].toFixed(1)}px, ${m.at[1].toFixed(1)}px) translate(-50%, -9px)`;
+      el.children[1].textContent = t('space.body.' + m.name);
+      el.children[2].textContent = this.spaceDistance(m.dist);
+    }
+    $('space-alt').textContent = t('space.alt', { body: t('space.body.' + info.body), d: this.spaceDistance(info.alt) });
+    $('space-speed').textContent = t('space.speed', { v: this.spaceDistance(info.speed) });
+  }
+
+  // a distance in blocks as the game counts space (a block 50 m, as the planets' scale)
+  spaceDistance(blocks) {
+    const km = (blocks * 50) / 1000;
+    if (km < 10) return km.toFixed(1) + ' km';
+    if (km < 100000) return Math.round(km).toLocaleString() + ' km';
+    return t('space.mkm', { n: (km / 1e6).toFixed(km < 1e7 ? 2 : 1) });
+  }
+
+  // the glow of the air heating up around you on the way down from space (0..1)
+  setReentry(amount) {
+    const el = $('reentry');
+    const on = amount > 0.01;
+    if (el.hidden === on) el.hidden = !on;
+    if (on) el.style.opacity = Math.min(1, amount).toFixed(2);
   }
 
   // the name of the villager under the crosshair (info = { at, name, job, hint, dist } or null)

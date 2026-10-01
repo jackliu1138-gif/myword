@@ -951,6 +951,34 @@ Object.assign(GEN, {
     t.normalStrength = 1.4;
   },
   end_stone_bricks: (t) => bricksPattern(t, { brick: [226, 230, 170], mortar: [160, 160, 112] }, 8, 4),
+  // the Moon: fine grey dust with dark grains and glassy beads; pale highland rock; dark mare basalt
+  moon_regolith: (t) => {
+    sandLike(t, [128, 126, 123], { rough: 0.97, normal: 1.1 });
+    t.each((x, y, i) => {
+      const p = pnoise(x, y, t.seed + 9);
+      if (p > 0.96) { t.set(x, y, [196, 194, 188]); t.rough[i] = 0.3; t.height[i] = 0.8; }
+      else if (p < 0.06) t.set(x, y, scalec(t.get(x, y), 0.7));
+    });
+  },
+  moon_rock: (t) => stoneLike(t, { base: [152, 151, 147], contrast: 1.25, rough: 0.9 }),
+  moon_basalt: (t) => {
+    stoneLike(t, { base: [80, 80, 84], contrast: 1.1, rough: 0.85, normal: 1.4 });
+    // gas bubbles frozen in the lava
+    const rand = mulberry32(t.seed);
+    for (let k = 0; k < 9; k++) {
+      const x = Math.floor(rand() * S), y = Math.floor(rand() * S);
+      t.set(x, y, [46, 46, 50]);
+      t.height[y * S + x] = 0.05;
+    }
+  },
+  // Mars: rust-red dust, and the darker rock under it
+  mars_sand: (t) => sandLike(t, [186, 100, 58], { rough: 0.95, normal: 1.0 }),
+  mars_rock: (t) => {
+    stoneLike(t, { base: [138, 72, 50], contrast: 1.3, rough: 0.88, normal: 1.4 });
+    t.each((x, y, i) => {
+      if (pnoise(x, y, t.seed + 4) > 0.93) { t.set(x, y, [92, 48, 36]); t.height[i] = 0.1; }
+    });
+  },
   end_portal_frame_top: (t) => {
     t.each((x, y, i) => {
       const edge = Math.min(x, y, S - 1 - x, S - 1 - y);

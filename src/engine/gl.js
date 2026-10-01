@@ -105,6 +105,10 @@ export class Program {
   f4(name, x, y, z, w) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniform4f(l, x, y, z, w); return this; }
   i1(name, x) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniform1i(l, x); return this; }
   m4(name, m) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniformMatrix4fv(l, false, m); return this; }
+  // a mat3 or an array of them (column-major, flat), and arrays of vec3 / vec4
+  m3(name, m) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniformMatrix3fv(l, false, m); return this; }
+  f3v(name, a) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniform3fv(l, a); return this; }
+  f4v(name, a) { const l = this.uniforms.get(name); if (l !== undefined) this.gl.uniform4fv(l, a); return this; }
 }
 
 export const FORMATS = {

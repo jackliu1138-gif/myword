@@ -10,7 +10,7 @@ const H = WORLD_HEIGHT;
 
 export const chunkKey = (cx, cz) => (cx + 32768) * 65536 + (cz + 32768);
 
-function createWorker() {
+export function createWorker() {
   const src = globalThis.__LUMEN_WORKER_SRC__;
   if (src) {
     const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
@@ -128,12 +128,14 @@ export class World {
     this.genVersion = genVersion;
     this.meshOptions = meshOptions || { fancyLeaves: true };
     this.generator = createGenerator(seed, dimension, genVersion);
+    // space (dimension 3) has no ground at all: nothing streams, everything is open
+    this.void = dimension === 3;
     this.chunks = new Map();
     // chunkKey -> Map(index -> id | state << 8): every block changed since generation
     this.edits = edits || new Map();
     this.renderDistance = renderDistance;
     this.meshQueue = []; // results waiting for upload
-    this.pool = new WorkerPool(seed, workers, (r) => this.onResult(r), dimension, genVersion);
+    this.pool = new WorkerPool(seed, this.void ? 0 : workers, (r) => this.onResult(r), dimension, genVersion);
     this.jobId = 0;
     this.lastCx = null;
     this.lastCz = null;
@@ -151,7 +153,7 @@ export class World {
   }
 
   getBlock(x, y, z) {
-    if (y < 0 || y >= H) return 0;
+    if (y < 0 || y >= H || this.void) return 0;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     let c = this._last;
     if (!c || c.cx !== cx || c.cz !== cz) {
@@ -179,7 +181,7 @@ export class World {
 
   // Sky light (0..15) and block light (0..15) at a position, from the last mesh of that chunk.
   getLight(x, y, z) {
-    if (y >= H) return [15, 0];
+    if (y >= H || this.void) return [15, 0];
     if (y < 0) return [0, 0];
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     const c = this.chunks.get(chunkKey(cx, cz));
@@ -190,6 +192,7 @@ export class World {
 
   // For collision: unloaded chunks count as solid so the player can't fall through the world.
   isSolidAt(x, y, z) {
+    if (this.void) return false;
     if (y < 0) return true;
     if (y >= H) return false;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
@@ -201,6 +204,7 @@ export class World {
   // Does a box (world units) overlap anything creatures can't walk through? Unloaded chunks are
   // solid. Slabs, stairs, fences, doors and the like use their own boxes.
   boxCollides(x0, y0, z0, x1, y1, z1) {
+    if (this.void) return false;
     const bx0 = Math.floor(x0), bx1 = Math.floor(x1), bz0 = Math.floor(z0), bz1 = Math.floor(z1);
     const by0 = Math.floor(y0), by1 = Math.floor(y1);
     for (let y = by0 - 1; y <= by1; y++) {
@@ -233,13 +237,14 @@ export class World {
   }
 
   isChunkReady(x, z) {
+    if (this.void) return true;
     const c = this.getChunk(Math.floor(x / CS), Math.floor(z / CS));
     return !!(c && c.blocks && c.gpu);
   }
 
   // state: the block's state byte (facing, open, liquid level...; 0 for most blocks).
   setBlock(x, y, z, id, { state = 0, record = true, remote = false } = {}) {
-    if (y < 0 || y >= H) return false;
+    if (y < 0 || y >= H || this.void) return false;
     const cx = Math.floor(x / CS), cz = Math.floor(z / CS);
     const c = this.getChunk(cx, cz);
     if (!c || !c.blocks) return false;
@@ -366,6 +371,7 @@ export class World {
 
   // Stream chunks around (px, pz). viewDir is used to prioritise what's in front.
   update(px, pz, viewX = 0, viewZ = 1) {
+    if (this.void) return;
     if (this.pool.lost) {
       this.pool.lost = false;
       for (const c of this.chunks.values()) {

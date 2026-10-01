@@ -18,12 +18,14 @@ import { cloudNoiseFS, weatherFS, waterNormalFS } from './shaders/noisegen.js';
 import { outlineVS, outlineFS, particleVS, particleFS, handVS, handFS } from './shaders/overlay.js';
 import { precipVS, precipFS } from './shaders/precip.js';
 import { transmittance, skyIrradiance, PLANET_RADIUS } from './atmosphere.js';
+import { transLutFS, skyViewFS, cloudFieldFS, spaceFS, TRANS_W, TRANS_H, SKYV_W, SKYV_H } from './shaders/space.js';
+import { TILT, EARTH_R, METRES } from '../world/space.js';
 import { VERTEX_BYTES } from '../world/mesher.js';
 
 const MAX_QUADS = 1 << 18;
 const SUN_E = 10.0;
 const MOON_E = 0.4;
-const SUN_TILT = 0.42; // orbit tilt (radians) so noon shadows are not axis aligned
+const SUN_TILT = TILT; // orbit tilt (radians) so noon shadows are not axis aligned (see world/space.js)
 
 // cloudBlend: share of each new cloud frame in the cloud history (lower = smoother, more lag)
 export const QUALITY_PRESETS = {
@@ -33,6 +35,8 @@ export const QUALITY_PRESETS = {
   high: { renderScale: 1.0, shadows: true, shadowRes: 2048, shadowDistance: 128, pcf: 12, clouds: true, cloudSteps: 36, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.14, volumetric: true, volSteps: 20, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 1.25, grass3d: false, grassRadius: 24, grassDensity: 20, grassShadows: false, fancyLeaves: false, pom: true, pomSteps: 16 },
   ultra: { renderScale: 1.0, shadows: true, shadowRes: 4096, shadowDistance: 160, pcf: 16, clouds: true, cloudSteps: 48, cloudRes: 0.5, cloudLightSteps: 6, cloudBlend: 0.15, volumetric: true, volSteps: 28, ssao: true, ssr: true, bloom: true, taa: true, maxDpr: 2, grass3d: true, grassRadius: 28, grassDensity: 24, grassShadows: false, fancyLeaves: false, pom: true, pomSteps: 24 },
 };
+
+const smoothstep01 = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 
 function createQuadIndices(gl, quads) {
   const idx = new Uint32Array(quads * 6);
@@ -77,6 +81,7 @@ export class Renderer {
     this.createSamplers();
     this.createBlockTextures(textureArrays);
     this.generateNoiseTextures();
+    this.createSpaceResources();
     this.createShadowMaps();
     this.skyLut = new RenderTarget(gl, 256, 128, ['rgba16f'], null, { wrap: gl.REPEAT });
     // repeat horizontally only
@@ -125,7 +130,86 @@ export class Renderer {
       grassShadow: P(grassShadowVS, grassShadowFS, 'grassShadow'),
       weather: P(FS, weatherFS, 'weather'),
       waterNormal: P(FS, waterNormalFS, 'waterNormal'),
+      transLut: P(FS, transLutFS, 'transLut'),
+      skyView: P(FS, skyViewFS, 'skyView'),
+      cloudField: P(FS, cloudFieldFS, 'cloudField'),
+      space: P(FS, spaceFS, 'space'),
     };
+  }
+
+  // ------------------------------------------------------------------ the view from on high
+  // The air's transmittance (once), the planet's weather (once per world), placeholder maps until
+  // the real ones arrive (setPlanetMap), and the sky light on the ground by the sun's height.
+  createSpaceResources() {
+    const gl = this.gl;
+    this.transLut = new RenderTarget(gl, TRANS_W, TRANS_H, ['rgba16f']);
+    this.transLut.bind();
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
+    this.prog.transLut.use();
+    this.fullscreen();
+    this.skyView = new RenderTarget(gl, SKYV_W, SKYV_H, ['rgba16f']);
+    this.cloudField = createTexture2D(gl, 1024, 512, 'rgba8', { mips: true, wrap: gl.REPEAT, wrapT: gl.CLAMP_TO_EDGE });
+    this.makeCloudField(0);
+    const px = (r, g, b, a) => createTexture2D(gl, 1, 1, 'rgba8', { data: new Uint8Array([r, g, b, a]) });
+    const dark = () => createTexture2D(gl, 1, 1, 'r8', { data: new Uint8Array([0]) });
+    this.planetTex = {
+      earth: px(40, 70, 90, 49), earthLights: dark(), near: px(40, 70, 90, 49), nearLights: dark(), mid: px(40, 70, 90, 49),
+      moon: px(140, 140, 136, 50), mars: px(186, 100, 58, 50),
+    };
+    this.planetInfo = { earth: false, near: null, mid: null };
+    this.spaceDummy = createTexture2D(gl, 1, 1, 'rgba16f');
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // sky light on the ground with the sun at heights -0.2 .. 1 (as computeLighting boosts it)
+    const irr = new Float32Array(24);
+    for (let i = 0; i < 8; i++) {
+      const mu = -0.2 + (i / 7) * 1.2;
+      const l = [Math.sqrt(1 - mu * mu), mu, 0];
+      const up = mu > -0.3 ? skyIrradiance(l, 200, SUN_E).up : [0, 0, 0];
+      const lum = 0.2126 * up[0] + 0.7152 * up[1] + 0.0722 * up[2];
+      for (let c = 0; c < 3; c++) irr[i * 3 + c] = (up[c] * 0.7 + lum * 0.3) * 1.9;
+    }
+    this.skyIrrTable = irr;
+  }
+
+  makeCloudField(seed) {
+    const gl = this.gl;
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.cloudField, 0);
+    gl.viewport(0, 0, 1024, 512);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    this.prog.cloudField.use().f1('uSeed', (seed % 1000) * 0.137);
+    this.fullscreen();
+    gl.bindTexture(gl.TEXTURE_2D, this.cloudField);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fbo);
+  }
+
+  // A map of a planet seen from space (world/planetmap.js): kind 'earth', 'near', 'mid', 'moon'
+  // or 'mars'; data { rgba, lights, w, h } or { rgba, lights, n, span, cx, cz } for the squares.
+  setPlanetMap(kind, data) {
+    const gl = this.gl;
+    const w = data.w || data.n, h = data.h || data.n;
+    const old = this.planetTex[kind];
+    if (old) gl.deleteTexture(old);
+    this.planetTex[kind] = createTexture2D(gl, w, h, 'rgba8', { mips: true, data: data.rgba, wrap: kind === 'near' || kind === 'mid' ? gl.CLAMP_TO_EDGE : gl.REPEAT, wrapT: gl.CLAMP_TO_EDGE });
+    gl.generateMipmap(gl.TEXTURE_2D);
+    if (data.lights && (kind === 'earth' || kind === 'near')) {
+      const lk = kind === 'earth' ? 'earthLights' : 'nearLights';
+      if (this.planetTex[lk]) gl.deleteTexture(this.planetTex[lk]);
+      this.planetTex[lk] = createTexture2D(gl, w, h, 'r8', { mips: true, data: data.lights, wrap: kind === 'earth' ? gl.REPEAT : gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE });
+      gl.generateMipmap(gl.TEXTURE_2D);
+    }
+    if (kind === 'earth') this.planetInfo.earth = true;
+    if (kind === 'near' || kind === 'mid') this.planetInfo[kind] = { cx: data.cx, cz: data.cz, span: data.span, body: data.body || 'earth' };
+  }
+
+  clearPlanetMaps() {
+    this.planetInfo = { earth: false, near: null, mid: null };
   }
 
   createSamplers() {
@@ -529,6 +613,7 @@ export class Renderer {
     t.cloudHist.forEach((x) => x.dispose());
     t.taa.forEach((x) => x.dispose());
     t.bloom.forEach((x) => x.dispose());
+    if (t.space) t.space.dispose();
     gl.deleteFramebuffer(t.hdrDepth.fbo);
     gl.deleteFramebuffer(t.ldrDepth.fbo);
     this.targets = null;
@@ -661,10 +746,12 @@ export class Renderer {
     return 0.2 + 0.8 * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2));
   }
 
-  computeLighting(dayTime, moonPhase = 0.5) {
+  computeLighting(dayTime, moonPhase = 0.5, sky = null) {
     // dayTime: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
     const a = dayTime * Math.PI * 2;
-    const sun = [Math.cos(a), Math.sin(a) * Math.cos(SUN_TILT), Math.sin(a) * Math.sin(SUN_TILT)];
+    const sun = sky && sky.sun ? sky.sun.slice() : [Math.cos(a), Math.sin(a) * Math.cos(SUN_TILT), Math.sin(a) * Math.sin(SUN_TILT)];
+    // the night's light comes from opposite the sun (where a full moon would be: nights stay as
+    // they always were); the Moon itself is drawn where it really is (moonDisk)
     const moon = [-sun[0], -sun[1], -sun[2]];
     // sky irradiance costs a few ms on the CPU: refresh it in ~0.25 degree steps of sun motion
     const moonK = this.moonLight(moonPhase);
@@ -698,7 +785,55 @@ export class Renderer {
     const skySide = boost(sc.side);
     const ground = skyUp.map((v, c) => v * 0.28 * [0.95, 1.0, 0.85][c]);
     const night = Math.min(1, Math.max(0, (-sun[1] + 0.05) / 0.2));
-    return { sun, moon, light, isSun: sunUp, lightColor, skyUp, skySide, ground, night, fadeSun, fadeMoon, sunAngle: a };
+    const moonDisk = sky && sky.moon ? sky.moon : moon;
+    return { sun, moon, moonDisk, light, isSun: sunUp, lightColor, skyUp, skySide, ground, night, fadeSun, fadeMoon, sunAngle: a };
+  }
+
+  // Light on the Moon, on Mars and out in space: a sun without (or with thin) air, and next to no
+  // light from the sky. On the Moon the Earth lights the night a little.
+  airlessLighting(L, state) {
+    const dim = state.dimension;
+    const sun = L.sun;
+    const el = sun[1];
+    const sky = state.sky || {};
+    if (dim === 3) {
+      const lit = sky.sunlit ?? 1;
+      L.lightColor = [SUN_E * lit, SUN_E * 0.985 * lit, SUN_E * 0.96 * lit];
+      L.light = sun; L.isSun = true; L.fadeSun = lit;
+      const e = sky.earthshine || 0;
+      L.skyUp = [0.02 * e, 0.035 * e, 0.06 * e];
+      L.skySide = L.skyUp.map((v) => v * 0.8);
+      L.ground = [0, 0, 0];
+      L.night = 1;
+      return;
+    }
+    if (dim === 4) {
+      const fade = Math.min(1, Math.max(0, (el + 0.01) / 0.03));
+      L.lightColor = [SUN_E * fade, SUN_E * 0.985 * fade, SUN_E * 0.96 * fade];
+      const e = (sky.earthshine || 0) * (1 - fade * 0.7);
+      L.skyUp = [0.002 + 0.03 * e + 0.05 * fade, 0.0025 + 0.045 * e + 0.05 * fade, 0.0035 + 0.075 * e + 0.049 * fade];
+      L.skySide = L.skyUp.map((v) => v * 0.9);
+      L.ground = [0.12 * fade, 0.12 * fade, 0.115 * fade];
+      if (fade > 0.001) { L.light = sun; L.isSun = true; L.fadeSun = fade; }
+      else if (sky.earthDir && sky.earthDir[1] > 0.02) {
+        // the Earth's light on the lunar night: faint, bluish
+        L.light = sky.earthDir; L.isSun = false; L.fadeMoon = 1;
+        L.lightColor = [0.05 * e, 0.07 * e, 0.11 * e];
+      } else { L.lightColor = [0, 0, 0]; L.fadeSun = L.fadeMoon = 0; }
+      L.night = 1;
+      return;
+    }
+    // Mars: half the sunlight of the Earth, reddened through the dust low down; a butterscotch sky
+    const fade = Math.min(1, Math.max(0, (el + 0.03) / 0.08));
+    const tr = Math.exp(-0.5 / Math.max(el + 0.08, 0.04));
+    const sunE = SUN_E * 0.43 * fade * tr;
+    L.lightColor = [sunE, sunE * 0.86, sunE * 0.72];
+    const day = Math.min(1, Math.max(0, (el + 0.12) / 0.3));
+    L.skyUp = [0.42 * day + 0.004, 0.26 * day + 0.003, 0.17 * day + 0.004];
+    L.skySide = L.skyUp.map((v) => v * 0.85);
+    L.ground = [0.12 * day, 0.07 * day, 0.04 * day];
+    L.light = sun; L.isSun = true; L.fadeSun = fade;
+    L.night = 1 - day;
   }
 
   updateFrameUniforms(state, t) {
@@ -708,7 +843,9 @@ export class Renderer {
     const w = t.w, h = t.h;
     const aspect = w / h;
     const near = 0.06;
-    const far = Math.max(256, state.renderDistance * 16 * 1.6 + 64);
+    // high above the ground the terrain is still in view below
+    const lift = Math.max(0, cam.pos[1] - 300) * 1.15;
+    const far = Math.max(256, state.renderDistance * 16 * 1.6 + 64 + Math.min(lift, 2600));
     this.near = near;
     this.far = far;
     let jx = 0, jy = 0;
@@ -726,7 +863,7 @@ export class Renderer {
     mat4.invert(m.invProj, m.proj);
     this.frustum.setFromMatrix(m.viewProjNJ);
 
-    const L = this.computeLighting(state.dayTime, state.moonPhase ?? 0.5);
+    const L = this.computeLighting(state.dayTime, state.moonPhase ?? 0.5, state.sky);
     this.moonPhase = state.moonPhase ?? 0.5;
     // overcast: the cloud deck blocks most direct light and turns the ambient grey and even
     const rainAmt = (state.weather && state.weather.rain) || 0;
@@ -741,8 +878,10 @@ export class Renderer {
     }
     // the nether and the end: no sun or moon, a constant light and a coloured haze instead
     const dim = state.dimension || 0;
-    const DIM = [null, { amb: [0.2, 0.085, 0.06], sky: [0.05, 0.022, 0.02], fog: [0.085, 0.022, 0.015] }, { amb: [0.05, 0.045, 0.06], sky: [0.34, 0.3, 0.42], fog: [0.028, 0.022, 0.042] }][dim];
-    if (DIM) {
+    const DIM = [null, { amb: [0.2, 0.085, 0.06], sky: [0.05, 0.022, 0.02], fog: [0.085, 0.022, 0.015] }, { amb: [0.05, 0.045, 0.06], sky: [0.34, 0.3, 0.42], fog: [0.028, 0.022, 0.042] },
+      { amb: [0.004, 0.004, 0.005], fog: [0, 0, 0] }, { amb: [0.006, 0.006, 0.007], fog: [0, 0, 0] }, { amb: [0.01, 0.007, 0.005], fog: [0.2, 0.12, 0.07] }][dim];
+    if (dim >= 3) this.airlessLighting(L, state);
+    else if (DIM) {
       L.lightColor = [0, 0, 0];
       L.skyUp = DIM.sky.slice();
       L.skySide = DIM.sky.map((v) => v * 0.8);
@@ -802,7 +941,7 @@ export class Renderer {
     v4(172, px - pc[0], py - pc[1], pz - pc[2], 0);
     v4(176, R, D, 1 / this.shadowRes, 0.86);
     v4(180, 185, 340, state.cloudOffset[0], state.cloudOffset[1]);
-    v4(184, L.moon[0], L.moon[1], L.moon[2], L.night);
+    v4(184, L.moonDisk[0], L.moonDisk[1], L.moonDisk[2], L.night);
     v4(188, s.shadows ? 1 : 0, s.pcf, s.volSteps || 1, s.cloudSteps || 1);
     const wx = state.weather || {};
     v4(192, wx.rain || 0, wx.wetness || 0, wx.flash || 0, wx.snow ? 1 : 0);
@@ -853,10 +992,15 @@ export class Renderer {
 
   // ------------------------------------------------------------------ the frame
   render(state, dt) {
-    // no sun (so no shadows or god rays) and no clouds outside the overworld
-    if (state.dimension && !this.dimSettings) {
+    // no sun (so no shadows or god rays) and no clouds outside the overworld; the Moon and Mars
+    // have a sun (and shadows) but no clouds; high above the clouds give way to the view from
+    // on high, which draws its own
+    const sky = state.sky && state.sky.space;
+    const cloudFade = sky ? 1 - smoothstep01(800, 1300, state.camera.pos[1]) : 1;
+    if ((state.dimension || (cloudFade <= 0 && this.settings.clouds)) && !this.dimSettings) {
       const saved = this.settings;
-      this.settings = { ...saved, shadows: false, clouds: false, volumetric: false, ssr: saved.ssr };
+      const sunlit = state.dimension === 4 || state.dimension === 5;
+      this.settings = { ...saved, shadows: saved.shadows && (sunlit || !state.dimension), clouds: false, volumetric: false, ssr: saved.ssr };
       this.dimSettings = true;
       try { this.render(state, dt); } finally { this.settings = saved; this.dimSettings = false; }
       return;
@@ -879,8 +1023,9 @@ export class Renderer {
     // ---- sky view LUT (only when the sun moved noticeably or the camera changed altitude a lot)
     const L = this.light;
     const rainNow = (state.weather && state.weather.rain) || 0;
+    const spaceMix = sky ? sky.mix : 0;
     const lutKey = Math.round(L.sun[0] * 2000) + ',' + Math.round(L.sun[1] * 2000) + ',' + Math.round(state.camera.pos[1] / 16) + ',' + Math.round(rainNow * 50) + ',' + this.moonPhase;
-    if (lutKey !== this.lutKey) {
+    if (lutKey !== this.lutKey && spaceMix < 0.999) {
       this.lutKey = lutKey;
       this.skyLut.bind();
       gl.disable(gl.DEPTH_TEST);
@@ -972,7 +1117,8 @@ export class Renderer {
       t.cloudRaw.bind();
       this.prog.clouds.use().tex('uNoise3D', this.noise3D, gl.TEXTURE_3D).tex('uWeatherMap', this.weatherTex).tex('uSkyLut', this.skyLut.texture)
         .f2('uCloudSize', t.cloudRaw.width, t.cloudRaw.height)
-        .f1('uLightSteps', s.cloudLightSteps || 6);
+        .f1('uLightSteps', s.cloudLightSteps || 6)
+        .f2('uCloudCurve', smoothstep01(250, 450, state.camera.pos[1]) / (2 * EARTH_R), cloudFade);
       this.fullscreen();
       const off = state.cloudOffset;
       const po = this.prevCloudOffset || off;
@@ -994,9 +1140,13 @@ export class Renderer {
       this.prevCloudOffset = [off[0], off[1]];
     }
 
+    // ---- the view from on high (the Earth below, the Moon and planets, the stars)
+    if (spaceMix > 0) this.renderSpace(state, t, sky);
+
     // ---- deferred lighting
     t.hdr.bind();
     const lp = this.prog.lighting.use();
+    this.bindSpaceSky(lp, t, spaceMix, state);
     lp.tex('uGAlbedo', t.gbuffer.textures[0], gl.TEXTURE_2D, this.nearestSampler)
       .tex('uGNormal', t.gbuffer.textures[1], gl.TEXTURE_2D, this.nearestSampler)
       .tex('uGLight', t.gbuffer.textures[2], gl.TEXTURE_2D, this.nearestSampler)
@@ -1013,7 +1163,6 @@ export class Renderer {
       .f1('uUseSSAO', s.ssao ? 1 : 0)
       .f1('uUseClouds', s.clouds ? 1 : 0)
       .f1('uVolumetricOn', s.volumetric ? 1 : 0)
-      .f1('uStarAngle', L.sunAngle)
       .f1('uMoonPhase', this.moonPhase)
       .tex('uPrevColor', t.taa[1 - t.taaIndex].texture, gl.TEXTURE_2D, this.linearSampler)
       .f1('uReflectSSR', s.ssr && s.taa && this.historyValid ? 1 : 0);
@@ -1046,8 +1195,8 @@ export class Renderer {
       .tex('uWaterTex', this.waterTex)
       .f1('uSSR', s.ssr ? 1 : 0)
       .f1('uVolumetricOn', s.volumetric ? 1 : 0)
-      .f1('uStarAngle', L.sunAngle)
       .f1('uMoonPhase', this.moonPhase);
+    this.bindSpaceSky(wp, t, spaceMix, state);
     const back = main.slice().reverse();
     this.drawChunks(wp, back, 2);
     // particles
@@ -1123,7 +1272,9 @@ export class Renderer {
         .f1('uReset', this.exposureReset ? 1 : 0)
         .f2('uRange', 0.05, 6.5)
         .f1('uCompensation', state.brightness ?? 1)
-        .f1('uReference', this.referenceExposure(state));
+        .f1('uReference', this.referenceExposure(state))
+        // (black space all around must not turn a sunlit Earth white)
+        .f1('uMeterMax', state.dimension >= 3 ? 1.0 : 1.6 - 0.6 * (state.sky && state.sky.space ? state.sky.space.mix : 0));
       this.fullscreen();
       this.exposureIndex = 1 - this.exposureIndex;
       this.exposureReset = false;
@@ -1172,6 +1323,62 @@ export class Renderer {
     this.prevViewProjStore.set(this.m.viewProjNJ);
     this.prevCam = state.camera.pos.slice();
     this.frame++;
+  }
+
+  // The sky-view table for where the camera is, then the whole view from on high into t.space.
+  renderSpace(state, t, sky) {
+    const gl = this.gl;
+    if (!t.space) t.space = new RenderTarget(gl, t.w, t.h, ['rgba16f']);
+    const L = this.light;
+    const e = sky.bodies[0];
+    const cam = [-e.centre[0] * METRES, -e.centre[1] * METRES, -e.centre[2] * METRES];
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    this.skyView.bind();
+    const high = smoothstep01(300, 1500, state.dimension ? 1e4 : state.camera.pos[1]);
+    this.prog.skyView.use().tex('uTransLut', this.transLut.texture)
+      .f3('uLutCam', cam[0], cam[1], cam[2]).f3('uLutSun', L.sun[0], L.sun[1], L.sun[2]).f1('uSunIntensity', SUN_E)
+      .f4('uScatterTune', 1.7 - 0.6 * high, 0.11 - 0.07 * high, 0.05 - 0.03 * high, 0);
+    this.fullscreen();
+    t.space.bind();
+    const p = this.prog.space.use();
+    const bodies = new Float32Array(20), rots = new Float32Array(45);
+    sky.bodies.forEach((b, i) => {
+      bodies.set([b.centre[0], b.centre[1], b.centre[2], b.R], i * 4);
+      rots.set(b.rot, i * 9);
+    });
+    const pt = this.planetTex, info = this.planetInfo;
+    const near = info.near, mid = info.mid;
+    const pixelAngle = 2 * Math.tan(state.camera.fov / 2) / t.h;
+    const ref = sky.refXZ;
+    p.f4v('uBody', bodies).m3('uBodyRot', rots).m3('uStarRot', sky.starRot)
+      .f4('uSpace', sky.mix, sky.home || 0, info.earth ? 1 : 0, this.time)
+      .f4('uEarthInfo', EARTH_R * Math.cos(TILT), EARTH_R, (48 + 0.5) / 248, pixelAngle)
+      // (w: whose ground the square is: 1 the Earth's, 2 the Moon's, 3 Mars's)
+      .f4('uNear', near ? near.cx : 0, near ? near.cz : 0, near ? near.span : 1, near ? { earth: 1, moon: 2, mars: 3 }[near.body] : 0)
+      .f4('uMid', mid ? mid.cx : 0, mid ? mid.cz : 0, mid ? mid.span : 1, mid && mid.body === 'earth' ? 1 : 0)
+      .f3v('uSkyIrr', this.skyIrrTable)
+      .f3('uRefXZ', ref ? ref[0] : 0, ref ? 1 : 0, ref ? ref[1] : 0)
+      .tex('uTransLut', this.transLut.texture).tex('uSpaceLut', this.skyView.texture, gl.TEXTURE_2D, this.linearSampler)
+      .tex('uEarthMap', pt.earth).tex('uEarthLights', pt.earthLights).tex('uNearMap', pt.near).tex('uNearLights', pt.nearLights)
+      .tex('uMidMap', pt.mid).tex('uMoonMap', pt.moon).tex('uMarsMap', pt.mars)
+      .tex('uCloudField', this.cloudField).tex('uWeatherMap', this.weatherTex).tex('uNoise3D', this.noise3D, gl.TEXTURE_3D);
+    const mk = MOON_E * this.moonLight(this.moonPhase);
+    p.f4('uMoonLight', mk * 0.72, mk * 0.84, mk * 1.15, 0);
+    this.fullscreen();
+  }
+
+  bindSpaceSky(p, t, mix, state) {
+    const sky = state.sky;
+    p.tex('uSpaceSky', mix > 0 && t.space ? t.space.texture : this.spaceDummy, this.gl.TEXTURE_2D, this.nearestSampler)
+      .f4('uSpaceMix', mix > 0 ? mix : 0, 0, 0, 0)
+      .m3('uStarRot', sky && sky.starRot ? sky.starRot : this.starRotFallback(state.dayTime));
+  }
+
+  // the stars' turn as the game always had it, when the game gives no frame for the sky
+  starRotFallback(dayTime) {
+    const a = dayTime * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+    return [c, -s, 0, s, c, 0, 0, 0, 1];
   }
 
   drawOutline(sel, cam) {
@@ -1270,6 +1477,13 @@ export class Renderer {
     // the nether's glow and the end's pale light: keep them dim and moody, not washed out
     if (state.dimension === 1) env += 3.0;
     else if (state.dimension === 2) env += 1.0;
+    // out in space and on the Moon: the eye is set for sunlight on bright ground (or the dark)
+    else if (state.dimension === 3 || state.dimension === 4) env = lum(L.lightColor) * 0.8 + 0.6;
+    else if (state.dimension === 5) env = lum(L.lightColor) * 0.8 + lum(L.skyUp) * 2.5 + 0.3;
+    // high up the eye is set for the sunlit Earth below, not for the dark sky
+    // (set for the sun's light whether it is day or night below: the night side is dark there,
+    // its villages' lights showing)
+    if (state.sky && state.sky.space && !state.dimension) env += (SUN_E * 1.1 - env) * state.sky.space.mix;
     env += (state.nightVision || 0) * 1.6;
     const torch = Math.pow(state.eyeBlock ?? 0, 2.6) * 10;
     return 10.0 / (env + torch + 0.03);

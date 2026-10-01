@@ -180,6 +180,7 @@ export function installTravel(Game) {
 
   // Flint and steel inside a frame lights the portal.
   P.lightPortal = function lightPortal(x, y, z) {
+    if (this.dimension !== DIM.OVERWORLD && this.dimension !== DIM.NETHER) return false;
     for (const axis of ['x', 'z']) {
       const f = this.portalFrame(x, y, z, axis);
       if (!f) continue;
@@ -303,7 +304,8 @@ export function installTravel(Game) {
     const fx = Math.floor(p[0]), fy = Math.floor(p[1]), fz = Math.floor(p[2]);
     const feet = w.getBlock(fx, fy, fz), body = w.getBlock(fx, fy + 1, fz);
     const inPortal = PORTAL_IDS.has(feet) || PORTAL_IDS.has(body);
-    if (inPortal && this.dimension !== DIM.END) {
+    // (nether portals join the overworld and the Nether alone)
+    if (inPortal && (this.dimension === DIM.OVERWORLD || this.dimension === DIM.NETHER)) {
       if (!this.inPortalLock) {
         this.portalTime = (this.portalTime || 0) + dt;
         const need = PORTAL_WAIT[this.isCreative() ? 'creative' : 'survival'];

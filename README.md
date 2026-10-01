@@ -23,7 +23,7 @@ npm run build    # writes dist/index.html (about 1 MB)
 
 `dist/index.html` runs straight from disk (double-click it) or from any static host. Served over HTTP(S) it is also an installable web app (manifest and icons are copied next to it), so phones and tablets can add it to the home screen and run it full screen.
 
-`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather, flowing liquids, shaped blocks, furnaces and chests, hunger, experience, enchanting, brewing, loot, trading, rails, elytra flight, structures, the multiplayer server and the translations, without a browser.
+`npm test` runs the Node test suite, which covers terrain determinism, lighting, meshing, raycasting, saving, weather, flowing liquids, shaped blocks, furnaces and chests, hunger, experience, enchanting, brewing, loot, trading, rails, elytra flight, structures, the planets' orbits and maps, flying to space and landing on the Moon and Mars, the multiplayer server and the translations, without a browser.
 
 ### Controls
 
@@ -31,7 +31,7 @@ npm run build    # writes dist/index.html (about 1 MB)
 | --- | --- |
 | `W` `A` `S` `D` | Walk |
 | Mouse | Look |
-| `Space` | Jump, swim up, fly up; with elytra on, press it again in the air to glide |
+| `Space` | Jump, swim up, fly up; with elytra on, press it again in the air to glide; on the Moon and Mars, press it again in the air and hold it to fire your suit's thrusters |
 | `Space` twice or `F` | Toggle flying |
 | `Shift` | Sneak (won't walk off edges), fly down |
 | `W` twice or `R` | Sprint |
@@ -94,6 +94,7 @@ New worlds start in **survival** (choose creative or a difficulty when you creat
 - **Beds** in all 16 colours: sleep through the night (in multiplayer once everyone in the overworld is in bed) and respawn beside your bed. They explode in the Nether and the End.
 - **The Nether**: build a 4 × 5 obsidian frame and light it with flint and steel. Netherrack caverns over a lava sea, glowstone, quartz, soul sand, ancient debris, and nether brick fortresses; zombified piglins (they fight back if you hit one), ghasts (fireballs) and blazes (blaze rods). Each block there is 8 in the overworld.
 - **The End**: eyes of ender (ender pearl + blaze powder) fly towards the nearest stronghold; fill its portal room's 12 frames and jump in. On the End's island ten obsidian pillars hold end crystals that heal the Ender Dragon; destroy them, defeat the dragon (boss bar at the top) and the exit portal home opens, with the dragon egg. Endermen drop ender pearls, which you can throw to teleport.
+- **Space, the Moon and Mars**: keep flying up (creative flight, or elytra and fireworks, which push harder as the air thins) and the sky turns black. 2000 blocks above the sea (100 km at 50 m a block) the air ends and you are in space, the curved Earth below you: its continents, oceans, ice caps and clouds, and on its night side the lights of its villages, all drawn from the world's own terrain. The Moon goes round the Earth (its phases are the ones the night sky shows), and Mars, Jupiter (bands, the great red spot) and Saturn (rings) hang where they are. Markers show how far each one is, and the further you are from everything the faster you fly. Near a body you go round with it, so stopping keeps you over the same ground. Come down close to the Moon or Mars and you land on it. The Moon has grey regolith, dark maria and craters, a sixth of the Earth's gravity, and the Earth in its black sky going through phases of its own. Mars has red sand and rock, volcanoes, a great canyon and ice caps under a butterscotch sky with blue sunsets. Your suit's thrusters bring you down unhurt and lift you up again (press jump again in the air and hold it); climb high enough and you are back in space. Nothing burns without air there, and nether portals only work between the overworld and the Nether.
 - **Dying** drops everything you carried where you fell; you respawn at your bed (if it's still there) or the world spawn.
 - **Several worlds**: the title screen's world list keeps as many single-player worlds as you like, each with its own name, mode, buildings, inventory and time; open, rename or delete them there.
 - **Hunger**: ten drumsticks beside the hearts. Running, jumping, swimming, fighting and healing use them up; eating takes a moment (hold the use button) and each food fills them by its own amount (and saturation). Full, you heal quickly; empty, you starve. Rotten flesh, raw chicken and pufferfish can make you ill.
@@ -114,9 +115,10 @@ The creature simulation (`src/sim/`) runs at 20 ticks per second with no DOM or 
 
 Run `node server/server.mjs` on a server (Node 18+, no packages) and friends open its address in a browser to share one world. The Chinese deployment guide in [server/README.zh-CN.md](server/README.zh-CN.md) covers systemd, https with Caddy and a TURN relay (coturn) for voice.
 
-- **Shared world**: block edits in all three dimensions, the End's dragon fight, chests, furnaces, signs and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
+- **Shared world**: block edits in every dimension (the overworld, the Nether, the End, the Moon and Mars), the End's dragon fight, chests, furnaces, signs and the time of day are kept on the server (`server/data/world.json`, or `DATA_DIR`); each player's inventory, armour, health, dimension and position are saved by name. Everyone sees what the others hold and wear.
 - **Shared things**: dropped items are seen by everyone and go to whoever reaches them first. A chest or furnace is open to one player at a time (others are told who is using it); furnaces keep cooking on the server; breaking a chest spills what it held for everyone.
 - **Creatures** live on the machine of the player they spawned near and are sent to nearby players as snapshots; hits, damage, knockback and loot travel as messages, so everyone can fight the same zombie. A structure's villagers, golems and cats are spawned once for the whole server (by whoever gets there first). The creatures that stay (villagers, pets, horses, boats, what was bred) are kept by the server and handed to whoever is near them when the player simulating them leaves or walks away.
+- **Space**: players in space see each other where they are over the planet nearest them, the same ground below for everyone; leave the server in space and you come back over the same place, however far the Moon has gone round meanwhile.
 - **Weather** is the server's: rain and storms come and go for everyone at once. A player who picks Clear, Rain or Storm in their settings sees that instead, only for themselves.
 - Brewing stands brew on the server like furnaces; loot chests are filled once, by the server; enchantments travel with dropped items; hunger, experience and effects are saved with each player.
 - **Chat** with Enter. **Voice** is a WebRTC mesh signalled through the server, played through Web Audio with distance falloff and stereo placement ("Nearby"), or at equal volume ("Everyone"). Devices without a microphone still hear everyone.
@@ -135,6 +137,7 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 - **Water.** Animated wave normals, screen-space reflections that fall back to the sky, refraction, Beer-Lambert absorption that separates turquoise shallows from deep blue ocean, sun glints, shoreline foam, Snell's window from below, and caustics on the seabed derived from the curvature of the surface.
 - **Foliage.** Leaves and grass sway in the wind and let light through (subsurface scattering) when backlit.
 - **Weather.** Rain spells and thunderstorms arrive now and then, or can be chosen in Settings → World. The sky and clouds turn overcast, and surfaces open to the sky get darker and glossier. Flat ground collects puddles with raindrop ripples, and glossy and wet surfaces get screen-space reflections sampled from the previous frame. Lightning lights up the storm clouds, followed by thunder. Roofs and tree canopies keep rain off, deserts stay dry, and cold biomes get snow instead.
+- **From the sky to space.** Climbing higher, the landscape gives way to the planet. A transmittance table and a sky-view table (in the manner of Bruneton and Hillaire) show the Earth's air from any height, from a blue limb above a black sky to sunsets along the terminator. The ground comes from maps that the world's own generator paints on Web Workers (near, middle and whole-planet maps, sampled by pixel footprint), with its clouds, glints on the oceans, moonlit clouds and village lights on the night side. The Moon is lit with Lommel-Seeliger reflectance and earthshine, Mars has a thin dusty air, Jupiter and Saturn have banded clouds, Saturn's rings are shadowed by the planet, and the stars and the Milky Way stay fixed in the sky. The cumulus layer curves with the planet, and exposure follows the sunlight once the sky is black.
 - **Lighting.** Flood-filled sky and block light. Torches, glowstone, lava, jack o'lanterns and sea lanterns emit warm light that flickers slightly.
 - **Post-processing.**
   - SSAO
@@ -148,6 +151,7 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 
 ## World
 
+- The overworld is the map of a real-sized Earth (6360 km in radius at 50 m a block). The first 40,000 blocks from its middle are the terrain as it always was. Further out, continents and oceans and climates follow the latitude: ice in the far north and south, deserts in the dry belts, jungles at the equator (about 53,000 blocks south of the middle). The Moon and Mars are worlds of their own.
 - Infinite terrain streamed in 16×16×384 chunks (as tall as Minecraft's, with the sea at 63 and peaks past 200). It has continents and oceans, eroded mountains with 3D overhangs and snow caps, and rivers. Only the part of a chunk that holds something is lit and meshed.
 - Sixteen biomes: plains, forest, birch forest, taiga, snowy taiga, desert, beach, ocean, river and mountains, plus jungle (giant trees, vines, melons), savanna (acacias), swamp (murky water, lily pads, drooping oaks), badlands (terracotta mesas in bands), cherry grove (pink blossom and petals) and dark forest (thick dark oaks).
 - Worlds made before the 384-high world keep their original 128-high terrain (the generator version is saved with each world); new worlds use the new one.
@@ -164,9 +168,9 @@ Everything below can be toggled in **Settings → Graphics**, or chosen through 
 index.html, styles.css     page shell and UI styles
 src/main.js                entry point
 src/engine/                WebGL helpers, matrix math
-src/world/                 blocks, noise, terrain generator, lighting + mesher, worker, chunk streaming, textures
+src/world/                 blocks, noise, terrain generators (overworld, Nether, End, Moon, Mars), the space model (orbits, frames) and planet maps, lighting + mesher, worker, chunk streaming, textures
 src/render/                renderer (pass orchestration), CPU atmosphere
-src/render/shaders/        GLSL: terrain, sky, clouds, lighting, water, post-processing, overlays, noise generation
+src/render/shaders/        GLSL: terrain, sky, space (the planets from orbit), clouds, lighting, water, post-processing, overlays, noise generation
 src/game/                  game loop, player physics, input (keyboard, mouse, touch, controllers), audio, particles, saving, device detection
 src/ui/                    menus, settings, hotbar, inventory, block icons, translations, focus navigation
 tools/                     dev server, single-file build, icon generator

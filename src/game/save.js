@@ -143,3 +143,34 @@ export function currentWorldId() {
 export function setCurrentWorldId(id) {
   try { localStorage.setItem(CURRENT_KEY, id); } catch (e) { /* ignore */ }
 }
+
+// Things worth keeping between visits that the game can always make again (the maps of the
+// planets seen from space): in the same store under 'cache:' keys, never in the worlds' list.
+export async function loadCached(key) {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const r = tx.objectStore(STORE).get('cache:' + key);
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function saveCached(key, value) {
+  try {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(value, 'cache:' + key);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}

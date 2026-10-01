@@ -21,6 +21,8 @@ import { installTravel } from './travel.js';
 import { installBuilding } from './building.js';
 import { installSurvival } from './survival.js';
 import { installVillagers } from './villagers.js';
+import { installSpace } from './space.js';
+import { moonPhase } from '../world/space.js';
 import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
 import { installVehicles } from './vehicles.js';
@@ -212,15 +214,24 @@ export class Game {
       0: data ? World.deserializeEdits(data.edits) : new Map(),
       1: World.deserializeEdits(de[1]),
       2: World.deserializeEdits(de[2]),
+      4: World.deserializeEdits(de[4]),
+      5: World.deserializeEdits(de[5]),
     };
     this.dimItems = {};
-    this.dimension = data && (data.dimension === 1 || data.dimension === 2) ? data.dimension : 0;
+    this.loadSpace(data);
+    this.suit = false;
+    // (in space only with the frame it was flown in)
+    const dimOk = (d) => d === 1 || d === 2 || d === 4 || d === 5 || (d === 3 && this.spaceState);
+    this.dimension = data && dimOk(data.dimension) ? data.dimension : 0;
     this.genVersion = data ? (Number.isInteger(data.gen) && data.gen > 0 ? Math.min(data.gen, CURRENT_GEN) : 1) : CURRENT_GEN;
     this.world = this.createWorld(seed, this.dimension, this.dimEdits[this.dimension]);
+    this.spaceWorldChanged();
     this.player = new Player(this.world);
     this.particles = new Particles(this.world);
     if (data && data.player) {
       this.player.pos = data.player.pos.slice();
+      // (in space, put back over the body we were near: see loadSpace)
+      if (this.dimension === 3 && this.spaceState.atOrigin) this.player.pos = [0, 0, 0];
       this.player.yaw = data.player.yaw;
       this.player.pitch = data.player.pitch;
       this.player.flying = !!data.player.flying;
@@ -270,8 +281,9 @@ export class Game {
       dayCount: this.dayCount || 0,
       selected: this.selected,
       ...this.serializePlay(),
+      ...this.serializeSpace(),
       edits: edits(0),
-      dimEdits: { 1: edits(1), 2: edits(2) },
+      dimEdits: { 1: edits(1), 2: edits(2), 4: edits(4), 5: edits(5) },
       savedAt: Date.now(),
     };
     this.world.dirtyEdits = false;
@@ -714,6 +726,7 @@ export class Game {
     }
     // arriving in another dimension: portals and platforms appear once the chunks are there
     this.updateTravel(dt);
+    this.updateSpaceTravel(dt);
 
     // hold on terrain until the spawn chunk exists
     const ready = this.world.isChunkReady(this.player.pos[0], this.player.pos[2]);
@@ -728,7 +741,7 @@ export class Game {
       let rem = dt;
       while (rem > 1e-6) {
         const step = Math.min(rem, 1 / 60);
-        this.player.update(step, ctl);
+        if (this.dimension === 3) this.spaceFlight(step, ctl); else this.player.update(step, ctl);
         // a press counts once: one can't both jump and spread the elytra
         ctl.toggleFly = false;
         ctl.jumpPressed = false;
@@ -749,6 +762,7 @@ export class Game {
       this.cloudOffset[0] += dt * 3.2;
       this.cloudOffset[1] += dt * 1.1;
     }
+    if (this.dimension === 3 && this.spaceState) this.carryInSpace();
 
     // weather
     if (this.state !== 'paused' && !this.dimension) {
@@ -761,6 +775,7 @@ export class Game {
     const cam = this.computeCamera(dt);
     this.camera = cam;
     this.updatePrecipitation(dt, cam);
+    this.updateSpaceView();
 
     // streaming and mesh uploads; liquids flow
     this.world.update(cam.pos[0], cam.pos[2], cam.forward[0], cam.forward[2]);
@@ -1055,6 +1070,12 @@ export class Game {
 
   updateLoading() {
     if (this.loadingDone) return;
+    if (this.world.void) { // (space: nothing to load)
+      this.loadingDone = true;
+      this.ui.setLoading(null);
+      this.renderer.exposureReset = true;
+      return;
+    }
     // chunks stream in around the camera (which circles the anchor on the title screen), so wait
     // for the ones around the camera, within a radius the render distance can actually mesh
     const p = this.state === 'title' || this.state === 'boot' ? (this.camera ? this.camera.pos : this.titleAnchor) : this.player.pos;
@@ -1085,7 +1106,9 @@ export class Game {
     const morning = Math.exp(-Math.pow((this.dayTime - 0.02) / 0.06, 2)) + Math.exp(-Math.pow((this.dayTime - 0.98) / 0.05, 2));
     const dim = this.dimension || 0;
     const rain = this.weather && !dim ? this.weather.rain : 0;
-    const fog = dim === 1 ? { density: 0.011, falloff: 0.0005 } : dim === 2 ? { density: 0.0035, falloff: 0.0005 } : {
+    // (no air in space or on the Moon; a little dust in Mars's)
+    const fog = dim === 1 ? { density: 0.011, falloff: 0.0005 } : dim === 2 ? { density: 0.0035, falloff: 0.0005 } : dim === 3 || dim === 4 ? { density: 0, falloff: 0.001 }
+      : dim === 5 ? { density: 0.0012, falloff: 0.004 } : {
       density: (0.0011 + morning * 0.0045 + (sunY < 0 ? 0.001 : 0)) * (1 + rain * 3.5) + rain * 0.002,
       falloff: 0.03 * (1 - rain * 0.5),
     };
@@ -1094,8 +1117,9 @@ export class Game {
       chunks: this.world.chunks.values(),
       renderDistance: this.world.renderDistance,
       dayTime: this.dayTime,
-      // eight phases, one per day, starting from a full moon on the first night
-      moonPhase: (((this.dayCount || 0) + 4) % 8) / 8,
+      // the Moon goes round in eight days, full on the first night (world/space.js)
+      moonPhase: moonPhase(this.spaceTime()),
+      sky: this.skyState(cam),
       fog,
       underwater: this.state === 'playing' && this.player.headInWater,
       waterDepth: this.player.headInWater ? this.waterDepthAbove() : 0,
@@ -1192,3 +1216,4 @@ installCreaturePlay(Game);
 installVehicles(Game);
 installMultiplayer(Game);
 installVillagers(Game);
+installSpace(Game);

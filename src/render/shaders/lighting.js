@@ -19,16 +19,23 @@ export const MATS = `
 // Sky rendering shared by lighting (background), water (reflections) and fog.
 export const SKY_FUNCS = `
 uniform sampler2D uSkyLut;
-uniform float uStarAngle;
+uniform mat3 uStarRot;    // camera axes -> the celestial frame (the stars turn with the Earth)
 uniform float uMoonPhase; // 0 new moon .. 0.5 full .. 1 new
+// The view from high up and from space (shaders/space.js), drawn by a pass of its own: x how
+// much of it shows (0 on the ground, 1 above the air and on the Moon and Mars)
+uniform sampler2D uSpaceSky;
+uniform vec4 uSpaceMix;
+vec2 gSkyUV; // the pixel being shaded, for the space view's texture
 
 vec3 skyLut(vec3 dir) {
   return texture(uSkyLut, skyLutUV(dir)).rgb;
 }
 
-// The nether has only its red haze; the end a dark void with faint drifting blotches.
+// The nether has only its red haze; the end a dark void with faint drifting blotches; space,
+// the Moon and Mars have their own view (uSpaceSky), and nothing much in reflections.
 vec3 dimSky(vec3 dir) {
   if (uDim.x < 1.5) return uDimFog.rgb;
+  if (uDim.x > 2.5) return uDimFog.rgb * 0.5;
   vec2 p = dir.xz / (abs(dir.y) + 0.35) * 5.0;
   float n = vnoise2(p + uCamPos.w * 0.01) * 0.6 + vnoise2(p * 2.7 - 3.1) * 0.4;
   return uDimFog.rgb * (0.55 + 0.9 * n * n);
@@ -40,10 +47,7 @@ vec3 fogSky(vec3 dir) {
 }
 
 vec3 starField(vec3 dir) {
-  // rotate the celestial sphere with the time of day
-  float s = sin(uStarAngle), c = cos(uStarAngle);
-  vec3 d = vec3(c * dir.x + s * dir.y, -s * dir.x + c * dir.y, dir.z);
-  d = vec3(d.x, d.y * 0.906 + d.z * 0.423, -d.y * 0.423 + d.z * 0.906);
+  vec3 d = uStarRot * dir;
   vec3 p = d * 190.0;
   vec3 cell = floor(p);
   vec3 h = hash33(cell);
@@ -59,6 +63,7 @@ vec3 starField(vec3 dir) {
   return col * star * bright * tw;
 }
 
+// The Moon where it really is in its orbit, lit by the sun (so its phase shows as it is).
 vec3 moonDisk(vec3 dir) {
   vec3 m = uMoonDir.xyz;
   float cosM = dot(dir, m);
@@ -72,13 +77,12 @@ vec3 moonDisk(vec3 dir) {
   float maria = vnoise2(uv * 2.2 + 3.0) * 0.55 + vnoise2(uv * 5.0) * 0.3 + vnoise2(uv * 11.0) * 0.15;
   float crater = smoothstep(0.35, 0.8, maria);
   float limb = sqrt(max(1.0 - r * r, 0.0));
-  // phase: light the sphere from a virtual sun that swings around behind it over the cycle
-  float th = uMoonPhase * TAU;
-  vec3 n = vec3(uv, limb);
-  float lit = smoothstep(-0.04, 0.08, dot(n, vec3(sin(th), 0.0, -cos(th))));
+  // the sphere's normal facing us, and the sun on it
+  vec3 n = right * uv.x + up * uv.y - m * limb;
+  float lit = smoothstep(-0.04, 0.08, dot(n, uSunDir.xyz));
   vec3 col = vec3(0.92, 0.94, 1.0) * mix(1.0, 0.58, crater) * (0.55 + 0.45 * limb);
   col = col * lit + vec3(0.012, 0.014, 0.02) * (1.0 - lit); // faint earthshine on the dark side
-  float illum = 0.5 - 0.5 * cos(th);
+  float illum = 0.5 - 0.5 * dot(m, uSunDir.xyz);
   float halo = exp(-max(r - 1.0, 0.0) * 6.0) * 0.08 * (1.0 - disk) * illum;
   return col * (disk * 0.9 + halo) * uMoonDir.w;
 }
@@ -109,6 +113,14 @@ vec3 renderSky(vec3 dir, bool disks) {
   col *= mix(1.0, 0.8, smoothstep(0.0, -0.35, dir.y));
   return col;
 }
+
+// The sky behind the pixel being shaded: the old sky, the view from on high, or both.
+vec3 skyHere(vec3 dir, bool disks) {
+  if (uSpaceMix.x > 0.999) return texture(uSpaceSky, gSkyUV).rgb;
+  vec3 col = renderSky(dir, disks);
+  if (uSpaceMix.x > 0.001) col = mix(col, texture(uSpaceSky, gSkyUV).rgb, uSpaceMix.x);
+  return col;
+}
 `;
 
 export const FOG_FUNCS = `
@@ -129,7 +141,7 @@ vec3 applyFog(vec3 col, vec3 rel, vec3 dir, float dist) {
   }
   col = col * T + ins;
   float far = smoothstep(uFogParams.z, uFogParams.w, length(rel.xz));
-  col = mix(col, renderSky(dir, false) * (0.04 + 0.96 * cave), far * far * (3.0 - 2.0 * far));
+  col = mix(col, skyHere(dir, false) * (0.04 + 0.96 * cave), far * far * (3.0 - 2.0 * far));
   return col;
 }
 `;
@@ -314,11 +326,12 @@ float sampleShadow(vec3 rel, vec3 Ng, float NgdotL, bool foliage, out vec3 tint)
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
+  gSkyUV = vUV;
   float depth = texelFetch(uDepth, px, 0).r;
   vec3 rel = reconstructRel(vUV, depth);
   vec3 dir = normalize(rel);
   if (depth >= 1.0) {
-    vec3 sky = renderSky(dir, true);
+    vec3 sky = skyHere(dir, true);
     if (uUseClouds > 0.5) {
       vec4 cl = sampleClouds(uClouds, vUV);
       sky = sky * cl.a + cl.rgb;

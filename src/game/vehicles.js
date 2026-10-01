@@ -208,7 +208,8 @@ export function installVehicles(Game) {
     const chest = this.inventory.armor[1];
     const d = chest && itemDef(chest.id);
     const could = p.canGlide;
-    p.canGlide = !!(d && d.elytra && (chest.wear || 0) < d.durability - 1);
+    // (no air to hold them up in space and on the Moon)
+    p.canGlide = !!(d && d.elytra && (chest.wear || 0) < d.durability - 1) && this.dimension !== 3 && this.dimension !== 4;
     // the first time they go on: how to fly them
     if (p.canGlide && !could && !this.elytraHinted) { this.elytraHinted = true; this.ui.toast(t('toast.elytraOn'), 9000); }
     if (this.boost > 0) { p.boost = Math.max(p.boost, this.boost); this.boost = 0; }

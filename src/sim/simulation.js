@@ -833,6 +833,7 @@ export class Simulation {
   trySpawn() {
     for (const p of this.players.values()) {
       if (p.dead || p.remote) continue; // remote players spawn their own
+      if (this.dimension >= 3) continue; // nothing lives in space, on the Moon or on Mars
       if (this.dimension !== 0) { if (this.spawnMobs) this.trySpawnOther(p); continue; }
       spawnRules(this, p);
     }

@@ -2,6 +2,29 @@
 
 import { Simplex, hash2, hash3, mulberry32 } from './noise.js';
 import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT, SEA_LEVEL } from './blocks.js';
+import { worldToLonLat, dirOf } from './space.js';
+
+// The world is the surface of a planet (see space.js). Far from its middle the planet has a
+// geography of its own: oceans and continents thousands of kilometres across, and climates that
+// follow the latitude, cold towards the poles and hot at the equator. Within HOME blocks of the
+// middle nothing of it shows, so the land players know stays as it always was; it fades in out to
+// HOME_FULL. HOME_LAND: the land around the middle reaches out into a continent of its own.
+export const HOME = 40000;
+const HOME_FULL = 85000;
+const HOME_LAND = 90000;
+const MACRO_CELL = 1024;
+// latitude (radians, either side of the equator) -> temperature
+const LAT_TEMP = [[0, 0.9], [0.2, 0.74], [0.42, 0.14], [0.7, -0.22], [0.95, -0.4], [1.1, -0.55], [1.25, -0.75], [1.4, -0.95], [1.58, -1.1]];
+function spline1(points, x) {
+  if (x <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    if (x <= points[i][0]) {
+      const [x0, y0] = points[i - 1], [x1, y1] = points[i];
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return points[points.length - 1][1];
+}
 
 export const BIOME = {
   OCEAN: 0, BEACH: 1, PLAINS: 2, FOREST: 3, BIRCH_FOREST: 4, TAIGA: 5, SNOWY: 6, DESERT: 7, MOUNTAINS: 8, RIVER: 9,
@@ -59,13 +82,77 @@ export class TerrainGenerator {
     this.nOver = new Simplex(s ^ 0xbcde);
     this.nDetail = new Simplex(s ^ 0xcdef);
     this.nPatch = new Simplex(s ^ 0xdef0);
+    this.nMacro = new Simplex(s ^ 0x6d6163);
     this.col = {}; // scratch object reused by column()
+    this.macroAt = [NaN, NaN, null];
+    this.macroCache = new Map();
+  }
+
+  // The planet's own geography at (x, z), or null near the middle of the world:
+  // { w (how much of it shows, 0..1), cont (continentalness), temp, hum }. It changes over
+  // thousands of blocks, so it is worked out on a grid MACRO_CELL blocks apart and blended.
+  macro(x, z) {
+    const d2 = x * x + z * z;
+    if (d2 < HOME * HOME) return null;
+    const m = this.macroAt;
+    if (m[0] === x && m[1] === z) return m[2];
+    const fx = x / MACRO_CELL, fz = z / MACRO_CELL;
+    const gx = Math.floor(fx), gz = Math.floor(fz), tx = fx - gx, tz = fz - gz;
+    const a = this.macroNode(gx, gz), b = this.macroNode(gx + 1, gz), c = this.macroNode(gx, gz + 1), d = this.macroNode(gx + 1, gz + 1);
+    const lerp2 = (k) => (a[k] * (1 - tx) + b[k] * tx) * (1 - tz) + (c[k] * (1 - tx) + d[k] * tx) * tz;
+    const out = m[2] || {};
+    out.w = smooth(HOME, HOME_FULL * (1 + 0.3 * lerp2(3)), Math.sqrt(d2));
+    out.cont = lerp2(0); out.temp = lerp2(1); out.hum = lerp2(2);
+    m[0] = x; m[1] = z; m[2] = out;
+    return out;
+  }
+
+  macroNode(gx, gz) {
+    const key = gx * 100003 + gz;
+    let v = this.macroCache.get(key);
+    if (v) return v;
+    const x = gx * MACRO_CELL, z = gz * MACRO_CELL;
+    const [lon, lat] = worldToLonLat('earth', x, z);
+    const [dx, dy, dz] = dirOf(lon, lat);
+    const n = this.nMacro;
+    // continents: warped noise over the sphere, a few of them, with ragged coasts
+    const wx = n.fbm3(dx * 1.9 + 3.1, dy * 1.9, dz * 1.9, 2) * 0.42;
+    const wy = n.fbm3(dx * 1.9, dy * 1.9 - 7.3, dz * 1.9, 2) * 0.42;
+    const wz = n.fbm3(dx * 1.9, dy * 1.9, dz * 1.9 + 11.7, 2) * 0.42;
+    const c = n.fbm3((dx + wx) * 1.35, (dy + wy) * 1.35, (dz + wz) * 1.35, 5);
+    const home = Math.exp(-(x * x + z * z) / (HOME_LAND * HOME_LAND));
+    const cont = Math.max(-1.3, Math.min(1.1, c * 2.4 - 0.5 + home * 1.1));
+    // climates by latitude: hot at the equator, temperate at the world's middle (24 degrees
+    // north), the sea freezing past 65; wet near the equator, deserts in the dry belts either side
+    const al = Math.abs(lat);
+    const temp = spline1(LAT_TEMP, al) + n.noise3(dx * 4.1, dy * 4.1 + 20, dz * 4.1) * 0.18;
+    const dry = Math.exp(-(((al - 0.33) / 0.12) ** 2));
+    const hum = n.fbm3(dx * 3.3 - 40, dy * 3.3, dz * 3.3, 2) * 0.75 + 0.55 * Math.exp(-((lat / 0.17) ** 2)) - 0.6 * dry;
+    // (how far out the home lands reach, -1..1: so their edge is not a circle)
+    const edge = n.fbm3(dx * 6 + 50, dy * 6, dz * 6, 2);
+    v = [cont, temp, hum, edge];
+    this.macroCache.set(key, v);
+    if (this.macroCache.size > 8192) this.macroCache.delete(this.macroCache.keys().next().value);
+    return v;
+  }
+
+  // continentalness with the planet's geography mixed in
+  macroCont(x, z, cont) {
+    const mac = this.macro(x, z);
+    return mac ? cont * (1 - 0.4 * mac.w) + mac.cont * mac.w : cont;
+  }
+
+  // temperature and humidity of the planet's climates mixed into the local ones
+  macroClimate(x, z, t, h) {
+    const mac = this.macro(x, z);
+    if (!mac) return [t, h];
+    return [t * (1 - 0.65 * mac.w) + mac.temp * mac.w, h * (1 - 0.5 * mac.w) + mac.hum * mac.w];
   }
 
   climate(x, z) {
     const t = this.nTemp.fbm2(x * 0.00075, z * 0.00075, 3) * 1.25;
     const h = this.nHum.fbm2(x * 0.0009 + 71.3, z * 0.0009 - 33.1, 3) * 1.25;
-    return [t, h];
+    return this.macroClimate(x, z, t, h);
   }
 
   // 2D column shape. Writes into and returns a scratch object.
@@ -73,7 +160,7 @@ export class TerrainGenerator {
     const warpX = this.nDetail.noise2(x * 0.004, z * 0.004) * 40;
     const warpZ = this.nDetail.noise2(x * 0.004 + 50, z * 0.004 - 50) * 40;
     const wx = x + warpX, wz = z + warpZ;
-    const cont = this.nCont.fbm2(wx * 0.0011, wz * 0.0011, 5) * 1.35;
+    const cont = this.macroCont(x, z, this.nCont.fbm2(wx * 0.0011, wz * 0.0011, 5) * 1.35);
     const ero = this.nEro.fbm2(wx * 0.0018 + 40.1, wz * 0.0018 - 7.7, 4) * 1.3;
     const peaks = this.nPeak.ridged2(wx * 0.0042, wz * 0.0042, 5);
     const hills = this.nHill.fbm2(x * 0.009, z * 0.009, 4);

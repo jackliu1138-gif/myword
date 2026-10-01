@@ -77,14 +77,14 @@ export class TerrainGenerator2 extends TerrainGenerator {
   climate(x, z) {
     const t = this.nTemp.fbm2(x * 0.0011, z * 0.0011, 3) * 1.3;
     const h = this.nHum.fbm2(x * 0.0013 + 71.3, z * 0.0013 - 33.1, 3) * 1.3;
-    return [t, h];
+    return this.macroClimate(x, z, t, h);
   }
 
   column(x, z, out = this.col) {
     const warpX = this.nDetail.noise2(x * 0.004, z * 0.004) * 40;
     const warpZ = this.nDetail.noise2(x * 0.004 + 50, z * 0.004 - 50) * 40;
     const wx = x + warpX, wz = z + warpZ;
-    const cont = this.nCont.fbm2(wx * 0.0011, wz * 0.0011, 5) * 1.35;
+    const cont = this.macroCont(x, z, this.nCont.fbm2(wx * 0.0011, wz * 0.0011, 5) * 1.35);
     const ero = this.nEro.fbm2(wx * 0.0018 + 40.1, wz * 0.0018 - 7.7, 4) * 1.3;
     const peaks = this.nPeak.ridged2(wx * 0.0034, wz * 0.0034, 5);
     const hills = this.nHill.fbm2(x * 0.008, z * 0.008, 4);

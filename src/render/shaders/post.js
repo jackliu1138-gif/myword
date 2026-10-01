@@ -335,6 +335,7 @@ uniform float uReset;
 uniform vec2 uRange;         // min / max exposure
 uniform float uCompensation;
 uniform float uReference;    // exposure predicted from the light intensities around the eye
+uniform float uMeterMax;     // how far metering may brighten past the reference (less in space)
 in vec2 vUV;
 out vec4 oColor;
 void main() {
@@ -356,7 +357,7 @@ void main() {
   float avgLum = exp2(avgLog);
   float metered = 0.3 / max(avgLum, 1e-5);
   // limited adaptation around the reference keeps looking at the sun from blacking out the world
-  float target = uReference * clamp(metered / uReference, 0.7, 1.6) * uCompensation;
+  float target = uReference * clamp(metered / uReference, 0.7, uMeterMax) * uCompensation;
   target = clamp(target, uRange.x, uRange.y);
   float prev = texelFetch(uPrev, ivec2(0), 0).r;
   float rate = target > prev ? 1.1 : 2.2;

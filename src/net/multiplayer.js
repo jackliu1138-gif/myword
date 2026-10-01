@@ -9,6 +9,8 @@ import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
 import { loadEntity } from '../sim/containers.js';
 import { itemDef } from '../sim/items.js';
 import { WORLD_HEIGHT } from '../world/blocks.js';
+import { GROUND_DIMS } from '../world/dimensions.js';
+import { BODY_NAMES } from '../world/space.js';
 import { PLAYER_VARIANTS } from '../render/models.js';
 import { t } from '../ui/i18n.js';
 
@@ -115,7 +117,8 @@ export function installMultiplayer(Game) {
     const data = {
       version: 2, seed: w.seed, gen: Number.isInteger(w.gen) ? w.gen : 1, edits: w.edits, dimEdits: w.dimEdits || {}, dayTime: w.dayTime, dayCount: w.dayCount,
       mode: me.mode || w.mode, difficulty: w.difficulty, endState: w.endState || undefined,
-      dimension: me.dimension === 1 || me.dimension === 2 ? me.dimension : 0,
+      dimension: Number.isInteger(me.dimension) && me.dimension >= 1 && me.dimension <= 5 ? me.dimension : 0,
+      space: me.space && typeof me.space === 'object' ? me.space : undefined,
       inventory: Array.isArray(me.inventory) ? me.inventory : undefined,
       selected: me.selected, spawn: me.spawn || null,
       player: me.player && Array.isArray(me.player.pos) ? me.player : undefined,
@@ -199,7 +202,7 @@ export function installMultiplayer(Game) {
     });
     // signs (block entities everyone sees)
     net.on('bent', (m) => {
-      const d = m.d === 1 || m.d === 2 ? m.d : 0;
+      const d = GROUND_DIMS.includes(m.d) ? m.d : 0;
       const map = this.bents[d] || (this.bents[d] = new Map());
       const e = m.e ? loadEntity(m.e) : null;
       if (e && e.kind === 'sign') map.set(String(m.k), e); else map.delete(String(m.k));
@@ -270,7 +273,11 @@ export function installMultiplayer(Game) {
 
   P.applyRemoteState = function applyRemoteState(p, s) {
     if (!Array.isArray(s.p)) return;
-    p.goal = s.p.slice(0, 3);
+    // (in space everyone's position is in the coordinates of the body nearest them: placed in
+    // our frame each frame, as the body turns and moves)
+    const body = (s.d | 0) === 3 ? BODY_NAMES[s.b | 0] || 'earth' : null;
+    p.goalB = body ? { body, q: s.p.slice(0, 3) } : null;
+    p.goal = body && this.spaceLocalOfBody ? this.spaceLocalOfBody(body, p.goalB.q) : s.p.slice(0, 3);
     if (!p.pos) p.pos = p.goal.slice();
     p.goalYaw = s.y || 0;
     p.pitch = s.pi || 0;
@@ -326,7 +333,11 @@ export function installMultiplayer(Game) {
       const pl = this.player;
       const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0)
         | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0);
-      const msg = { t: 'st', p: [round2(pl.pos[0]), round2(pl.pos[1]), round2(pl.pos[2])], y: round2(pl.yaw), pi: round2(pl.pitch), h: this.heldId(), f };
+      // (in space: where we are over the body nearest us, the same for everyone)
+      const sb = this.dimension === 3 && this.spaceState ? this.spaceBodyCoords() : null;
+      const at = sb ? sb.q : pl.pos;
+      const msg = { t: 'st', p: [round2(at[0]), round2(at[1]), round2(at[2])], y: round2(pl.yaw), pi: round2(pl.pitch), h: this.heldId(), f };
+      if (sb) msg.b = BODY_NAMES.indexOf(sb.body);
       if (this.inventory && this.inventory.offhand) msg.o = this.inventory.offhand.id;
       const armor = this.inventory ? this.inventory.armorIds() : null;
       if (armor && armor.some(Boolean)) msg.a = armor;
@@ -354,6 +365,13 @@ export function installMultiplayer(Game) {
     const k = 1 - Math.exp(-dt * 12);
     for (const p of mp.players.values()) {
       if (!p.goal) continue;
+      if (p.goalB) {
+        // the body turns and moves, and our own frame with us as we fly: where they are in it now
+        const g = p.goalB, b = p.atBody;
+        if (b && b.body === g.body) b.q = b.q.map((v, i) => v + (g.q[i] - v) * k);
+        else p.atBody = { body: g.body, q: g.q.slice() };
+        if (this.spaceLocalOfBody) { p.pos = this.spaceLocalOfBody(p.atBody.body, p.atBody.q); p.goal = p.pos.slice(); }
+      } else p.atBody = null;
       const d = Math.hypot(p.goal[0] - p.pos[0], p.goal[1] - p.pos[1], p.goal[2] - p.pos[2]);
       if (d > 10) p.pos = p.goal.slice();
       const ox = p.pos[0], oz = p.pos[2];
@@ -491,6 +509,7 @@ export function installMultiplayer(Game) {
       mode: this.mode,
       dimension: this.dimension || 0,
       survival: this.serializeSurvival ? this.serializeSurvival() : undefined,
+      ...this.serializeSpace(),
     };
   };
 

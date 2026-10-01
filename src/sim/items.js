@@ -324,6 +324,8 @@ setHard(['netherrack'], 0.6, 'pickaxe', 1);
 setHard(['nether_quartz_ore', 'nether_bricks', 'mossy_stone_bricks', 'cracked_stone_bricks'], 3.0, 'pickaxe', 1);
 setHard(['magma_block'], 0.9, 'pickaxe', 1);
 setHard(['end_stone', 'end_stone_bricks'], 4.0, 'pickaxe', 1);
+setHard(['moon_regolith', 'mars_sand'], 0.6, 'shovel');
+setHard(['moon_rock', 'moon_basalt', 'mars_rock'], 2.4, 'pickaxe', 1);
 setHard(['ancient_debris'], 24, 'pickaxe', 4);
 setHard(['netherite_block'], 40, 'pickaxe', 4);
 setHard(['dragon_egg'], 3.0, 'none');

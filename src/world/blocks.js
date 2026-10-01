@@ -388,6 +388,13 @@ def('end_gateway', {
   emission: 15, mat: MAT.END_PORTAL, inventory: false, cullSelf: true, sound: 'glass',
 });
 
+// the Moon and Mars (dimensions 4 and 5): their dust and their rock
+def('moon_regolith', { zh: '月壤', tex: 'moon_regolith', sound: 'sand', mat: MAT.SAND });
+def('moon_rock', { zh: '月岩', tex: 'moon_rock' });
+def('moon_basalt', { zh: '月海玄武岩', tex: 'moon_basalt' });
+def('mars_sand', { zh: '火星沙', tex: 'mars_sand', sound: 'sand', mat: MAT.SAND });
+def('mars_rock', { zh: '火星岩', tex: 'mars_rock' });
+
 // bed halves by colour: { color: [footId, headId] }
 export const BED_BLOCKS = {};
 for (const [c] of DYES) BED_BLOCKS[c] = [BLOCK[(c + '_bed_foot').toUpperCase()], BLOCK[(c + '_bed_head').toUpperCase()]];

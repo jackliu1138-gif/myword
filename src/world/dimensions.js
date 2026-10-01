@@ -11,9 +11,13 @@ import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT, layerTop } from './blocks.js';
 import { TerrainGenerator, BIOME } from './generator.js';
 import { TerrainGenerator2 } from './generator2.js';
 import { ChunkCtx, pasteEndCity } from './structures.js';
+import { MoonGenerator, MarsGenerator, SpaceGenerator } from './planets.js';
 
-export const DIM = { OVERWORLD: 0, NETHER: 1, END: 2 };
-export const DIM_NAMES = ['overworld', 'nether', 'end'];
+// 3 is space itself (no ground: see space.js), 4 the Moon and 5 Mars (planets.js)
+export const DIM = { OVERWORLD: 0, NETHER: 1, END: 2, SPACE: 3, MOON: 4, MARS: 5 };
+export const DIM_NAMES = ['overworld', 'nether', 'end', 'space', 'moon', 'mars'];
+// the dimensions with ground to build on (space has none)
+export const GROUND_DIMS = [0, 1, 2, 4, 5];
 
 // the Nether and the End are 128 blocks high, as in Minecraft (the arrays are WORLD_HEIGHT tall)
 const H = 128;
@@ -27,6 +31,9 @@ const smooth = (e0, e1, x) => { let t = (x - e0) / (e1 - e0); t = t < 0 ? 0 : t 
 export function createGenerator(seed, dimension = 0, version = 1) {
   if (dimension === DIM.NETHER) return new NetherGenerator(seed, version);
   if (dimension === DIM.END) return new EndGenerator(seed, version);
+  if (dimension === DIM.SPACE) return new SpaceGenerator(seed);
+  if (dimension === DIM.MOON) return new MoonGenerator(seed);
+  if (dimension === DIM.MARS) return new MarsGenerator(seed);
   return version >= 2 ? new TerrainGenerator2(seed) : new TerrainGenerator(seed);
 }
 

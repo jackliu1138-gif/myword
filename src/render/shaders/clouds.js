@@ -92,6 +92,9 @@ ${CLOUD_FUNCS}
 uniform sampler2D uSkyLut;
 uniform vec2 uCloudSize;   // size of the cloud target in pixels
 uniform float uLightSteps;
+// x: how much the layer curves away with the planet (1 / 2R; 0 flat, as it is near the ground),
+// y: how much of it shows (high up the clouds give way to those of the view from on high)
+uniform vec2 uCloudCurve;
 in vec2 vUV;
 layout(location = 0) out vec4 oColor;  // rgb in-scattered light, a transmittance
 layout(location = 1) out vec4 oDist;   // r: transmittance-weighted distance to the cloud
@@ -118,7 +121,20 @@ void main() {
   float base = uCloudParams.x, top = uCloudParams.y;
   float t0, t1;
   oDist = vec4(4000.0, 0.0, 0.0, 0.0);
-  if (abs(dir.y) < 1e-4) {
+  const float MAXD = 14000.0;
+  // a sample's height above the curving layer: y + a t^2 along the ray
+  float a = uCloudCurve.x * dot(dir.xz, dir.xz);
+  if (a > 1e-12) {
+    // where the parabola y(t) = ro.y + dir.y t + a t^2 crosses the layer's top and base
+    float dT = dir.y * dir.y - 4.0 * a * (ro.y - top);
+    float dB = dir.y * dir.y - 4.0 * a * (ro.y - base);
+    float tT2 = dT >= 0.0 ? (-dir.y + sqrt(dT)) / (2.0 * a) : -1.0;
+    float tT1 = dT >= 0.0 ? (-dir.y - sqrt(dT)) / (2.0 * a) : -1.0;
+    float tB2 = dB >= 0.0 ? (-dir.y + sqrt(dB)) / (2.0 * a) : -1.0;
+    if (ro.y > top) { t0 = max(tT1, 0.0); t1 = tT2; }
+    else if (ro.y >= base) { t0 = 0.0; t1 = tT2 > 0.0 ? tT2 : MAXD; }
+    else { t0 = tB2 > 0.0 ? tB2 : MAXD; t1 = tT2 > 0.0 ? tT2 : MAXD; }
+  } else if (abs(dir.y) < 1e-4) {
     if (ro.y < base || ro.y > top) { oColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
     t0 = 0.0; t1 = 8000.0;
   } else {
@@ -127,7 +143,6 @@ void main() {
     t0 = max(min(ta, tb), 0.0);
     t1 = max(ta, tb);
   }
-  const float MAXD = 14000.0;
   t1 = min(t1, MAXD);
   if (t1 <= t0 || uParams2.z <= 0.001) { oColor = vec4(0.0, 0.0, 0.0, 1.0); oDist.r = max(t0, 1000.0); return; }
 
@@ -160,6 +175,7 @@ void main() {
   for (int i = 0; i < 128; i++) {
     if (i >= steps * 2 || T < 0.015 || t > t1) break;
     vec3 p = ro + dir * t;
+    p.y += a * t * t;
     float lod = max(log2(t * pixelAngle / texelWorld), 0.0);
     float d = cloudDensity(p, true, lod);
     if (d > 0.002) {
@@ -188,7 +204,11 @@ void main() {
   float tMid = wSum > 0.0 ? tWeighted / wSum : mix(t0, t1, 0.5);
   vec3 skyCol = texture(uSkyLut, skyLutUV(vec3(dir.x, max(dir.y, 0.0), dir.z))).rgb;
   float fade = exp(-tMid / 7000.0) * smoothstep(0.0, 0.035, dir.y + 0.01);
+  // (seen from above, a sea of cloud keeps its shape far out)
+  fade = mix(fade, exp(-tMid / 16000.0), smoothstep(top, top + 60.0, ro.y));
   S = mix((1.0 - T) * skyCol, S, fade);
+  S *= uCloudCurve.y;
+  T = mix(1.0, T, uCloudCurve.y);
   oColor = vec4(S, T);
   oDist = vec4(tMid, 0.0, 0.0, 0.0);
 }

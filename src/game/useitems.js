@@ -213,6 +213,8 @@ export function installUse(Game) {
     this.audio.sfx('ignite', 0.8, 0);
     this.swing = 1;
     this.wearHeld(def, 1);
+    // on the Moon and Mars there is no air to burn
+    if (this.dimension === 4 || this.dimension === 5) { this.ui.toast(t('space.noFire'), 2500); return true; }
     if (this.lightPortal(x, y, z)) return true;
     if (IS_SOLID[w.getBlock(x, y - 1, z)]) w.setBlock(x, y, z, BLOCK.FIRE);
     return true;

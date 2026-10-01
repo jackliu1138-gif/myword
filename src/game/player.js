@@ -43,6 +43,12 @@ export class Player {
     this.boost = 0; // seconds of firework push left
     this.riding = null; // the creature or vehicle being ridden
     this.jumped = false;
+    this.gravity = 1; // a share of the Earth's (the Moon 1/6, Mars 0.38)
+    this.flyBoost = 1; // flying is faster high up, where the air thins out
+    this.thinAir = 1; // and fireworks push harder
+    this.maxFall = 60; // blocks a second (more coming down from space)
+    this.jetpack = false; // a space suit's thrusters: holding jump in the air lifts you
+    this.thrusting = false;
   }
 
   get eye() {
@@ -176,7 +182,7 @@ export class Player {
     const wishZ = -cosY * fx - sinY * sx;
 
     let speed;
-    if (this.flying) speed = this.sprinting ? 22 : 11;
+    if (this.flying) speed = (this.sprinting ? 22 : 11) * this.flyBoost;
     else if (this.inWater) speed = this.sprinting ? 3.4 : 2.4;
     else if (this.sneaking) speed = 1.35;
     else speed = this.sprinting ? 5.6 : 4.32;
@@ -189,7 +195,7 @@ export class Player {
 
     if (this.flying) {
       const vy = (ctl.jump ? 1 : 0) - (ctl.sneak ? 1 : 0);
-      this.vel[1] += (vy * (this.sprinting ? 12 : 8) - this.vel[1]) * (1 - Math.exp(-dt * 8));
+      this.vel[1] += (vy * (this.sprinting ? 12 : 8) * this.flyBoost - this.vel[1]) * (1 - Math.exp(-dt * 8));
     } else if (this.inWater) {
       this.vel[1] -= GRAVITY * 0.18 * dt;
       if (ctl.jump) this.vel[1] += 22 * dt;
@@ -206,13 +212,23 @@ export class Player {
       this.fallStart = null;
     } else {
       const fx = this.fx;
+      const g = GRAVITY * this.gravity;
       if (fx && fx.levitate) this.vel[1] += (fx.levitate * 1.9 - this.vel[1]) * (1 - Math.exp(-dt * 4));
-      else this.vel[1] -= GRAVITY * dt;
+      else this.vel[1] -= g * dt;
       if (fx && fx.slowFall && this.vel[1] < -2) this.vel[1] = -2;
-      if (this.vel[1] < -60) this.vel[1] = -60;
+      if (this.vel[1] < -this.maxFall) this.vel[1] = -this.maxFall;
+      // the suit's thrusters: in the air, press jump again and hold it to climb (faster the
+      // higher you are); the press that jumped off the ground doesn't count
+      if (!ctl.jump) this.jumpHeld = false;
+      this.thrusting = this.jetpack && ctl.jump && !this.onGround && !this.jumpHeld;
+      if (this.thrusting) {
+        const climb = 9 + Math.max(0, this.pos[1] - 200) * 0.06;
+        this.vel[1] = Math.min(climb, this.vel[1] + (g + 18) * dt);
+      }
       if (ctl.jump && this.onGround) {
         this.vel[1] = JUMP_V * (fx ? Math.sqrt(fx.jump) : 1);
         this.jumped = true;
+        this.jumpHeld = true;
         if (this.sprinting) {
           this.vel[0] += wishX * 1.2;
           this.vel[2] += wishZ * 1.2;
@@ -313,7 +329,8 @@ export class Player {
       // a firework rocket: towards 1.7 blocks a tick along the look
       this.boost -= dt;
       const b = 1 - Math.pow(0.5, k);
-      vx += (look[0] * 1.7 - vx) * b; vy += (look[1] * 1.7 - vy) * b; vz += (look[2] * 1.7 - vz) * b;
+      const kb = 1.7 * this.thinAir;
+      vx += (look[0] * kb - vx) * b; vy += (look[1] * kb - vy) * b; vz += (look[2] * kb - vz) * b;
     }
     v[0] = vx * 20; v[1] = vy * 20; v[2] = vz * 20;
     const before = Math.hypot(v[0], v[2]);

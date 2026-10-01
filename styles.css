@@ -1045,3 +1045,20 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
   .talk-foot .btn { min-height: 30px; padding: 5px 12px; font-size: 13px; }
   .talk-brain { display: none; }
 }
+
+/* ---- space: where the planets are, how high and how fast; the heat of coming down */
+#space-hud { position: absolute; inset: 0; pointer-events: none; }
+#space-marks { position: absolute; inset: 0; }
+.smark { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  transform: translate(-50%, -50%); color: #e8f1ff; font: 600 12px/1.15 var(--font, system-ui), sans-serif;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); white-space: nowrap; }
+.smark i { width: 18px; height: 18px; border: 1.5px solid rgba(220, 235, 255, 0.85); border-radius: 50%;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6); }
+.smark.target i { border-color: #ffd36a; }
+.smark small { font-weight: 500; opacity: 0.8; }
+#space-info { position: absolute; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%);
+  display: flex; gap: 14px; align-items: baseline; padding: 5px 12px; border-radius: 12px; background: rgba(6, 10, 22, 0.45);
+  color: #e8f1ff; font: 600 13px/1.2 var(--font, system-ui), sans-serif; text-shadow: 0 1px 2px #000; }
+#space-info span { font-weight: 500; opacity: 0.85; }
+#reentry { position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse 75% 70% at 50% 45%, rgba(255, 150, 50, 0) 45%, rgba(255, 110, 30, 0.35) 75%, rgba(255, 200, 120, 0.7) 100%); }

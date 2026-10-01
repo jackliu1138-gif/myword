@@ -33,6 +33,11 @@ import { createBrain, llmConfig } from './brain.mjs';
 export const PROTOCOL = 5;
 const CURRENT_GEN = 2;
 const MAX_PMOBS = 3000; // creatures kept per dimension
+// the dimensions: 0 the overworld, 1 the nether, 2 the end, 3 space (no ground), 4 the Moon, 5 Mars
+const DIMS = [0, 1, 2, 3, 4, 5];
+const GROUND_DIMS = [0, 1, 2, 4, 5];
+const OTHER_DIMS = [1, 2, 4, 5]; // with edits of their own (the overworld's are world.edits)
+const dimOf = (v) => (Number.isInteger(v) && v >= 0 && v <= 5 ? v : 0);
 const ADOPT_RADIUS = 64;
 const ITEM_LIFE = 5 * 60 * 1000; // dropped items vanish after five minutes, as they do in the game
 const MAX_ITEMS = 3000;
@@ -105,10 +110,10 @@ export function startServer(overrides = {}) {
   // structures); weather: the rain everyone shares; claims: chunks whose structure creatures
   // have been spawned; pmobs: creatures that stay (villagers, pets...), uid -> { c: data, owner }
   const world = {
-    seed: 0, gen: CURRENT_GEN, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: { 1: new Map(), 2: new Map() }, endState: null, players: {},
-    bents: { 0: new Map(), 1: new Map(), 2: new Map() }, items: new Map(),
+    seed: 0, gen: CURRENT_GEN, dayTime: 0.06, dayCount: 0, edits: new Map(), dimEdits: Object.fromEntries(OTHER_DIMS.map((d) => [d, new Map()])), endState: null, players: {},
+    bents: Object.fromEntries(DIMS.map((d) => [d, new Map()])), items: new Map(),
     weather: { target: 0, stormTarget: 0, timer: 300 + Math.random() * 420 },
-    claims: { 0: new Set(), 1: new Set(), 2: new Set() }, pmobs: { 0: new Map(), 1: new Map(), 2: new Map() },
+    claims: Object.fromEntries(DIMS.map((d) => [d, new Set()])), pmobs: Object.fromEntries(DIMS.map((d) => [d, new Map()])),
   };
   const locks = new Map(); // "d:x,y,z" -> client holding that chest or furnace open
   let dirty = false;
@@ -129,7 +134,7 @@ export function startServer(overrides = {}) {
       if (d.weather && typeof d.weather === 'object') {
         world.weather = { target: num(d.weather.target, 0, 1, 0), stormTarget: d.weather.stormTarget ? 1 : 0, timer: num(d.weather.timer, 0, 3600, 300) };
       }
-      for (const dim of [0, 1, 2]) {
+      for (const dim of DIMS) {
         const cl = d.claims && Array.isArray(d.claims[dim]) ? d.claims[dim] : [];
         world.claims[dim] = new Set(cl.filter((k) => Number.isFinite(k)));
         const pm = d.pmobs && Array.isArray(d.pmobs[dim]) ? d.pmobs[dim] : [];
@@ -147,12 +152,11 @@ export function startServer(overrides = {}) {
         }
       };
       readEdits(d.edits, world.edits);
-      readEdits(d.dimEdits && d.dimEdits[1], world.dimEdits[1]);
-      readEdits(d.dimEdits && d.dimEdits[2], world.dimEdits[2]);
+      for (const dim of OTHER_DIMS) readEdits(d.dimEdits && d.dimEdits[dim], world.dimEdits[dim]);
       world.endState = d.endState && typeof d.endState === 'object' ? d.endState : null;
       brain.load(d.brain);
       const be = d.bents && typeof d.bents === 'object' ? d.bents : {};
-      for (const dim of [0, 1, 2]) world.bents[dim] = loadEntities(be[dim]);
+      for (const dim of DIMS) world.bents[dim] = loadEntities(be[dim]);
       log(`world loaded: seed ${world.seed} (generator ${world.gen}), ${world.edits.size} edited chunks, ${Object.keys(world.players).length} known players, ${world.pmobs[0].size} creatures kept`);
     } catch (e) {
       world.seed = seedFromString(cfg.seed);
@@ -167,7 +171,7 @@ export function startServer(overrides = {}) {
     for (const [k, m] of edits) out[k] = Array.from(m.entries()).flat();
     return out;
   }
-  const serializeDimEdits = () => ({ 1: serializeEdits(world.dimEdits[1]), 2: serializeEdits(world.dimEdits[2]) });
+  const serializeDimEdits = () => Object.fromEntries(OTHER_DIMS.map((d) => [d, serializeEdits(world.dimEdits[d])]));
 
   let saving = null;
   async function saveWorld() {
@@ -178,11 +182,11 @@ export function startServer(overrides = {}) {
       const body = JSON.stringify({
         version: 1, seed: world.seed, gen: world.gen, dayTime: world.dayTime, dayCount: world.dayCount, edits: serializeEdits(),
         dimEdits: serializeDimEdits(), endState: world.endState, players: world.players,
-        bents: { 0: serializeEntities(world.bents[0]), 1: serializeEntities(world.bents[1]), 2: serializeEntities(world.bents[2]) },
+        bents: Object.fromEntries(GROUND_DIMS.map((d) => [d, serializeEntities(world.bents[d])])),
         weather: world.weather,
         brain: brain.serialize(),
-        claims: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.claims[d]]])),
-        pmobs: Object.fromEntries([0, 1, 2].map((d) => [d, [...world.pmobs[d].values()].map((r) => r.c)])),
+        claims: Object.fromEntries(GROUND_DIMS.map((d) => [d, [...world.claims[d]]])),
+        pmobs: Object.fromEntries(GROUND_DIMS.map((d) => [d, [...world.pmobs[d].values()].map((r) => r.c)])),
       });
       const tmp = worldFile + '.tmp';
       await writeFile(tmp, body);
@@ -194,7 +198,8 @@ export function startServer(overrides = {}) {
 
   // b: id | state << 8
   function applyEdit(x, y, z, b, d = 0) {
-    const edits = d === 1 || d === 2 ? world.dimEdits[d] : world.edits;
+    const edits = d ? world.dimEdits[d] : world.edits;
+    if (!edits) return;
     const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
     const k = chunkKey(cx, cz);
     let m = edits.get(k);
@@ -206,7 +211,8 @@ export function startServer(overrides = {}) {
 
   // The edited value at a block (id | state << 8), or null if it was never edited.
   function editAt(x, y, z, d) {
-    const edits = d === 1 || d === 2 ? world.dimEdits[d] : world.edits;
+    const edits = d ? world.dimEdits[d] : world.edits;
+    if (!edits) return null;
     const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
     const m = edits.get(chunkKey(cx, cz));
     const v = m && m.get((y << 8) | ((z - cz * 16) << 4) | (x - cx * 16));
@@ -278,7 +284,7 @@ export function startServer(overrides = {}) {
 
   // Creatures nobody simulates go to a player near them (the first one to come by).
   function adoptCreatures() {
-    for (const d of [0, 1, 2]) {
+    for (const d of GROUND_DIMS) {
       const near = [...clients.values()].filter((o) => o.ready && o.state && (o.state.d || 0) === d);
       if (!near.length) continue;
       const give = new Map();
@@ -373,7 +379,7 @@ export function startServer(overrides = {}) {
       dayLength: cfg.dayLength, mode: cfg.mode, difficulty: cfg.difficulty, edits: serializeEdits(), dimEdits: serializeDimEdits(),
       endState: world.endState, endHost, me: saved, gen: world.gen, weather: { r: world.weather.target, s: world.weather.stormTarget },
       // signs everyone can read (what chests and furnaces hold is sent when one is opened)
-      bents: Object.fromEntries([0, 1, 2].map((d) => [d, Object.fromEntries([...world.bents[d]].filter(([, e]) => e.kind === 'sign').map(([k, e]) => [k, serializeEntity(e)]))])),
+      bents: Object.fromEntries(GROUND_DIMS.map((d) => [d, Object.fromEntries([...world.bents[d]].filter(([, e]) => e.kind === 'sign').map(([k, e]) => [k, serializeEntity(e)]))])),
       items: [...world.items.values()].map(itemInfo),
       players: [...clients.values()].filter((o) => o.ready && o !== c).map((o) => ({ id: o.id, n: o.name, st: o.state, voice: o.voice })),
       ice: iceServersFor(c.id),
@@ -414,12 +420,16 @@ export function startServer(overrides = {}) {
     if (!c.ready) { if (m.t === 'hello') onHello(c, m); return; }
     switch (m.t) {
       case 'st': { // position, look, held item, flags
-        const p = Array.isArray(m.p) ? m.p.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : null;
+        const d = dimOf(m.d);
+        // (in space, positions over the body nearest the player: much further out)
+        const lim = d === 3 ? 2e9 : 3e7;
+        const p = Array.isArray(m.p) ? m.p.slice(0, 3).map((v) => num(v, -lim, lim)) : null;
         if (!p) return;
         c.state = { p, y: num(m.y, -100, 100), pi: num(m.pi, -2, 2), h: int(m.h) || 0, f: int(m.f) || 0 };
         if (Array.isArray(m.a)) c.state.a = m.a.slice(0, 4).map((v) => int(v) || 0);
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
         if (d) c.state.d = d;
+        // (in space: which body p is measured from, 0-4 = earth, moon, mars, jupiter, saturn)
+        if (d === 3) c.state.b = Math.max(0, Math.min(4, int(m.b) || 0));
         broadcast({ t: 'st', id: c.id, ...c.state }, c, true);
         if ((c.lastDim || 0) !== d) {
           c.lastDim = d; c.sleeping = false; checkEndHost(); checkSleep();
@@ -448,7 +458,8 @@ export function startServer(overrides = {}) {
       }
       case 'b': { // block edits [[x, y, z, id], ...] in dimension d
         if (!Array.isArray(m.l)) return;
-        const dim = m.d === 1 || m.d === 2 ? m.d : 0;
+        const dim = dimOf(m.d);
+        if (dim === 3) return; // (nothing to build on in space)
         const now = Date.now();
         if (now - c.editWindow > 1000) { c.editWindow = now; c.editCount = 0; }
         const out = [];
@@ -472,7 +483,7 @@ export function startServer(overrides = {}) {
         if (now - c.dropWindow > 1000) { c.dropWindow = now; c.dropCount = 0; }
         if (++c.dropCount > 80) return;
         const vec = (a) => (Array.isArray(a) ? a.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : [0, 0, 0]);
-        spawnItem({ i, it, n: Math.max(1, Math.min(64, int(m.n) || 1)), w: Math.max(0, int(m.w) || 0), dl: num(m.dl, 0, 5, 0.5), p: vec(m.p), v: vec(m.v).map((v) => Math.max(-30, Math.min(30, v))), d: m.d === 1 || m.d === 2 ? m.d : 0, e: cleanEnch(m.e) }, c);
+        spawnItem({ i, it, n: Math.max(1, Math.min(64, int(m.n) || 1)), w: Math.max(0, int(m.w) || 0), dl: num(m.dl, 0, 5, 0.5), p: vec(m.p), v: vec(m.v).map((v) => Math.max(-30, Math.min(30, v))), d: dimOf(m.d), e: cleanEnch(m.e) }, c);
         break;
       }
       case 'take': { // first come, first served
@@ -485,7 +496,7 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'open': { // a chest or furnace: lent to one player at a time
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const d = dimOf(m.d);
         const k = String(m.k || '');
         if (!/^-?\d+,-?\d+,-?\d+$/.test(k)) return;
         const lk = lockKey(d, k);
@@ -509,7 +520,7 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'cput': case 'close': { // what the player holding it open has done with it
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const d = dimOf(m.d);
         const k = String(m.k || '');
         const lk = lockKey(d, k);
         if (locks.get(lk) !== c) return;
@@ -520,7 +531,7 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'bent': { // a sign's words
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const d = dimOf(m.d);
         const k = String(m.k || '');
         if (!/^-?\d+,-?\d+,-?\d+$/.test(k)) return;
         const e = loadEntity(m.e);
@@ -534,7 +545,7 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'claim': { // a chunk with a structure's creatures, made for the first time in someone's game
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const d = dimOf(m.d);
         const k = Number(m.k);
         if (!Number.isFinite(k)) return;
         const ok = !world.claims[d].has(k);
@@ -543,7 +554,7 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'pmobs': { // the creatures that stay which this player simulates (l), and the ones let go (rel)
-        const d = m.d === 1 || m.d === 2 ? m.d : 0;
+        const d = dimOf(m.d);
         const map = world.pmobs[d];
         const seen = new Set();
         for (const raw of Array.isArray(m.l) ? m.l.slice(0, 512) : []) {
@@ -631,7 +642,7 @@ export function startServer(overrides = {}) {
   function onClose(c) {
     clients.delete(c.id);
     for (const [lk, holder] of locks) if (holder === c) locks.delete(lk);
-    for (const d of [0, 1, 2]) for (const r of world.pmobs[d].values()) if (r.owner === c.id) r.owner = null;
+    for (const d of DIMS) for (const r of world.pmobs[d].values()) if (r.owner === c.id) r.owner = null;
     if (!c.ready) return;
     broadcast({ t: 'leave', id: c.id });
     checkEndHost();
@@ -717,7 +728,7 @@ export function startServer(overrides = {}) {
     }
     // furnaces nobody has open cook here (the one a player has open runs in their game)
     if (online.length) {
-      for (const d of [0, 1, 2]) {
+      for (const d of GROUND_DIMS) {
         for (const [k, e] of world.bents[d]) {
           if (e.kind === 'brewing' && !locks.has(lockKey(d, k))) { if (tickBrewing(e, dt)) dirty = true; continue; }
           if (e.kind !== 'furnace' || locks.has(lockKey(d, k)) || (!e.burn && !e.slots[0])) continue;

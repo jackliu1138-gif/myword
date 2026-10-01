@@ -122,6 +122,7 @@ void main() {
   vec3 dir = vRel / dist;
   vec3 V = -dir;
   vec2 suv = gl_FragCoord.xy * uScreen.zw;
+  gSkyUV = suv;
   bool underwater = uParams.w > 0.5;
   float skyL = vLight.x;
   float skyAmb = skyL * skyL;
