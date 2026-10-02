@@ -9,6 +9,8 @@ import { EFFECTS, ENCHANTS, ROMAN, BREW_TIME, BLAZE_FUEL } from '../sim/effects.
 import './strings3.js';
 import './strings4.js';
 import './strings5.js';
+import './strings6.js';
+import { JetHud } from './jethud.js';
 
 // Creative palette tabs: which blocks count as natural (the rest of the blocks are for building)
 const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'snow', 'ice', 'cactus', 'oak_log', 'birch_log', 'spruce_log',
@@ -19,13 +21,13 @@ const NATURE = new Set(['stone', 'grass', 'dirt', 'sand', 'gravel', 'clay', 'sno
 const PALETTE_TABS = ['all', 'building', 'nature', 'tools', 'combat', 'food', 'potions', 'transport', 'eggs', 'misc'];
 function paletteTab(d) {
   if (d.kind === 'block') return IS_RAIL[d.id] ? 'transport' : NATURE.has(d.key) ? 'nature' : 'building';
-  if (d.elytra || ['boat', 'minecart', 'saddle', 'firework', 'saucer'].includes(d.kind)) return 'transport';
+  if (d.elytra || ['boat', 'minecart', 'saddle', 'firework', 'saucer', 'jet'].includes(d.kind)) return 'transport';
   if (['sword', 'bow', 'arrow', 'armor', 'crossbow', 'shield', 'totem'].includes(d.kind)) return 'combat';
   if (['pickaxe', 'axe', 'shovel', 'hoe', 'igniter', 'pearl', 'eye', 'bucket', 'fertilizer', 'shears', 'fishing_rod'].includes(d.kind)) return 'tools';
   if (d.kind === 'food' || d.kind === 'milk') return 'food';
   if (['potion', 'splash', 'bottle'].includes(d.kind) || ['blaze_powder', 'nether_wart', 'glistering_melon_slice', 'spider_eye', 'fermented_spider_eye', 'magma_cream', 'ghast_tear', 'rabbit_foot', 'phantom_membrane', 'golden_carrot', 'glowstone_dust', 'redstone', 'sugar', 'pufferfish'].includes(d.key)) return 'potions';
   if (d.kind === 'egg') return 'eggs';
-  if (d.kind === 'door' || d.kind === 'sign' || d.kind === 'bed') return 'building';
+  if (d.kind === 'door' || d.kind === 'sign' || d.kind === 'bed' || d.kind === 'carpet') return 'building';
   return 'misc';
 }
 
@@ -523,7 +525,7 @@ export class UI {
   buildHelp() {
     $('help-body').innerHTML = HELP.map((sec) => `<section class="help-sec"><h3>${escapeHtml(t(sec.title))}</h3>
       <dl class="keys">${keyRows(sec.rows)}</dl>${sec.note ? `<p class="hint">${escapeHtml(t(sec.note))}</p>` : ''}</section>`).join('') +
-      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'village', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space', 'saucer'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
+      `<section class="help-sec"><h3>${escapeHtml(t('help.adventure'))}</h3>${['build', 'chest', 'furnace', 'water', 'sapling', 'bed', 'carpet', 'farm', 'armor', 'hunger', 'enchant', 'brew', 'pets', 'talk', 'village', 'carry', 'trade', 'ride', 'elytra', 'plate', 'nether', 'end', 'space', 'saucer', 'jet'].map((k) => `<p class="hint">${escapeHtml(t('adv.' + k))}</p>`).join('')}</section>`;
   }
 
   show(name, focusEl) {
@@ -856,6 +858,13 @@ export class UI {
     $('btn-saucer-fly').textContent = t(info.flying ? 'saucer.flyOn' : 'saucer.fly');
     $('btn-saucer-go').disabled = !c.dest;
     $('btn-saucer-go').textContent = t('saucer.go') + (c.dest ? ' · ' + this.tripTime(c.secs) : '');
+  }
+
+  // The F-22's head-up display (info: see Game.jetHudInfo; null: hidden).
+  setJetHud(info) {
+    if (!info) { if (this.jetHud) this.jetHud.hide(); return; }
+    if (!this.jetHud) this.jetHud = new JetHud($('hud'));
+    this.jetHud.show(info);
   }
 
   // The trip under way (progress: { left (s), frac, to } or null when landed); phase; hint: a line

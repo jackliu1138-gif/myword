@@ -430,6 +430,8 @@ export function startServer(overrides = {}) {
         if (!p) return;
         c.state = { p, y: num(m.y, -100, 100), pi: num(m.pi, -2, 2), h: int(m.h) || 0, f: int(m.f) || 0 };
         if (Array.isArray(m.a)) c.state.a = m.a.slice(0, 4).map((v) => int(v) || 0);
+        // (flying an F-22: how it is turned, a quaternion)
+        if (Array.isArray(m.q) && m.q.length === 4) c.state.q = m.q.map((v) => num(v, -1, 1));
         if (d) c.state.d = d;
         // (in space: which body p is measured from, 0-4 = earth, moon, mars, jupiter, saturn)
         if (d === 3) c.state.b = Math.max(0, Math.min(4, int(m.b) || 0));
@@ -614,8 +616,14 @@ export function startServer(overrides = {}) {
         break;
       }
       case 'fx':
-        broadcast({ t: 'fx', id: c.id, k: clean(m.k, 16), p: Array.isArray(m.p) ? m.p.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : [0, 0, 0], pw: num(m.pw, 0, 8, 3) }, c);
+      { // a blast, a burst of cannon fire, a missile in the air (seen and heard by the others)
+        const out = { t: 'fx', id: c.id, k: clean(m.k, 16), p: Array.isArray(m.p) ? m.p.slice(0, 3).map((v) => num(v, -3e7, 3e7)) : [0, 0, 0], pw: num(m.pw, 0, 16, 3) };
+        if (Array.isArray(m.v)) out.v = m.v.slice(0, 3).map((v) => num(v, -1, 1));
+        if (typeof m.n === 'string') out.n = m.n.slice(0, 32);
+        if (m.s) out.s = 1;
+        broadcast(out, c);
         break;
+      }
       case 'chat': {
         const text = clean(m.x, 200);
         if (!text) return;

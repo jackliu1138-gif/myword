@@ -25,6 +25,7 @@ import { installSpace } from './space.js';
 import { installCarry } from './carry.js';
 import { installVillagerLife } from './villagerlife.js';
 import { installSaucer } from './saucer.js';
+import { installJet } from './jet.js';
 import { moonPhase } from '../world/space.js';
 import { Speech } from './speech.js';
 import { installCreaturePlay } from './creatureplay.js';
@@ -549,7 +550,8 @@ export class Game {
       if (!this.debug) this.ui.setDebug(null);
       e.preventDefault();
     }
-    if (code === 'KeyH' && (this.state === 'playing')) {
+    // (in an F-22, H is its hover)
+    if (code === 'KeyH' && this.state === 'playing' && !this.jet) {
       this.hudHidden = !this.hudHidden;
       this.ui.setHud(!this.hudHidden);
     }
@@ -705,6 +707,10 @@ export class Game {
     const input = this.input;
     const playing = this.state === 'playing';
     const frameInput = input.consumeFrame();
+    // (in a flying saucer the camera can be pinched closer or further; on its autopilot, landed or
+    // as a passenger the stick has nothing to do, so a finger anywhere looks about)
+    input.touch.zoomable = !!(this.ride || this.passengerOf || this.jet);
+    input.touch.noStick = !!((this.ride && this.ride.phase !== 'manual') || this.passengerOf);
     let ctl = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, toggleFly: false, autoJump: this.settings.autoJump };
     const pad = this.pads.poll();
     if (pad.connected) {
@@ -744,7 +750,15 @@ export class Game {
         if (input.wasPressed('Digit' + (i + 1))) this.selectSlot(i);
       }
       // (in a flying saucer the wheel brings the camera closer or takes it further out)
-      if (frameInput.wheel) { if (this.ride || this.passengerOf) this.saucerZoom(frameInput.wheel); else this.selectSlot((this.selected + frameInput.wheel + 9) % 9); }
+      if (frameInput.wheel) {
+        if (this.ride || this.passengerOf) this.saucerZoom(frameInput.wheel);
+        else if (this.jet) this.jetZoom(frameInput.wheel);
+        else this.selectSlot((this.selected + frameInput.wheel + 9) % 9);
+      }
+      // (on a touch screen: two fingers pinched together take the camera further out, spread apart
+      // bring it closer, as the wheel does)
+      if (frameInput.pinch && (this.ride || this.passengerOf)) this.saucerZoom(-frameInput.pinch / Math.log(1.18));
+      else if (frameInput.pinch && this.jet) this.jetZoom(-frameInput.pinch / Math.log(1.15));
       if (pad.connected && this.state === 'playing') this.applyPadControls(pad, ctl, dt);
       if (!this.isCreative()) { ctl.toggleFly = false; if (this.player.flying) this.player.flying = false; }
       if (this.sleeping) {
@@ -771,14 +785,18 @@ export class Game {
       this.titleAnchor = this.player.pos.slice();
       this.spawnPending = false;
     }
-    // (a saucer on autopilot follows its course whether or not the ground under it is there yet)
-    const scripted = this.ride && this.ride.phase !== 'manual' && this.ride.phase !== 'landed';
+    // (a saucer on autopilot follows its course whether or not the ground under it is there yet; an
+    // F-22 in the air flies on over ground still to come, as fast as it is)
+    const scripted = (this.ride && this.ride.phase !== 'manual' && this.ride.phase !== 'landed') || (this.jet && this.jet.mode !== 'landed');
     if (playing && (ready || scripted) && !this.spawnPending && !this.arrival && !this.sleeping) {
+      // (an F-22's weapons, hover and firepower: once a frame)
+      if (this.jet) this.jetWeapons(dt, this.jetAim(), this.jetRot(), ctl);
       // fixed sub-steps keep movement identical at any frame rate
       let rem = dt;
       while (rem > 1e-6) {
         const step = Math.min(rem, 1 / 60);
         if (this.ride) this.saucerStep(step, ctl);
+        else if (this.jet) this.jetStep(step, ctl);
         else if (this.passengerOf) this.followPilot(ctl);
         else if (this.carriedBy) this.followCarrier(ctl);
         else if (this.dimension === 3) this.spaceFlight(step, ctl); else this.player.update(step, ctl);
@@ -817,12 +835,14 @@ export class Game {
     // camera
     const cam = this.computeCamera(dt);
     this.camera = cam;
+    // an F-22: what it fired, its sound and its HUD
+    this.updateJet(dt);
     this.updatePrecipitation(dt, cam);
     this.updateSpaceView();
 
     // streaming and mesh uploads; liquids flow (aboard a flying saucer: round the saucer, which
     // the camera looks at from up to hundreds of blocks off, not round the camera)
-    const near = this.ride || this.passengerOf ? this.player.pos : cam.pos;
+    const near = this.ride || this.passengerOf || this.jet ? this.player.pos : cam.pos;
     this.world.update(near[0], near[2], cam.forward[0], cam.forward[2]);
     if (this.state !== 'paused' || this.mp) this.world.updateFluids(dt);
     this.uploadMeshes();
@@ -1066,7 +1086,8 @@ export class Game {
       const l2 = Math.hypot(...f);
       return { pos, forward: f.map((v) => v / l2), fov: (70 * Math.PI) / 180 };
     }
-    // in a flying saucer: the camera swings round it
+    // in an F-22: behind it or from its cockpit; in a flying saucer: the camera swings round it
+    if (this.jet) return this.jetCamera(dt);
     if (this.ride || this.passengerOf) return this.saucerCamera(dt);
     if (this.sleeping) {
       const s = this.sleeping;
@@ -1165,14 +1186,15 @@ export class Game {
       chunks: this.world.chunks.values(),
       renderDistance: this.world.renderDistance,
       // (aboard a flying saucer the world is loaded round it, not round the camera)
-      fogCenter: this.ride || this.passengerOf ? this.player.pos.slice() : null,
+      fogCenter: this.ride || this.passengerOf || this.jet ? this.player.pos.slice() : null,
       dayTime: this.dayTime,
       // the Moon goes round in eight days, full on the first night (world/space.js)
       moonPhase: moonPhase(this.spaceTime()),
       sky: this.skyState(cam),
       fog,
       // (a flying saucer's engines light up the ground round them)
-      lights: this.saucerLights ? this.saucerLights(cam) : null,
+      // (and an F-22's afterburner, its cannon, the fire of what its missiles hit)
+      lights: this.sceneLights(cam),
       underwater: this.state === 'playing' && this.player.headInWater,
       waterDepth: this.player.headInWater ? this.waterDepthAbove() : 0,
       eyeSky: this.eyeSky,
@@ -1272,3 +1294,4 @@ installSpace(Game);
 installCarry(Game);
 installVillagerLife(Game);
 installSaucer(Game);
+installJet(Game);

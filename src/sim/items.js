@@ -1,7 +1,7 @@
 // Items: every block is an item (id < 256); tools, weapons, food and materials follow from 256.
 // Pure data, shared by the game, the simulation and (later) the multiplayer server.
 
-import { BLOCK, BLOCKS, DYES, BED_BLOCKS } from '../world/blocks.js';
+import { BLOCK, BLOCKS, DYES, BED_BLOCKS, WOOL_OF_DYE } from '../world/blocks.js';
 import { POTIONS } from './effects.js';
 
 export const ITEM_BASE = 256;
@@ -221,6 +221,10 @@ for (const [type, [c1, c2, zh]] of Object.entries(EGG_MOBS)) {
 }
 // (new items go after the eggs, so the ids of the ones before never change)
 item('flying_saucer', { name: 'Flying Saucer', zh: '飞碟', kind: 'saucer', stack: 1 });
+// carpets, one for each dye colour: the carpet block keeps the colour (its DYES index) in its state
+export const CARPET_ITEMS = DYES.map(([c, zh], i) => item(c + '_carpet', { zh: zh + '毛毯', kind: 'carpet', color: i }));
+// the fighter jet (game/jet.js)
+item('f22_raptor', { name: 'F-22 Raptor', zh: 'F-22 猛禽战斗机', kind: 'jet', stack: 1 });
 
 export const ITEMS = defs;
 
@@ -254,8 +258,10 @@ export function itemDef(id) {
 export const isBlockItem = (id) => id > 0 && id < ITEM_BASE;
 
 // What a broken block leaves behind in survival: [itemId, count] pairs (random ranges allowed).
-export function blockDrops(block, rnd = Math.random) {
+// (state: the block's state byte, for the blocks whose drop depends on it: a carpet's colour)
+export function blockDrops(block, rnd = Math.random, state = 0) {
   switch (block) {
+    case BLOCK.CARPET: return [[CARPET_ITEMS[state & 15], 1]];
     case BLOCK.STONE: return [[BLOCK.COBBLESTONE, 1]];
     case BLOCK.GRASS: case BLOCK.SNOWY_GRASS: return [[BLOCK.DIRT, 1]];
     case BLOCK.COAL_ORE: return [[ITEM.COAL, 1]];
@@ -443,6 +449,8 @@ export const RECIPES = [
   RECIPES.push([BLOCK.NETHERITE_BLOCK, 1, [[ITEM.NETHERITE_INGOT, 9]]]);
   // beds: three wool of one colour and three planks
   for (const [c] of DYES) RECIPES.push([BED_ITEMS[c], 1, [[BLOCK[(c + '_wool').toUpperCase()], 3], ['planks', 3]]]);
+  // two wool make three carpets of its colour
+  DYES.forEach((_, i) => RECIPES.push([CARPET_ITEMS[i], 3, [[WOOL_OF_DYE[i], 2]]]));
   RECIPES.push([ITEM.FLINT_AND_STEEL, 1, [[ITEM.IRON_INGOT, 1], [ITEM.FLINT, 1]]]);
   RECIPES.push([ITEM.BLAZE_POWDER, 2, [[ITEM.BLAZE_ROD, 1]]]);
   RECIPES.push([ITEM.EYE_OF_ENDER, 1, [[ITEM.ENDER_PEARL, 1], [ITEM.BLAZE_POWDER, 1]]]);
@@ -522,6 +530,7 @@ export const RECIPES = [
   RECIPES.push([BLOCK.SEA_LANTERN, 1, [[ITEM.PRISMARINE_SHARD, 4], [ITEM.PRISMARINE_CRYSTALS, 5]]]);
   // to the planets
   RECIPES.push([ITEM.FLYING_SAUCER, 1, [[BLOCK.IRON_BLOCK, 4], [BLOCK.GLASS, 4], [BLOCK.LANTERN, 2], [ITEM.DIAMOND, 2]]]);
+  RECIPES.push([ITEM.F22_RAPTOR, 1, [[BLOCK.IRON_BLOCK, 6], [ITEM.DIAMOND, 2], [BLOCK.GLASS, 2], [BLOCK.TNT, 2]]]);
 }
 
 // What a flying saucer's tank takes, in units (a full tank holds SAUCER_TANK).

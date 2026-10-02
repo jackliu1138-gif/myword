@@ -186,7 +186,7 @@ const PAD_POSTS = [];
 for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + (k * Math.PI) / 4; PAD_POSTS.push([Math.floor(Math.cos(a) * 38), Math.floor(Math.sin(a) * 38)]); }
 
 // The pad's deck at (fx, fz), d from its middle (outside it: the ground's own top, ground).
-function padBlock(fx, fz, d, ground) {
+export function padBlock(fx, fz, d, ground) {
   if (d > PAD_R) return ground;
   if (d <= 2.5) return B.SEA_LANTERN;
   if (d <= 3.5 || (d > 16.8 && d <= 19.2) || d > PAD_R - 1.2) return B.YELLOW_WOOL;

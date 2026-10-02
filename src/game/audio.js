@@ -3,6 +3,7 @@
 
 import { playThroughSilentSwitch } from './audiosession.js';
 import { installSaucerSound } from './saucersound.js';
+import { installJetSound } from './jetsound.js';
 
 const MATERIAL = {
   stone: { f: 1700, q: 1.1, decay: 0.13, thump: 110, gain: 0.55 },
@@ -394,3 +395,5 @@ export function materialOf(block) {
 
 // (a flying saucer's engines, lift-off and landing: setEngine, saucerSpool, saucerIgnite, saucerThud)
 installSaucerSound(Audio);
+// (the F-22: setJet, jetSpool, jetMissile, jetBoom, jetHitSound, jetGunFar, jetLock, setJetFar)
+installJetSound(Audio);

@@ -341,6 +341,12 @@ export function installVehicles(Game) {
 
   // ---------------------------------------------------------------- the camera: first person, behind, in front
   P.cycleCamera = function cycleCamera() {
+    // (in an F-22: from behind it, or from the cockpit)
+    if (this.jet) {
+      this.jet.view = this.jet.view === 1 ? 0 : 1;
+      this.ui.toast(t(this.jet.view === 1 ? 'jet.view.cockpit' : 'jet.view.chase'), 1600);
+      return;
+    }
     // (in a flying saucer: round it from outside, or from our seat on the bridge)
     if (this.ride || this.passengerOf) {
       this.camMode = this.camMode === 1 ? 0 : 1;
@@ -381,6 +387,8 @@ export function installVehicles(Game) {
   P.localPlayerModel = function localPlayerModel() {
     if (!this.player) return null;
     const p = this.player;
+    // (in an F-22: under its canopy, out of sight)
+    if (this.jet) return null;
     // (in a flying saucer: sitting at its controls under the dome, the camera outside; from the
     // bridge, our own eyes)
     if (this.ride) {

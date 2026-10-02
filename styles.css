@@ -1129,6 +1129,7 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
 .saucer-dest:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
 /* the planets, drawn small */
 .planet { flex: none; width: 34px; height: 34px; border-radius: 50%; position: relative; box-shadow: inset -6px -5px 10px rgba(0, 0, 0, 0.55), 0 0 8px rgba(140, 203, 245, 0.18); }
+.planet.base { background: radial-gradient(circle at 50% 50%, #f8c527 0 13%, #e9ecec 14% 20%, #8e8e86 21% 30%, transparent 31%), radial-gradient(circle at 62% 58%, #5c9e45 0 22%, transparent 23%), #2f6fc0; }
 .planet.earth { background: radial-gradient(circle at 35% 35%, #9fd6ff 0 8%, transparent 9%), radial-gradient(circle at 62% 58%, #5c9e45 0 22%, transparent 23%), radial-gradient(circle at 30% 70%, #6aa84f 0 14%, transparent 15%), #2f6fc0; }
 .planet.moon { background: radial-gradient(circle at 60% 40%, #8c8c8c 0 12%, transparent 13%), radial-gradient(circle at 35% 65%, #8a8a8a 0 9%, transparent 10%), #cfcdc8; }
 .planet.mars { background: radial-gradient(circle at 50% 12%, #f4f2ee 0 12%, transparent 13%), radial-gradient(circle at 40% 60%, #8a3c22 0 20%, transparent 21%), #c8643a; }
@@ -1162,3 +1163,43 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
 }
 .trip-btn:active { background: rgba(255, 194, 102, 0.3); }
 .in-saucer .crosshair { display: none; }
+
+/* ---------------------------------------------------------------- the F-22 */
+.in-jet .crosshair, .in-jet #hotbar, .in-jet #xpbar, .in-jet #vitals, .in-jet #effects, .in-jet #blockname { display: none !important; }
+.jet-hud {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2;
+  --hud: #63ff9e; --hud-hot: #ff5a45;
+  fill: none; stroke: var(--hud); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 0 2px rgba(60, 255, 140, 0.55)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+.jet-hud text { fill: var(--hud); stroke: none; font-size: 13px; letter-spacing: 0.04em; }
+.jet-hud .jh-small { font-size: 11px; }
+.jet-hud .jh-num { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.jet-hud .jh-text { font-size: 13px; font-variant-numeric: tabular-nums; }
+.jet-hud .jh-help { font: 500 12px var(--font-ui); fill: rgba(220, 255, 232, 0.9); }
+.jet-hud .jh-fill { fill: var(--hud); stroke: none; }
+.jet-hud .jh-box { fill: rgba(0, 20, 8, 0.25); }
+.jet-hud .jh-thin { stroke-width: 1.1; }
+.jet-hud .jh-ladder text { font-size: 11px; }
+.jet-hud .jh-hot { fill: var(--hud-hot); }
+.jet-hud .jh-locked rect { stroke: var(--hud-hot); stroke-width: 2.2; }
+.jet-hud .jh-locked text { fill: var(--hud-hot); font-weight: 700; }
+.jet-hud .jh-warn { fill: var(--hud-hot); font-size: 26px; font-weight: 800; letter-spacing: 0.12em; }
+@media (max-width: 760px) {
+  .jet-hud text { font-size: 11px; }
+  .jet-hud .jh-num { font-size: 13px; }
+  .jet-hud .jh-text { font-size: 11px; }
+  .jet-hud .jh-help { font-size: 10px; }
+  .jet-hud .jh-warn { font-size: 20px; }
+}
+/* its buttons on a touch screen, in place of the ones for building */
+.touch-jet { display: none; }
+.in-jet .touch-jet { display: grid; }
+.in-jet .touch-break, .in-jet .touch-place, .in-jet .touch-fly, .in-jet .touch-carry { display: none !important; }
+.touch-word { font: 800 calc(13px * var(--touch-scale)) var(--font-ui); letter-spacing: 0.04em; }
+.touch-jfire { --size: calc(84px * var(--touch-scale)); right: calc(22px + 92px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(150px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); border-color: rgba(255, 120, 90, 0.7); }
+.touch-jmsl { --size: calc(64px * var(--touch-scale)); right: calc(26px + env(safe-area-inset-right, 0px)); bottom: calc(184px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); border-color: rgba(255, 200, 100, 0.7); }
+.touch-jhover { --size: calc(54px * var(--touch-scale)); right: calc(22px + 186px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(84px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-jpower { --size: calc(50px * var(--touch-scale)); right: calc(22px + 196px * var(--touch-scale) + env(safe-area-inset-right, 0px)); bottom: calc(160px * var(--touch-scale) + env(safe-area-inset-bottom, 0px)); }
+.touch-jfire .touch-word { font-size: calc(15px * var(--touch-scale)); }

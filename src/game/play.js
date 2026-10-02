@@ -2,9 +2,9 @@
 // items, arrows), breaking and placing, fighting, eating, bows, damage, death and respawning.
 // Installed as methods on Game.prototype so game.js stays about the frame loop and the UI.
 
-import { Simulation, MAX_HEALTH, MAX_AIR } from '../sim/simulation.js';
+import { Simulation, MAX_HEALTH, MAX_AIR, FORCE_SOURCES } from '../sim/simulation.js';
 import { Inventory, ARMOR_REF } from '../sim/inventory.js';
-import { ITEM, itemDef, isBlockItem, blockDrops, breakInfo, RECIPES, SMELT_XP } from '../sim/items.js';
+import { ITEM, itemDef, isBlockItem, blockDrops, breakInfo, RECIPES, SMELT_XP, CARPET_ITEMS } from '../sim/items.js';
 import { raycast } from './player.js';
 import { materialOf } from './audio.js';
 import { EntityMesh } from '../render/entitymesh.js';
@@ -85,6 +85,7 @@ export function installPlay(Game) {
     this.setupCreatures(data);
     this.setupVillagers(data);
     this.loadSaucer(data);
+    this.loadJet(data);
     this.player.onWallHit = (lost) => { const d = Math.floor(lost / 2 - 3); if (d > 0 && !this.isCreative()) this.sim.damagePlayer('local', d, 'wall'); };
     this.spawnPoint = data && data.spawn ? data.spawn : null;
     this.breaking = null;
@@ -266,7 +267,8 @@ export function installPlay(Game) {
     me.sneaking = p.sneaking;
     me.armor = this.inventory.armorValues();
     me.mode = this.mode;
-    me.sheltered = !!(this.ride || this.passengerOf); // (in or on a flying saucer nothing can hurt you)
+    // (in or on a flying saucer nothing can hurt you; in an F-22, what hits it hits the jet)
+    me.sheltered = !!(this.ride || this.passengerOf || this.jet);
   };
 
   P.updatePlay = function updatePlay(dt) {
@@ -276,7 +278,8 @@ export function installPlay(Game) {
     if (this.mp || (this.state !== 'paused' && this.state !== 'title')) this.sim.update(dt, { dayTime: this.dayTime, storm: this.villageWeather() });
     this.handleSimEvents();
     const me = this.me();
-    if (me && me.dead && !this.deathShown && this.mode !== 'creative') this.onDeath();
+    // (in creative mode only a fighter's fire kills)
+    if (me && me.dead && !this.deathShown && (this.mode !== 'creative' || FORCE_SOURCES.has(this.deathCause))) this.onDeath();
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
     if (this.useCooldown > 0) this.useCooldown -= dt;
     this.shake = Math.max(0, this.shake - dt * 2.5);
@@ -354,6 +357,7 @@ export function installPlay(Game) {
           break;
         }
         case 'explosion': {
+          if (e.strike) break; // (a fighter's missile: its own fire and thunder, see jet.js)
           const [v, pan] = spatial(e.pos, 60);
           this.audio.sfx('explosion', Math.max(v, 0.15), pan);
           const d = Math.hypot(e.pos[0] - ear[0], e.pos[1] - ear[1], e.pos[2] - ear[2]);
@@ -458,9 +462,12 @@ export function installPlay(Game) {
       this.sim.dropItem(s.id, s.count, p[0], p[1] + 1, p[2], v, s.wear, { ench: s.ench });
     };
     const inv = this.inventory;
-    inv.slots.forEach((s, i) => { if (s) { spill(s); inv.slots[i] = null; } });
-    inv.armor.forEach((s, i) => { if (s) { spill(s); inv.armor[i] = null; } });
-    if (inv.offhand) { spill(inv.offhand); inv.offhand = null; }
+    // (in creative mode what we carry stays with us)
+    if (!this.isCreative()) {
+      inv.slots.forEach((s, i) => { if (s) { spill(s); inv.slots[i] = null; } });
+      inv.armor.forEach((s, i) => { if (s) { spill(s); inv.armor[i] = null; } });
+      if (inv.offhand) { spill(inv.offhand); inv.offhand = null; }
+    }
     this.onDeathSurvival();
     if (inv.cursor) { spill(inv.cursor); inv.cursor = null; }
     inv.changed();
@@ -519,8 +526,8 @@ export function installPlay(Game) {
 
   // ---------------------------------------------------------------- interaction
   P.interact = function interact(dt) {
-    // (in a flying saucer: nothing to dig or put down from inside it)
-    if (this.ride) { this.aimMob = null; this.selection = null; this.breaking = null; return; }
+    // (in a flying saucer or an F-22: nothing to dig or put down from inside it)
+    if (this.ride || this.jet) { this.aimMob = null; this.selection = null; this.breaking = null; this.input.touch.tap = false; return; }
     const p = this.player;
     const eye = p.eye;
     const dir = p.forward();
@@ -597,6 +604,8 @@ export function installPlay(Game) {
       tc.tap = false;
     } else if (def && def.kind === 'saucer') {
       if (usePressed || tc.tap) { tc.tap = false; if (aimMob && aimMob.type === 'saucer') this.useSaucer(aimMob, def); else this.placeSaucer(hit); }
+    } else if (def && def.kind === 'jet') {
+      if (usePressed || tc.tap) { tc.tap = false; if (aimMob && aimMob.type === 'jet') this.useJet(aimMob); else this.placeJet(hit); }
     } else if (def && (def.kind === 'boat' || def.kind === 'minecart')) {
       if (usePressed || tc.tap) {
         tc.tap = false;
@@ -619,7 +628,7 @@ export function installPlay(Game) {
     }
 
     // ---- pick block (middle click / right stick)
-    if ((input.clicked.has(1) || (pad.connected && pad.pressed(PAD.RS))) && hit) this.pickFromWorld(hit.block);
+    if ((input.clicked.has(1) || (pad.connected && pad.pressed(PAD.RS))) && hit) this.pickFromWorld(hit.block, this.world.getState(hit.x, hit.y, hit.z));
     // drop the held item (Q: one of it; Ctrl+Q: the whole stack)
     if (input.wasPressed('KeyQ') && held) {
       const all = input.down('ControlLeft') || input.down('ControlRight');
@@ -715,6 +724,7 @@ export function installPlay(Game) {
   P.breakBlock = function breakBlock(hit, drops) {
     const { x, y, z, block } = hit;
     if (block === BLOCK.BEDROCK && y <= 0) return;
+    const state = this.world.getState(x, y, z);
     if (MODEL_OF[block] === MODELS_BY_NAME.door) this.breakDoor(x, y, z, block, drops);
     else if (!this.world.setBlock(x, y, z, 0)) return;
     if (IS_BED[block]) this.breakBed(x, y, z, block, drops);
@@ -733,7 +743,7 @@ export function installPlay(Game) {
       const fortune = held && held.ench ? held.ench.fortune || 0 : 0;
       if (silk && SILK.has(block)) this.sim.dropItem(block, 1, x + 0.5, y + 0.4, z + 0.5);
       else {
-        for (const [id, n] of blockDrops(block)) {
+        for (const [id, n] of blockDrops(block, Math.random, state)) {
           // fortune: ores give more
           const extra = fortune && FORTUNE.has(block) ? Math.max(0, Math.floor(Math.random() * (fortune + 2)) - 1) : 0;
           this.sim.dropItem(id, n * (1 + extra), x + 0.5, y + 0.4, z + 0.5);
@@ -783,10 +793,11 @@ export function installPlay(Game) {
     }
   };
 
-  P.pickFromWorld = function pickFromWorld(block) {
-    // the item a block comes from: doors and signs are placed from items, a lit furnace is a furnace
+  P.pickFromWorld = function pickFromWorld(block, state = 0) {
+    // the item a block comes from: doors and signs are placed from items, a lit furnace is a furnace,
+    // a carpet is the carpet of its colour
     const item = { [BLOCK.OAK_DOOR]: ITEM.OAK_DOOR, [BLOCK.BIRCH_DOOR]: ITEM.BIRCH_DOOR, [BLOCK.SPRUCE_DOOR]: ITEM.SPRUCE_DOOR,
-      [BLOCK.OAK_SIGN]: ITEM.OAK_SIGN, [BLOCK.OAK_WALL_SIGN]: ITEM.OAK_SIGN, [BLOCK.LIT_FURNACE]: BLOCK.FURNACE }[block] ?? block;
+      [BLOCK.OAK_SIGN]: ITEM.OAK_SIGN, [BLOCK.OAK_WALL_SIGN]: ITEM.OAK_SIGN, [BLOCK.LIT_FURNACE]: BLOCK.FURNACE, [BLOCK.CARPET]: CARPET_ITEMS[state & 15] }[block] ?? block;
     const inv = this.inventory;
     for (let i = 0; i < 9; i++) if (inv.slots[i] && inv.slots[i].id === item) { this.selectSlot(i); return; }
     if (this.isCreative() && (item >= 256 || BLOCKS[item].inventory)) this.pickItem(item);
@@ -799,9 +810,11 @@ export function installPlay(Game) {
     const self = this.state !== 'title' && this.state !== 'boot' ? this.localPlayerModel() : null;
     if (self) players.push(self);
     const saucers = this.saucerModels();
+    // (F-22s in the air, their missiles and tracers)
+    const jets = { models: this.jetModels(), missiles: this.jetMissileModels(), tracers: this.jetTracers() };
     // (how much a saucer's fire is dimmed for an eye set for the dark: see Renderer.bindPointLights)
     this.entityMesh.eye = this.renderer && this.renderer.eyeScale !== undefined ? this.renderer.eyeScale : 1;
-    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip(), saucers.length ? saucers : null);
+    return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip(), saucers.length ? saucers : null, jets);
   };
 
   // Where our fishing line leaves the rod: out in front and to the right of the view, or from the
@@ -819,7 +832,7 @@ export function installPlay(Game) {
 
   P.handState = function handState() {
     const held = this.heldSlot();
-    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode || this.carrying || this.carriedBy || this.ride || this.passengerOf) return null;
+    if (!held || this.state !== 'playing' || this.hudHidden || this.sleeping || this.camMode || this.carrying || this.carriedBy || this.ride || this.passengerOf || this.jet) return null;
     const id = held.id;
     const p = this.player;
     const bob = this.settings.viewBobbing ? p.bobAmount : 0;
@@ -867,6 +880,7 @@ export function installPlay(Game) {
       ...this.serializeCreatures(),
       ...this.serializeVillagers(),
       ...this.serializeSaucer(),
+      ...this.serializeJet(),
     };
   };
 

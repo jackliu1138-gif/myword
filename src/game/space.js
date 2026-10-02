@@ -237,8 +237,9 @@ export function installSpace(Game) {
     p.thrustFloor = dim >= 6 ? STATION_Y : dim >= 4 ? this.bodyBase(DIM_BODY[dim]) + 120 : 200;
     // (the server may have set the clock since the last frame)
     if (dim === 3 && this.spaceState) this.carryInSpace();
-    // (a flying saucer's autopilot takes us between the worlds itself: saucer.js)
-    if (this.ride || this.passengerOf) {
+    // (a flying saucer's autopilot takes us between the worlds itself: saucer.js; an F-22 stays in
+    // the air, below space)
+    if (this.ride || this.passengerOf || this.jet) {
       if (dim === 3 && this.spaceState) this.updateSpaceHud();
       else if (this.spaceHudShown) { this.ui.setSpaceHud(null); this.spaceHudShown = false; }
       this.ui.setReentry(0);

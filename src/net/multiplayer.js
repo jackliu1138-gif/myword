@@ -5,6 +5,8 @@
 
 import { NetClient, serverUrl } from './net.js';
 import { SAUCER_FLAGS } from '../game/saucer.js';
+import { JET_FLAGS } from '../game/jet.js';
+import { FORCE_SOURCES } from '../sim/simulation.js';
 import { seatAt, SEAT_H } from '../sim/saucerform.js';
 import { Voice } from './voice.js';
 import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
@@ -19,8 +21,10 @@ import { t } from '../ui/i18n.js';
 const STATE_INTERVAL = 1 / 12;
 const MOB_INTERVAL = 1 / 8;
 const SHARE_RADIUS = 72; // our creatures within this distance of another player are sent to them
-// (2048, 4096 and 8192: in a flying saucer, its engine going, its legs down; see game/saucer.js)
-const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512, CARRY: 1024, ...SAUCER_FLAGS };
+// (2048, 4096 and 8192: in a flying saucer, its engine going, its legs down; see game/saucer.js;
+// 16384 to 262144: flying an F-22, its afterburner lit, its gear down, hovering, its cannon firing,
+// see game/jet.js)
+const FLAG = { SNEAK: 1, DEAD: 2, CREATIVE: 4, FLY: 8, SWING: 16, SLEEP: 32, GLIDE: 64, BLOCK: 128, RIDE: 256, BOOST: 512, CARRY: 1024, ...SAUCER_FLAGS, ...JET_FLAGS };
 const PMOB_INTERVAL = 5; // how often the server hears of the creatures that stay
 const MP_KEY = 'lumencraft.multiplayer';
 
@@ -195,13 +199,24 @@ export function installMultiplayer(Game) {
       if (m.slain && !was) this.ui.toast(t('boss.slain'), 5000);
     });
     net.on('hit', (m) => this.sim.remoteHit(m.from, m.e, m.d, m.f));
-    net.on('hurt', (m) => this.sim.damagePlayer('local', Number(m.a) || 0, String(m.s || 'other'), Array.isArray(m.f) ? m.f : null));
+    net.on('hurt', (m) => {
+      const src = String(m.s || 'other');
+      // (flying an F-22: someone's fire hits the jet, not us, until it is shot down)
+      if (this.jet && FORCE_SOURCES.has(src) && this.jetTakeHit(Number(m.a) || 0, src)) return;
+      this.sim.damagePlayer('local', Number(m.a) || 0, src, Array.isArray(m.f) ? m.f : null);
+    });
     net.on('knock', (m) => { if (Array.isArray(m.f)) this.sim.emit({ type: 'knock', id: 'local', from: m.f, strength: Math.min(3, Number(m.k) || 1) }); });
     net.on('loot', (m) => {
       if (!Array.isArray(m.l) || !Array.isArray(m.p)) return;
       for (const [id, n] of m.l.slice(0, 8)) if (Number.isInteger(id) && n > 0) this.sim.dropItem(id, Math.min(64, n), m.p[0], m.p[1] + 0.5, m.p[2]);
     });
-    net.on('fx', (m) => { if (m.k === 'boom') this.sim.emit({ type: 'explosion', pos: m.p, power: m.pw, remote: true }); });
+    net.on('fx', (m) => {
+      if (m.k === 'boom') {
+        // (a fighter's missile: its own fire and thunder)
+        if (m.s && Array.isArray(m.p)) this.jetBlast(m.p, Math.max(1, Number(m.pw) || 6));
+        else this.sim.emit({ type: 'explosion', pos: m.p, power: m.pw, remote: true });
+      } else if (m.k === 'gun' || m.k === 'msl') this.onJetFx(m);
+    });
     net.on('drop', (m) => this.addSharedItem(m));
     net.on('took', (m) => this.sharedItemTaken(m.i, m.by));
     net.on('gone', (m) => this.sharedItemTaken(m.i, null));
@@ -297,6 +312,13 @@ export function installMultiplayer(Game) {
     p.goalB = body ? { body, q: s.p.slice(0, 3) } : null;
     p.goal = body && this.spaceLocalOfBody ? this.spaceLocalOfBody(body, p.goalB.q) : s.p.slice(0, 3);
     if (!p.pos) p.pos = p.goal.slice();
+    // (an F-22 goes ten blocks between two of these: carried on at its speed in between)
+    const tNow = performance.now() / 1000;
+    if ((s.f || 0) & FLAG.JET && p.jetSeen && tNow - p.jetSeen.t > 0.02 && tNow - p.jetSeen.t < 1) {
+      const dtS = tNow - p.jetSeen.t;
+      p.jvel = p.goal.map((v, i) => Math.max(-450, Math.min(450, (v - p.jetSeen.p[i]) / dtS)));
+    } else if (!((s.f || 0) & FLAG.JET)) p.jvel = null;
+    p.jetSeen = (s.f || 0) & FLAG.JET ? { t: tNow, p: p.goal.slice() } : null;
     p.goalYaw = s.y || 0;
     p.pitch = s.pi || 0;
     p.held = s.h || 0;
@@ -304,6 +326,9 @@ export function installMultiplayer(Game) {
     p.armor = Array.isArray(s.a) ? s.a.slice(0, 4).map((v) => v | 0) : null;
     p.dim = s.d | 0;
     p.flags = s.f || 0;
+    p.jqGoal = Array.isArray(s.q) && s.q.length === 4 ? s.q.slice(0, 4).map(Number) : null;
+    if (!p.jqGoal) p.jq = null;
+    else if (!p.jq) p.jq = p.jqGoal.slice();
     if (p.flags & FLAG.SWING) p.swing = 1;
     const rec = p.rec;
     rec.dead = !!(p.flags & FLAG.DEAD);
@@ -351,12 +376,15 @@ export function installMultiplayer(Game) {
       const pl = this.player;
       const f = (pl.sneaking ? FLAG.SNEAK : 0) | (me && me.dead ? FLAG.DEAD : 0) | (this.isCreative() ? FLAG.CREATIVE : 0) | (pl.flying ? FLAG.FLY : 0) | (this.swing > 0.5 ? FLAG.SWING : 0) | (this.sleeping ? FLAG.SLEEP : 0)
         | (pl.gliding ? FLAG.GLIDE : 0) | (this.blocking ? FLAG.BLOCK : 0) | (pl.riding || this.passengerOf ? FLAG.RIDE : 0) | (pl.boost > 0 ? FLAG.BOOST : 0) | (this.carrying ? FLAG.CARRY : 0)
-        | (this.ride ? FLAG.SAUCER | (this.ride.engine > 0.3 ? FLAG.THRUST : 0) | (this.ride.legs > 0.5 ? FLAG.LEGS : 0) : 0);
+        | (this.ride ? FLAG.SAUCER | (this.ride.engine > 0.3 ? FLAG.THRUST : 0) | (this.ride.legs > 0.5 ? FLAG.LEGS : 0) : 0)
+        | (this.jet ? FLAG.JET | (this.jet.ab > 0.5 ? FLAG.AB : 0) | (this.jet.gear > 0.5 ? FLAG.GEAR : 0) | (this.jet.mode === 'hover' ? FLAG.HOVER : 0) | (this.jet.firing > 0.5 ? FLAG.GUN : 0) : 0);
       // (in space: where we are over the body nearest us, the same for everyone)
       const sb = this.dimension === 3 && this.spaceState ? this.spaceBodyCoords() : null;
       const at = sb ? sb.q : pl.pos;
       // (flying a saucer: the way it faces, not where our camera looks from)
       const msg = { t: 'st', p: [round2(at[0]), round2(at[1]), round2(at[2])], y: round2(this.ride ? this.ride.yaw : this.passengerOf && this.passengerYaw !== undefined ? this.passengerYaw : pl.yaw), pi: this.ride || this.passengerOf ? 0 : round2(pl.pitch), h: this.heldId(), f };
+      // (flying an F-22: how it is turned)
+      if (this.jet) msg.q = this.jet.q.map((v) => Math.round(v * 1000) / 1000);
       if (sb) msg.b = BODY_NAMES.indexOf(sb.body);
       if (this.inventory && this.inventory.offhand) msg.o = this.inventory.offhand.id;
       const armor = this.inventory ? this.inventory.armorIds() : null;
@@ -392,8 +420,10 @@ export function installMultiplayer(Game) {
         else p.atBody = { body: g.body, q: g.q.slice() };
         if (this.spaceLocalOfBody) { p.pos = this.spaceLocalOfBody(p.atBody.body, p.atBody.q); p.goal = p.pos.slice(); }
       } else p.atBody = null;
+      if (p.jvel && p.flags & FLAG.JET) for (let i = 0; i < 3; i++) p.goal[i] += p.jvel[i] * dt;
+      if (p.jqGoal && p.jq) p.jq = p.jq.map((v, i) => v + ((p.jq[0] * p.jqGoal[0] + p.jq[1] * p.jqGoal[1] + p.jq[2] * p.jqGoal[2] + p.jq[3] * p.jqGoal[3] < 0 ? -p.jqGoal[i] : p.jqGoal[i]) - v) * k);
       const d = Math.hypot(p.goal[0] - p.pos[0], p.goal[1] - p.pos[1], p.goal[2] - p.pos[2]);
-      if (d > 10) p.pos = p.goal.slice();
+      if (d > (p.flags & FLAG.JET ? 80 : 10)) p.pos = p.goal.slice();
       const ox = p.pos[0], oz = p.pos[2];
       for (let i = 0; i < 3; i++) p.pos[i] += (p.goal[i] - p.pos[i]) * k;
       p.yaw = lerpAngle(p.yaw, p.goalYaw, k);
@@ -542,8 +572,9 @@ export function installMultiplayer(Game) {
       dimension: this.dimension || 0,
       survival: this.serializeSurvival ? this.serializeSurvival() : undefined,
       ...this.serializeSpace(),
-      // (in a flying saucer: back in it next time)
+      // (in a flying saucer, or an F-22: back in it next time)
       ...this.serializeSaucer(),
+      ...this.serializeJet(),
     };
   };
 
@@ -553,7 +584,7 @@ export function installMultiplayer(Game) {
     if (!mp) return;
     if (e.type === 'remoteHurt') mp.net.send({ t: 'hurt', to: e.id, a: Math.round(e.amount * 10) / 10, s: e.source, f: e.from ? Array.from(e.from).map(round2) : null });
     else if (e.type === 'knock' && e.id !== 'local') mp.net.send({ t: 'knock', to: e.id, f: Array.from(e.from).map(round2), k: round2(e.strength) });
-    else if (e.type === 'explosion' && !e.remote) mp.net.send({ t: 'fx', k: 'boom', p: e.pos.map(round2), pw: e.power });
+    else if (e.type === 'explosion' && !e.remote) mp.net.send({ t: 'fx', k: 'boom', p: e.pos.map(round2), pw: e.power, ...(e.strike ? { s: 1 } : null) });
     else if (e.type === 'playerDeath' && e.id === 'local') mp.net.send({ t: 'ev', k: 'death', s: e.source });
   };
 
@@ -569,6 +600,8 @@ export function installMultiplayer(Game) {
       const chest = p.armor && p.armor[1] ? itemDef(p.armor[1]) : null;
       // (carried by us or by someone else: drawn lying in their arms)
       const by = p.carriedBy === 'local' ? this.player : p.carriedBy ? mp.players.get(p.carriedBy) : null;
+      // (flying an F-22: inside it, under its canopy)
+      if (p.flags & FLAG.JET) continue;
       // (flying a saucer: sitting in its dome)
       if (p.flags & FLAG.SAUCER) {
         const s = seatAt(p.pos, p.yaw, 'pilot');

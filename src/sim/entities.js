@@ -87,6 +87,9 @@ export const MOBS = {
   saucer: { vehicle: 'saucer', persistent: true, fixed: true, hw: 1.5, h: 1.6, eye: 1.2, health: 40, seat: 1.8, drops: [[ITEM.FLYING_SAUCER, 1, 1]] },
   tnt: { fixed: true, invulnerable: true, hw: 0.49, h: 0.98, eye: 0.5, health: 1, drops: [] },
   evoker_fangs: { fixed: true, invulnerable: true, hw: 0.25, h: 0.8, eye: 0.4, health: 1, drops: [] },
+  // an F-22 parked on its wheels (flown, it is part of its pilot; see game/jet.js; its shape, for
+  // the crosshair: sim/jetform.js)
+  jet: { vehicle: 'jet', persistent: true, fixed: true, hw: 3, h: 3.4, eye: 2, health: 60, seat: 1.9, drops: [[ITEM.F22_RAPTOR, 1, 1]] },
 };
 // what each kind goes after besides players
 export const HUNTS = {

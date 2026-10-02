@@ -78,7 +78,7 @@ export function installCarry(Game) {
   // G / the carry button / D-pad right: pick up what is in front of us, or put down what we carry.
   P.toggleCarry = function toggleCarry() {
     if (this.carrying) { this.putDown(); return; }
-    if (this.carriedBy || this.player.riding || this.sleeping || this.state !== 'playing') return;
+    if (this.carriedBy || this.player.riding || this.sleeping || this.state !== 'playing' || this.jet || this.ride) return;
     const tg = this.carryTarget();
     if (!tg) return;
     if (!tg.ok) { this.ui.toast(t(tg.e.def && tg.e.def.hostile ? 'carry.no' : 'carry.heavy'), 1800); return; }

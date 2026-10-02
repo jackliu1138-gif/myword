@@ -394,6 +394,12 @@ def('moon_rock', { zh: '月岩', tex: 'moon_rock' });
 def('moon_basalt', { zh: '月海玄武岩', tex: 'moon_basalt' });
 def('mars_sand', { zh: '火星沙', tex: 'mars_sand', sound: 'sand', mat: MAT.SAND });
 def('mars_rock', { zh: '火星岩', tex: 'mars_rock' });
+// carpets: one block, its colour (of the sixteen dyes, in DYES order) in its state: a sheet of wool
+// on the floor, or, on a bed, its blanket
+def('carpet', { name: 'Carpet', zh: '毛毯', tex: 'white_wool', shape: SHAPE.MODEL, model: 'carpet', opaque: false, lightOpacity: 0, sound: 'cloth', inventory: false });
+
+// the wool block of each dye colour (DYES order), and the carpet's state for a colour
+export const WOOL_OF_DYE = DYES.map(([c]) => BLOCK[(c + '_wool').toUpperCase()]);
 
 // bed halves by colour: { color: [footId, headId] }
 export const BED_BLOCKS = {};
@@ -420,7 +426,7 @@ export const IS_BED = new Uint8Array(256);
 export const BED_PARTNER = new Uint8Array(256);
 // state-shaped blocks (see blockBoxes): which box builder, and a few families
 export const MODEL_OF = new Uint8Array(256);
-export const MODELS_BY_NAME = { chest: 1, slab: 2, stairs: 3, door: 4, fence: 5, gate: 6, ladder: 7, pane: 8, sign: 9, wall_sign: 10, trapdoor: 11, vine: 12, plate: 13 };
+export const MODELS_BY_NAME = { chest: 1, slab: 2, stairs: 3, door: 4, fence: 5, gate: 6, ladder: 7, pane: 8, sign: 9, wall_sign: 10, trapdoor: 11, vine: 12, plate: 13, carpet: 14 };
 export const HAS_FRONT = new Uint8Array(256); // cubes with a front face that follows the state (furnaces)
 export const FENCE_FAMILY = new Uint8Array(256);
 export const IS_CLIMBABLE = new Uint8Array(256);
@@ -587,6 +593,23 @@ export function blockBoxes(id, state, nb, ns, purpose = 'render') {
     case 13: // pressure plate, pressed down while something stands on it
       add(state & 1 ? [1, 0, 1, 15, 1, 15] : [1, 0, 1, 15, 2, 15]);
       break;
+    case 14: { // carpet, in the wool of its colour
+      const layer = FACE_TEX[WOOL_OF_DYE[state & 15] * 4];
+      const tex = [layer, layer, layer, layer, layer, layer];
+      if (!IS_BED[nb(0, -1, 0)]) { add([0, 0, 0, 16, 1, 16], tex); break; }
+      // on a bed: its blanket, lying on the mattress (the cell below) and hanging down its sides,
+      // except where the bed goes on into its other half or another bed; nothing to bump into
+      if (purpose === 'collide') break;
+      const open = FACING.map(([dx, dz]) => !IS_BED[nb(dx, -1, dz)]);
+      const x0 = open[3] ? -0.5 : 0, x1 = open[1] ? 16.5 : 16, z0 = open[0] ? -0.5 : 0, z1 = open[2] ? 16.5 : 16;
+      add([x0, -7, z0, x1, -6, z1], tex, ALL & ~(1 << 3));
+      if (purpose !== 'render') break;
+      if (open[1]) add([16, -12, z0, 16.5, -7, z1], tex, (1 << 0) | (1 << 3) | (1 << 4) | (1 << 5));
+      if (open[3]) add([-0.5, -12, z0, 0, -7, z1], tex, (1 << 1) | (1 << 3) | (1 << 4) | (1 << 5));
+      if (open[2]) add([x0, -12, 16, x1, -7, 16.5], tex, (1 << 4) | (1 << 3) | (1 << 0) | (1 << 1));
+      if (open[0]) add([x0, -12, -0.5, x1, -7, 0], tex, (1 << 5) | (1 << 3) | (1 << 0) | (1 << 1));
+      break;
+    }
     default:
       add([0, 0, 0, 16, 16, 16]);
   }

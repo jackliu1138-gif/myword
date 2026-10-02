@@ -6,6 +6,7 @@ import { Mob, ItemDrop, Arrow, Thrown, EyeOfEnder, Fireball, MOBS, HOSTILE_TYPES
 import { EnderDragon } from './dragon.js';
 import { rayHitsBox } from './physics.js';
 import { rayHit as saucerRayHit } from './saucerform.js';
+import { rayHit as jetRayHit } from './jetform.js';
 import { blockDrops, ITEM } from './items.js';
 import { armorReduce } from './inventory.js';
 import { BLOCK, IS_SOLID, IS_LIQUID, WORLD_HEIGHT } from '../world/blocks.js';
@@ -29,9 +30,11 @@ const COOKED = {
 };
 export const MAX_AIR = 10;
 // damage that armour does nothing against
-const ARMOR_BYPASS = new Set(['fall', 'drown', 'void', 'pearl', 'starve', 'poison', 'wither', 'magic']);
+const ARMOR_BYPASS = new Set(['fall', 'drown', 'void', 'pearl', 'starve', 'poison', 'wither', 'magic', 'missile', 'jetgun', 'jetwreck']);
 // ...and that a shield can't stop
-const UNBLOCKABLE = new Set(['fall', 'drown', 'void', 'pearl', 'starve', 'poison', 'wither', 'magic', 'fire', 'lava', 'cactus', 'magma']);
+const UNBLOCKABLE = new Set(['fall', 'drown', 'void', 'pearl', 'starve', 'poison', 'wither', 'magic', 'fire', 'lava', 'cactus', 'magma', 'missile', 'jetgun', 'jetwreck']);
+// a fighter jet's fire (game/jet.js): it kills players in creative mode too
+export const FORCE_SOURCES = new Set(['missile', 'jetgun', 'jetwreck']);
 
 export class Simulation {
   constructor(world, opts = {}) {
@@ -101,7 +104,7 @@ export class Simulation {
 
   damagePlayer(id, amount, source, from = null) {
     const p = this.players.get(id);
-    if (!p || p.dead || p.mode === 'creative' || p.sheltered || amount <= 0) return false;
+    if (!p || p.dead || (p.mode === 'creative' && !FORCE_SOURCES.has(source)) || p.sheltered || amount <= 0) return false;
     const ticking = source === 'drown' || source === 'fire' || source === 'void' || source === 'poison' || source === 'wither' || source === 'starve';
     if (p.hurtTime > 0.4 && !ticking) return false;
     if (p.remote) {
@@ -601,6 +604,12 @@ export class Simulation {
         if (t !== null && t < sT) { sT = t; sBest = e; }
         continue;
       }
+      // (an F-22 by its own shape too: its wings reach far out from its middle)
+      if (e.type === 'jet') {
+        const t = jetRayHit(origin, dir, b.pos, e.yaw || 0, Math.min(sT, maxDist + 3));
+        if (t !== null && t < sT) { sT = t; sBest = e; }
+        continue;
+      }
       const pad = 0.1;
       const box = [b.pos[0] - b.hw - pad, b.pos[1] - pad, b.pos[2] - b.hw - pad, b.pos[0] + b.hw + pad, b.pos[1] + b.h + pad, b.pos[2] + b.hw + pad];
       const t = rayHitsBox(origin, dir, box, bt);
@@ -719,14 +728,14 @@ export class Simulation {
           const bx = Math.floor(x + dx), by = Math.floor(y + dy), bz = Math.floor(z + dz);
           const b = w.getBlock(bx, by, bz);
           if (!b || b === BLOCK.BEDROCK || b === BLOCK.OBSIDIAN || b === BLOCK.END_GATEWAY || b === BLOCK.END_PORTAL_FRAME || IS_LIQUID[b]) continue;
-          broken.push([bx, by, bz, b]);
+          broken.push([bx, by, bz, b, w.getState(bx, by, bz)]);
         }
       }
     }
-    for (const [bx, by, bz, b] of broken) {
+    for (const [bx, by, bz, b, s] of broken) {
       if (b === BLOCK.TNT) { if (w.setBlock(bx, by, bz, 0)) this.primeTnt(bx, by, bz, 0.5 + Math.random()); continue; }
       if (w.setBlock(bx, by, bz, 0) && Math.random() < 0.3) {
-        for (const [id, n] of blockDrops(b)) this.dropItem(id, n, bx + 0.5, by + 0.5, bz + 0.5);
+        for (const [id, n] of blockDrops(b, Math.random, s)) this.dropItem(id, n, bx + 0.5, by + 0.5, bz + 0.5);
       }
     }
     this.emit({ type: 'explosion', pos: [x, y, z], power, blocks: broken.length });
@@ -752,6 +761,70 @@ export class Simulation {
       this.damagePlayer(p.id, Math.round(24 * Math.pow(k, 1.4) * Math.max(this.diff.damage, 0.5)), source && source.type === 'creeper' ? 'creeper' : 'explosion', [x, y, z]);
       this.emit({ type: 'knock', id: p.id, from: [x, y, z], strength: k * 2.5 });
     }
+  }
+
+  // A fighter's cannon round or missile going off at (x, y, z) (game/jet.js): what is within
+  // `radius` is broken, everything in it (bedrock, the End's portals and liquids aside, obsidian
+  // too with `all`); creatures and players within `reach` are hurt, `damage` at the middle and less
+  // further out, and thrown back; creative players too. With `power`, a missile's blast (radius,
+  // damage and reach from it, as an explosion of that power but harder). `spare`: a player it
+  // leaves alone (the one who fired it); `shooter`: who gets the kills.
+  strike(x, y, z, { power = 0, radius = power * 1.15, damage = 24 * Math.max(1, power / 4), reach = power * 2, cause = 'missile', spare = null, shooter = null, all = false, blast = power > 0 } = {}) {
+    const w = this.world;
+    const ir = Math.ceil(radius);
+    const broken = [];
+    for (let dy = -ir; dy <= ir; dy++) {
+      for (let dz = -ir; dz <= ir; dz++) {
+        for (let dx = -ir; dx <= ir; dx++) {
+          const bx = Math.floor(x) + dx, by = Math.floor(y) + dy, bz = Math.floor(z) + dz;
+          const d = Math.hypot(bx + 0.5 - x, by + 0.5 - y, bz + 0.5 - z);
+          if (d > radius * (radius < 2 ? 1 : 0.78 + Math.random() * 0.22)) continue;
+          const b = w.getBlock(bx, by, bz);
+          if (!b || b === BLOCK.BEDROCK || b === BLOCK.END_GATEWAY || b === BLOCK.END_PORTAL_FRAME || b === BLOCK.END_PORTAL || b === BLOCK.NETHER_PORTAL_X || b === BLOCK.NETHER_PORTAL_Z || IS_LIQUID[b]) continue;
+          if (b === BLOCK.OBSIDIAN && !all) continue;
+          broken.push([bx, by, bz, b, w.getState(bx, by, bz)]);
+        }
+      }
+    }
+    // (a few of the blocks drop as items: a big blast would otherwise leave thousands)
+    const dropChance = Math.min(0.3, 24 / Math.max(1, broken.length));
+    for (const [bx, by, bz, b, s] of broken) {
+      if (b === BLOCK.TNT) { if (w.setBlock(bx, by, bz, 0)) this.primeTnt(bx, by, bz, 0.3 + Math.random() * 0.6); continue; }
+      if (w.setBlock(bx, by, bz, 0) && Math.random() < dropChance) {
+        for (const [id, n] of blockDrops(b, Math.random, s)) this.dropItem(id, n, bx + 0.5, by + 0.5, bz + 0.5);
+      }
+    }
+    if (blast) this.emit({ type: 'explosion', pos: [x, y, z], power: Math.min(power, 8), blocks: broken.length, strike: true });
+    if (reach <= 0 || damage <= 0) return broken.length;
+    const impactAt = (px, py, pz) => {
+      const d = Math.hypot(px - x, py - y, pz - z);
+      return d < reach ? 1 - d / reach : 0;
+    };
+    const push = Math.min(3, Math.max(0.5, power / 4));
+    for (const e of this.entities.values()) {
+      if (e.removed || e.kind === 'xp' || e.aboard) continue;
+      const b = e.body;
+      const k = impactAt(b.pos[0], b.pos[1] + b.h * 0.5, b.pos[2]);
+      if (k <= 0) continue;
+      if (e.kind === 'mob') {
+        e.hurtTime = 0;
+        if (shooter) e.lastAttacker = shooter;
+        e.hurt(Math.max(1, Math.round(damage * Math.pow(k, 1.2))), [x, y, z], k * 2 * push);
+      }
+      if (e.ghost || (e.def && e.def.fixed)) continue;
+      const dx = b.pos[0] - x, dy = b.pos[1] + b.h * 0.5 - y, dz = b.pos[2] - z;
+      const l = Math.hypot(dx, dy, dz) || 1;
+      b.vel[0] += (dx / l) * 14 * k * push; b.vel[1] += (dy / l) * 10 * k * push + 3 * k; b.vel[2] += (dz / l) * 14 * k * push;
+    }
+    for (const p of this.players.values()) {
+      if (p.id === spare) continue;
+      const k = impactAt(p.pos[0], p.pos[1] + 0.9, p.pos[2]);
+      if (k <= 0) continue;
+      p.hurtTime = Math.min(p.hurtTime || 0, 0.4);
+      this.damagePlayer(p.id, Math.max(1, Math.round(damage * Math.pow(k, 1.2) * 10) / 10), cause, [x, y, z]);
+      if (blast) this.emit({ type: 'knock', id: p.id, from: [x, y, z], strength: k * 2.5 * push });
+    }
+    return broken.length;
   }
 
   // ------------------------------------------------------------------ spawning

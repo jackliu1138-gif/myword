@@ -25,6 +25,8 @@ import {
   BODIES, DIM_BODY, bodyPos, positionOn, worldToLonLat, toBody, fromBody, v3, rotate, localFrame, nearestBody, placeOn, blendFrame,
 } from '../world/space.js';
 import { STATION_Y, STATION_DOCK, MoonGenerator, MarsGenerator } from '../world/planets.js';
+import { planSaucerBase } from '../world/saucerbase.js';
+import { createGenerator } from '../world/dimensions.js';
 import { IS_LIQUID, WORLD_HEIGHT } from '../world/blocks.js';
 import { ITEM, saucerFuel, SAUCER_TANK } from '../sim/items.js';
 import * as F from '../sim/saucerform.js';
@@ -37,6 +39,10 @@ const smooth = (e0, e1, x) => { const k = clamp((x - e0) / (e1 - e0), 0, 1); ret
 const now = () => performance.now() / 1000;
 
 export const SAUCER_DESTS = ['earth', 'moon', 'mars', 'jupiter', 'saturn'];
+// where the panel offers to go: the bodies, and the saucer base on the Earth (which is the Earth,
+// at one of the base's pads)
+export const SAUCER_PLACES = ['base', ...SAUCER_DESTS];
+export const bodyOfPlace = (place) => (place === 'base' ? 'earth' : place);
 export const TRIP_TIMES = [30, 60, 180];
 export const TRIP_MIN = 15, TRIP_MAX = 900;
 const DIM_OF = { earth: 0, moon: 4, mars: 5, jupiter: 6, saturn: 7 };
@@ -290,7 +296,53 @@ export function installSaucer(Game) {
 
   // The launch pad of a body: { x, y, z } (the saucer's foot on it), or null (the Earth, for a
   // saucer that has none).
+  // The Earth's saucer base (only in worlds of the new terrain): where it is and its pads.
+  P.saucerBase = function saucerBase() {
+    if ((this.genVersion || 1) < 2 || !this.world) return null;
+    const seed = this.world.seed;
+    if (!this.baseGen || this.baseGen.seed !== seed) this.baseGen = createGenerator(seed, 0, this.genVersion);
+    return planSaucerBase(this.baseGen);
+  };
+
+  // Whether pad i of the base has a saucer on it (or over it, coming down) as far as we can see:
+  // parked ones, ours, and on a server the others'. (From another world, none of the Earth's.)
+  P.basePadTaken = function basePadTaken(i) {
+    const base = this.saucerBase();
+    if (!base || (this.dimension || 0) !== 0) return false;
+    const [px, pz] = base.pads[i];
+    const near = (q, r = 30) => q && Math.hypot(q[0] - px - 0.5, q[2] - pz - 0.5) < r;
+    if (this.sim) for (const e of this.sim.entities.values()) if (e.type === 'saucer' && !e.removed && near(e.body.pos)) return true;
+    if (this.mp) for (const pl of this.mp.players.values()) if (pl.pos && (pl.dim | 0) === 0 && pl.flags & SAUCER_FLAGS.SAUCER && near(pl.pos) && pl.pos[1] < base.y + 200) return true;
+    return false;
+  };
+
+  // A free pad at the base, as { x, y, z, i }: each player tries the pads in an order of their own
+  // (so two coming in at once aim for different ones), skipping `skip` (the one we stand on).
+  P.basePad = function basePad(skip = -1) {
+    const base = this.saucerBase();
+    if (!base) return null;
+    const me = String((this.mp && this.mp.name) || this.playerName && this.playerName() || 'me');
+    let h = 0;
+    for (let i = 0; i < me.length; i++) h = (h * 31 + me.charCodeAt(i)) >>> 0;
+    for (let k = 0; k < base.pads.length; k++) {
+      const i = (h + k) % base.pads.length;
+      if (i === skip || this.basePadTaken(i)) continue;
+      const [px, pz] = base.pads[i];
+      return { x: px + 0.5, y: base.y + 1, z: pz + 0.5, i };
+    }
+    return null;
+  };
+
+  // The base pad we stand on now, if any.
+  P.basePadHere = function basePadHere() {
+    const base = this.saucerBase();
+    if (!base || (this.dimension || 0) !== 0) return -1;
+    const p = this.player.pos;
+    return base.pads.findIndex(([px, pz]) => Math.hypot(px + 0.5 - p[0], pz + 0.5 - p[2]) < 8 && Math.abs(base.y + 1 - p[1]) < 6);
+  };
+
   P.padOf = function padOf(body) {
+    if (body === 'base') return this.basePad(this.basePadHere());
     if (body === 'earth') { const h = this.ride && this.ride.home; return h ? { x: h[0], y: h[1], z: h[2] } : null; }
     if (body === 'jupiter' || body === 'saturn') return { x: STATION_DOCK[0] + 0.5, y: STATION_Y + 1, z: STATION_DOCK[1] + 0.5 };
     this.padGens = this.padGens || {};
@@ -304,15 +356,16 @@ export function installSaucer(Game) {
     const here = this.bodyHere() || (space ? nearestBody(this.spacePosC(), this.spaceTime()).name : null);
     const creative = this.isCreative();
     const p = this.player.pos;
-    const dests = SAUCER_DESTS.map((body) => {
-      const pad = this.padOf(body);
+    const dests = SAUCER_PLACES.map((place) => {
+      const body = bodyOfPlace(place);
+      const pad = this.padOf(place);
       const cost = here ? tripCost(here, body) : 0;
       let why = '';
       if (!here) why = 'nowhere';
-      else if (!pad) why = 'noPad';
+      else if (!pad) why = place === 'base' && this.saucerBase() ? 'full' : 'noPad';
       else if (body === here && !space && Math.hypot(pad.x - p[0], pad.z - p[2]) < 8 && Math.abs(pad.y - p[1]) < 6) why = 'here';
       else if (!creative && r.fuel < cost) why = 'fuel';
-      return { body, cost, why, home: body === here };
+      return { body: place, cost, why, home: body === here };
     });
     const crew = (r.crew || []).length, players = (r.passengers || []).length;
     return {
@@ -372,7 +425,7 @@ export function installSaucer(Game) {
   // ---------------------------------------------------------------- the autopilot
   P.launchSaucer = function launchSaucer(dest, seconds) {
     const r = this.ride;
-    if (!r || (r.phase !== 'landed' && r.phase !== 'manual') || !SAUCER_DESTS.includes(dest)) return false;
+    if (!r || (r.phase !== 'landed' && r.phase !== 'manual') || !SAUCER_PLACES.includes(dest)) return false;
     const info = this.saucerPanelInfo().dests.find((d) => d.body === dest);
     if (!info || info.why) { this.ui.toast(t('saucer.why.' + (info ? info.why : 'nowhere')), 2600); return false; }
     const airborne = r.phase === 'manual';
@@ -382,7 +435,8 @@ export function installSaucer(Game) {
     const pad = this.padOf(dest);
     // (on the Earth a saucer remembers the pad it leaves from: that's where it comes back to)
     if (from === 'earth' && !r.home && !airborne) r.home = this.player.pos.slice();
-    r.trip = { from, to: dest, dur, pad, hop: from === dest && this.dimension !== 3, started: now(), elapsed: airborne ? COUNTDOWN : 0 };
+    const to = bodyOfPlace(dest);
+    r.trip = { from, to, place: dest, dur, pad, hop: from === to && this.dimension !== 3, started: now(), elapsed: airborne ? COUNTDOWN : 0 };
     r.vel = [0, 0, 0];
     this.player.vel = [0, 0, 0];
     this.closeSaucerPanel();
@@ -616,7 +670,7 @@ export function installSaucer(Game) {
     if (!r || !r.trip) return null;
     const total = r.trip.dur + COUNTDOWN;
     const done = Math.min(total, r.trip.elapsed || 0);
-    return { left: Math.max(0, Math.ceil(total - done)), frac: done / total, to: r.trip.to, count: r.phase === 'countdown' ? r.dur - r.t : 0 };
+    return { left: Math.max(0, Math.ceil(total - done)), frac: done / total, to: r.trip.place || r.trip.to, count: r.phase === 'countdown' ? r.dur - r.t : 0 };
   };
 
   // In place of Player.update while aboard: the saucer flies itself (or stands landed).
@@ -671,6 +725,11 @@ export function installSaucer(Game) {
         break;
       }
       case 'descent': {
+        // (coming down onto the base: if another saucer has taken our pad meanwhile, the next free one)
+        if (trip.place === 'base' && u < 0.55 && (r.padCheck = (r.padCheck || 0) - dt) <= 0) {
+          r.padCheck = 1;
+          if (Number.isInteger(trip.pad.i) && this.basePadTaken(trip.pad.i)) { const q = this.basePad(trip.pad.i); if (q) trip.pad = q; }
+        }
         // down onto the pad, slowing all the way: legs out for the last of it
         const pad = trip.pad;
         const k = smooth(0, 0.5, u);
@@ -753,7 +812,7 @@ export function installSaucer(Game) {
     this.saucerDust(p.pos, 110, 1.2);
     this.shake = Math.max(this.shake, 0.6);
     this.audio.saucerThud ? this.audio.saucerThud(1) : this.audio.sfx('explosion', 0.15, 0);
-    this.ui.toast(t('saucer.arrived', { place: t('saucer.dest.' + trip.to) }) + ' ' + t('saucer.landedHint'), 5000);
+    this.ui.toast(t('saucer.arrived', { place: t('saucer.dest.' + (trip.place || trip.to)) }) + ' ' + t('saucer.landedHint'), 5000);
     const far = trip.from !== trip.to || trip.space;
     if (trip.to !== 'earth' && far && this.addRumor) this.addRumor(trip.to);
     if (far) { r.trip = trip; this.saucerPassengerSay(trip.to === 'earth' ? 'home' : 'arrive'); r.trip = null; }
@@ -1213,7 +1272,7 @@ export function installSaucer(Game) {
   P.serializeSaucer = function serializeSaucer() {
     const r = this.ride;
     if (!r) return {};
-    const trip = r.trip ? { from: r.trip.from, to: r.trip.to, dur: r.trip.dur, pad: r.trip.pad } : null;
+    const trip = r.trip ? { from: r.trip.from, to: r.trip.to, place: r.trip.place, dur: r.trip.dur, pad: r.trip.pad } : null;
     const crew = (r.crew || []).map((m) => ({ seat: m.seat, c: m.c }));
     return { saucer: { uid: r.uid, fuel: r.fuel === Infinity ? SAUCER_TANK : r.fuel, home: r.home, hp: r.hp, yaw: r.yaw, trip, flying: r.phase === 'manual' ? 1 : 0, feet: r.feet || null, crew } };
   };
@@ -1233,7 +1292,10 @@ export function installSaucer(Game) {
       crew: crew.map((m) => ({ seat: m.seat, c: m.c })), passengers: [],
     };
     const tr = s.trip;
-    if (tr && SAUCER_DESTS.includes(tr.to) && SAUCER_DESTS.includes(tr.from) && tr.pad && Number.isFinite(tr.pad.y)) this.ride.resume = { from: tr.from, to: tr.to, dur: clamp(tr.dur | 0, TRIP_MIN, TRIP_MAX), pad: tr.pad };
+    if (tr && SAUCER_DESTS.includes(tr.to) && SAUCER_DESTS.includes(tr.from) && tr.pad && Number.isFinite(tr.pad.y)) {
+      this.ride.resume = { from: tr.from, to: tr.to, dur: clamp(tr.dur | 0, TRIP_MIN, TRIP_MAX), pad: tr.pad };
+      if (tr.place === 'base' && tr.to === 'earth') this.ride.resume.place = 'base';
+    }
     // (flown by hand when saved: hovering where it was, to fly on or land)
     else if (s.flying) Object.assign(this.ride, { phase: 'manual', legs: 0, t: 0, burn: 0 });
   };
@@ -1246,7 +1308,7 @@ export function installSaucer(Game) {
     r.resume = null;
     const p = this.player;
     const dim = this.dimension || 0;
-    r.trip = { from: tr.from, to: tr.to, dur: tr.dur, pad: tr.pad, hop: tr.from === tr.to, started: now(), elapsed: COUNTDOWN + tr.dur * (dim === DIM_OF[tr.to] ? 0.7 : dim === 3 ? ASCENT : 0) };
+    r.trip = { from: tr.from, to: tr.to, place: tr.place, dur: tr.dur, pad: tr.pad, hop: tr.from === tr.to, started: now(), elapsed: COUNTDOWN + tr.dur * (dim === DIM_OF[tr.to] ? 0.7 : dim === 3 ? ASCENT : 0) };
     if (dim === DIM_OF[tr.to]) {
       this.setPhase('descent', tr.dur * 0.3);
       r.y0 = p.pos[1]; r.x0 = p.pos[0]; r.z0 = p.pos[2];
@@ -1412,7 +1474,8 @@ export function installSaucer(Game) {
 
   P.onSaucerGrab = function onSaucerGrab(m) {
     const e = this.sim.entities.get(Number(m.r));
-    if (!e || e.type !== 'saucer' || e.removed || e.deathTime > 0) { this.mp.net.send({ t: 'sgive', to: m.from, c: null }); return; }
+    // (an F-22 parked here is handed over the same way)
+    if (!e || (e.type !== 'saucer' && e.type !== 'jet') || e.removed || e.deathTime > 0) { this.mp.net.send({ t: 'sgive', to: m.from, c: null }); return; }
     const c = this.serializeCreature(e);
     e.removed = true;
     this.sim.entities.delete(e.id);
@@ -1423,12 +1486,14 @@ export function installSaucer(Game) {
 
   P.onSaucerGive = function onSaucerGive(m) {
     const c = m.c;
-    if (!c || c.type !== 'saucer') { this.ui.toast(t('saucer.notYours'), 2500); return; }
+    if (!c || (c.type !== 'saucer' && c.type !== 'jet')) { this.ui.toast(t(c === null && this.wantedJet ? 'jet.notYours' : 'saucer.notYours'), 2500); this.wantedJet = false; return; }
     // (the copy we saw of it goes)
     for (const g of this.mp.ghosts.values()) if (g.uid === c.uid) g.removed = true;
     const e = this.loadCreature(c);
     if (!e) return;
     const me = this.me();
+    this.wantedJet = false;
+    if (c.type === 'jet') { if (me && Math.hypot(e.body.pos[0] - me.pos[0], e.body.pos[2] - me.pos[2]) < 30 && !this.ride && !this.jet) this.useJet(e); return; }
     if (me && Math.hypot(e.body.pos[0] - me.pos[0], e.body.pos[2] - me.pos[2]) < F.RIM + 14 && !this.ride) this.boardSaucer(e);
   };
 }

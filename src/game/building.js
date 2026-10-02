@@ -285,12 +285,13 @@ export function installBuilding(Game) {
       const b = w.getBlock(ax, ay, az);
       if (!b) return;
       if (MODEL_OF[b] === M.door) { this.breakDoor(ax, ay, az, b, drops); return; }
+      const s = w.getState(ax, ay, az);
       w.setBlock(ax, ay, az, 0);
-      if (drops && !this.isCreative()) for (const [id, n] of blockDrops(b)) this.sim.dropItem(id, n, ax + 0.5, ay + 0.3, az + 0.5);
+      if (drops && !this.isCreative()) for (const [id, n] of blockDrops(b, Math.random, s)) this.sim.dropItem(id, n, ax + 0.5, ay + 0.3, az + 0.5);
     };
     const above = w.getBlock(x, y + 1, z);
     const shape = SHAPE_OF[above];
-    if (shape === SHAPE.CROSS || shape === SHAPE.TORCH || MODEL_OF[above] === M.sign || (MODEL_OF[above] === M.door && !(w.getState(x, y + 1, z) & 8))) pop(x, y + 1, z);
+    if (shape === SHAPE.CROSS || shape === SHAPE.TORCH || MODEL_OF[above] === M.sign || MODEL_OF[above] === M.carpet || (MODEL_OF[above] === M.door && !(w.getState(x, y + 1, z) & 8))) pop(x, y + 1, z);
     for (let k = 0; k < 4; k++) {
       const [dx, dz] = FACING[k];
       const b = w.getBlock(x + dx, y, z + dz);

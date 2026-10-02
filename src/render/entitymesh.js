@@ -7,6 +7,8 @@ import { isBlockItem } from '../sim/items.js';
 import { BLOCK } from '../world/blocks.js';
 import { emitSaucer, saucerFloats } from './saucer.js';
 import { DECK } from '../sim/saucerform.js';
+import { emitJet, jetFloats, emitMissile, MISSILE_FLOATS, emitTracer, TRACER_FLOATS } from './jet.js';
+import { GEAR_H, quatToMat, quatFromEuler } from '../sim/jetform.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
@@ -32,8 +34,10 @@ export class EntityMesh {
   // extras: players drawn as models ({ pos, yaw, headYaw, headPitch, skin, walkPhase, ... }: the
   // others in multiplayer, and ourselves in the third-person views); signs: the words on signs in
   // view ({ layer, center, nrm, light }, see Game.visibleSigns); rodTip: where our fishing line
-  // starts; saucers: flying saucers being flown ({ pos, yaw, look }, see saucer.js)
-  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null, rodTip = null, saucers = null) {
+  // starts; saucers: flying saucers being flown ({ pos, yaw, look }, see saucer.js); jets: F-22s in
+  // the air ({ models: [{ pos, rot, look }], missiles: [{ pos, dir, burning }], tracers: [{ pos, vel }] },
+  // see game/jet.js)
+  build(sim, cam, alpha, world, t, maxDist = 96, extras = null, signs = null, rodTip = null, saucers = null, jets = null) {
     let o = 0;
     const p = [0, 0, 0];
     // (a saucer is big: seen from much further off than a creature)
@@ -46,6 +50,26 @@ export class EntityMesh {
         this.ensure(o + saucerFloats());
         const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + DECK), Math.floor(q[2]));
         o = emitSaucer(this.data, o, q, s.yaw, cam, [Math.max(sl / 15, s.lit || 0), bl / 15], t, { ...s.look, eye: this.eye ?? 1 });
+      }
+    }
+    if (jets) {
+      // (a jet is seen from as far off as a saucer; its missiles and tracers from further still)
+      for (const j of jets.models) {
+        const q = j.pos;
+        const dx = q[0] - cam[0], dy = q[1] - cam[1], dz = q[2] - cam[2];
+        if (dx * dx + dy * dy + dz * dz > farSaucer * farSaucer * 2) continue;
+        this.ensure(o + jetFloats());
+        const [sl, bl] = world.getLight(Math.floor(q[0]), Math.floor(q[1] + 1.5), Math.floor(q[2]));
+        o = emitJet(this.data, o, q, j.rot, cam, [Math.max(sl / 15, j.high ? 1 : 0), bl / 15], t, { ...j.look, eye: this.eye ?? 1 });
+      }
+      for (const m of jets.missiles) {
+        this.ensure(o + MISSILE_FLOATS);
+        const [sl, bl] = world.getLight(Math.floor(m.pos[0]), Math.floor(m.pos[1]), Math.floor(m.pos[2]));
+        o = emitMissile(this.data, o, m.pos, m.dir, cam, [Math.max(sl / 15, 0.3), bl / 15], t, m.burning, this.eye ?? 1);
+      }
+      for (const tr of jets.tracers) {
+        this.ensure(o + TRACER_FLOATS);
+        o = emitTracer(this.data, o, tr.pos, tr.vel, cam, this.eye ?? 1);
       }
     }
     if (signs) {
@@ -71,8 +95,19 @@ export class EntityMesh {
       p[2] = lerp(e.prevPos[2], b.pos[2], alpha);
       const dx = p[0] - cam[0], dy = p[1] - cam[1], dz = p[2] - cam[2];
       const isSaucer = e.kind === 'mob' && e.type === 'saucer';
-      const reach = isSaucer ? farSaucer : maxDist;
+      const isJet = e.kind === 'mob' && e.type === 'jet';
+      const reach = isSaucer || isJet ? farSaucer : maxDist;
       if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+      if (isJet) {
+        // a parked F-22, on its wheels, its canopy shut
+        this.ensure(o + jetFloats());
+        const c = [p[0], p[1] + GEAR_H, p[2]];
+        const [sl2, bl2] = world.getLight(Math.floor(c[0]), Math.floor(c[1] + 1.2), Math.floor(c[2]));
+        const yaw = lerpAngle(e.prevYaw, e.yaw, alpha);
+        o = emitJet(this.data, o, c, quatToMat(quatFromEuler(yaw, 0, 0)), cam, [sl2 / 15, bl2 / 15], t,
+          { gear: 1, throttle: 0, ab: 0, vector: 0, stab: 0, roll: 0, yaw: 0, bays: 0, flaps: 0, missiles: e.missiles ?? 8, eye: this.eye ?? 1, parked: true });
+        continue;
+      }
       if (isSaucer) {
         // a parked flying saucer, legs down to the ground under each foot
         this.ensure(o + saucerFloats());

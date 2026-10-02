@@ -10,12 +10,15 @@ export class Input {
     this.buttons = new Set();
     this.clicked = new Set(); // mouse buttons pressed since last frame
     this.wheel = 0;
+    this.pinch = 0; // two fingers spread apart (+) or pinched together (-) since last frame, log of the ratio
     this.locked = false;
     this.lockFailed = false;
     this.dragging = false;
     this.enabled = false; // only capture while playing
     this.onLockChange = null;
-    this.touch = { active: false, move: [0, 0], jump: false, jumpTap: false, sneak: false, breakHeld: false, breakBtn: false, tap: false, toggleFly: false, menu: false, inventory: false };
+    // (zoomable: the game's camera can be pinched closer or further; noStick: the stick does nothing
+    // now, so a finger anywhere looks about or pinches)
+    this.touch = { active: false, move: [0, 0], jump: false, jumpTap: false, sneak: false, breakHeld: false, breakBtn: false, tap: false, toggleFly: false, menu: false, inventory: false, zoomable: false, noStick: false };
     this.lastSpace = 0;
     this.doubleSpace = false;
     this.lastW = 0;
@@ -132,10 +135,11 @@ export class Input {
   }
 
   consumeFrame() {
-    const r = { dx: this.mouseDX, dy: this.mouseDY, wheel: this.wheel, doubleSpace: this.doubleSpace, doubleW: this.doubleW };
+    const r = { dx: this.mouseDX, dy: this.mouseDY, wheel: this.wheel, pinch: this.pinch, doubleSpace: this.doubleSpace, doubleW: this.doubleW };
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.wheel = 0;
+    this.pinch = 0;
     this.doubleSpace = false;
     this.doubleW = false;
     return r;
@@ -171,6 +175,9 @@ export class TouchControls {
     this.opts = opts;
     this.stickId = null;
     this.lookId = null;
+    this.pinchId = null; // a second finger with the looking one: pinching to zoom
+    this.pinchPos = null;
+    this.pinchDist = 0;
     this.lookLast = null;
     this.lookStart = null;
     this.lookStartTime = 0;
@@ -178,6 +185,8 @@ export class TouchControls {
     const el = document.createElement('div');
     el.className = 'touch-ui';
     const btn = (cls, key, icon, label) => `<button type="button" class="touch-btn ${cls}" data-key="${key}" data-label="${label}">${icon}</button>`;
+    // (in an F-22: its cannon, missiles, hover and firepower, labelled in words)
+    const word = (cls, key, label) => `<button type="button" class="touch-btn touch-jet ${cls}" data-key="${key}" data-label="${label}"><span class="touch-word" data-word="${label}"></span></button>`;
     el.innerHTML = `
       <div class="touch-stick"><div class="touch-knob"></div></div>
       ${btn('touch-jump', 'jump', ICONS.jump, 'touch.jump')}
@@ -186,6 +195,10 @@ export class TouchControls {
       ${btn('touch-place', 'placeBtn', ICONS.place, 'touch.place')}
       ${btn('touch-fly', 'toggleFly', ICONS.fly, 'touch.fly')}
       ${btn('touch-carry', 'carry', '', 'touch.carry')}
+      ${word('touch-jfire', 'jetFire', 'touch.jetFire')}
+      ${word('touch-jmsl', 'jetMissile', 'touch.jetMissile')}
+      ${word('touch-jhover', 'jetHover', 'touch.jetHover')}
+      ${word('touch-jpower', 'jetPower', 'touch.jetPower')}
       <div class="touch-top">
         ${btn('touch-mic', 'mic', ICONS.mic, 'touch.mic')}
         ${btn('touch-chat', 'chat', ICONS.chat, 'touch.chat')}
@@ -206,7 +219,7 @@ export class TouchControls {
     if (!fsOk) el.querySelector('.touch-full').hidden = true;
 
     // buttons: hold keys stay down while touched, the others fire once per press
-    const holdKeys = new Set(['jump', 'sneak', 'breakBtn']);
+    const holdKeys = new Set(['jump', 'sneak', 'breakBtn', 'jetFire']);
     for (const b of el.querySelectorAll('.touch-btn')) {
       const key = b.dataset.key;
       const down = (e) => {
@@ -259,6 +272,7 @@ export class TouchControls {
   refreshLabels() {
     const t = this.opts.t || ((k) => k);
     for (const b of this.el.querySelectorAll('.touch-btn')) b.setAttribute('aria-label', t(b.dataset.label));
+    for (const w of this.el.querySelectorAll('.touch-word')) w.textContent = t(w.dataset.word);
     this.rotateHint.textContent = t('touch.rotate');
   }
 
@@ -299,9 +313,10 @@ export class TouchControls {
   release() {
     const tc = this.input.touch;
     tc.move = [0, 0];
-    tc.jump = tc.jumpTap = tc.sneak = tc.breakBtn = tc.breakHeld = false;
+    tc.jump = tc.jumpTap = tc.sneak = tc.breakBtn = tc.breakHeld = tc.jetFire = false;
     this.stickId = null;
     this.lookId = null;
+    this.pinchId = null;
     this.knob.style.transform = '';
     this.stick.classList.remove('floating');
     this.stick.style.left = this.stick.style.top = '';
@@ -331,8 +346,19 @@ export class TouchControls {
     if (!this.input.enabled) return;
     e.preventDefault();
     this.input.touch.active = true;
+    const tc = this.input.touch;
     for (const t of e.changedTouches) {
-      const left = t.clientX < window.innerWidth * 0.42 && t.clientY > window.innerHeight * 0.25;
+      // a second finger with the looking one, where the camera zooms: a pinch
+      if (tc.zoomable && this.lookId !== null && this.pinchId === null) {
+        this.pinchId = t.identifier;
+        this.pinchPos = [t.clientX, t.clientY];
+        this.pinchDist = Math.max(8, Math.hypot(t.clientX - this.lookLast[0], t.clientY - this.lookLast[1]));
+        this.moved = true; // (no tap and no hold to break)
+        clearTimeout(this.holdTimer);
+        tc.breakHeld = false;
+        continue;
+      }
+      const left = !tc.noStick && t.clientX < window.innerWidth * 0.42 && t.clientY > window.innerHeight * 0.25;
       if (left && this.stickId === null) {
         this.stickId = t.identifier;
         // the stick appears under the thumb, kept fully on screen
@@ -374,18 +400,40 @@ export class TouchControls {
     const sens = 2.2 * (this.settings.touchSensitivity || 1);
     for (const t of e.changedTouches) {
       if (t.identifier === this.stickId) this.updateStick(t);
+      else if (t.identifier === this.pinchId) this.pinchPos = [t.clientX, t.clientY];
       else if (t.identifier === this.lookId) {
         const dx = t.clientX - this.lookLast[0], dy = t.clientY - this.lookLast[1];
         this.lookLast = [t.clientX, t.clientY];
         if (Math.hypot(t.clientX - this.lookStart[0], t.clientY - this.lookStart[1]) > 12) this.moved = true;
-        this.input.mouseDX += dx * sens;
-        this.input.mouseDY += dy * sens;
+        // (two fingers: zooming, not looking about)
+        if (this.pinchId === null) {
+          this.input.mouseDX += dx * sens;
+          this.input.mouseDY += dy * sens;
+        }
       }
+    }
+    if (this.pinchId !== null) {
+      const d = Math.max(8, Math.hypot(this.pinchPos[0] - this.lookLast[0], this.pinchPos[1] - this.lookLast[1]));
+      this.input.pinch += Math.log(d / this.pinchDist);
+      this.pinchDist = d;
     }
   }
 
   onEnd(e) {
     for (const t of e.changedTouches) {
+      if (t.identifier === this.pinchId) {
+        this.pinchId = null;
+        continue;
+      }
+      // (the looking finger lifted mid-pinch: the other one looks about from here)
+      if (t.identifier === this.lookId && this.pinchId !== null) {
+        this.lookId = this.pinchId;
+        this.lookLast = this.pinchPos.slice();
+        this.lookStart = this.pinchPos.slice();
+        this.pinchId = null;
+        this.moved = true;
+        continue;
+      }
       if (t.identifier === this.stickId) {
         this.stickId = null;
         this.knob.style.transform = '';

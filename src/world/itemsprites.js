@@ -192,6 +192,18 @@ for (const mat of ['leather', 'chainmail', 'iron', 'golden', 'diamond', 'netheri
   for (const piece of ARMOR_PIECES) DRAW[mat + '_' + piece] = armor(piece, mat);
 }
 
+// carpets: a rug of its wool, its far end rolled up, a fringe at the near one
+for (const [color, hexc] of WOOL_COLORS) {
+  const v = parseInt(hexc.slice(1), 16);
+  const wool = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  DRAW[color + '_carpet'] = (s) => {
+    for (let j = 0; j < 7; j++) s.rect(1 + Math.round((6 - j) * 0.5), 5 + j, 13 - Math.round((6 - j) * 0.5), 1, (i) => ((i + j) % 4 === 0 ? shade(wool, 0.86) : wool));
+    s.rect(4, 3, 10, 2, (i, j) => (j === 0 ? shade(wool, 1.18) : shade(wool, 0.72)));
+    for (let i = 1; i < 14; i += 2) s.set(i, 12, shade(wool, 1.25));
+    s.outline([30, 22, 16]);
+  };
+}
+
 // beds: a blanket of the bed's colour, a white pillow, wooden legs
 for (const [color, hexc] of WOOL_COLORS) {
   const v = parseInt(hexc.slice(1), 16);
@@ -340,6 +352,17 @@ Object.assign(DRAW, {
     s.rect(6, 12, 4, 1, [90, 220, 255]);
     for (const [x, c] of [[2, [255, 80, 90]], [5, [255, 220, 80]], [8, [90, 240, 140]], [11, [110, 170, 255]], [13, [255, 120, 220]]]) s.rect(x, 10, 1, 1, c);
     s.outline([36, 40, 52]);
+  },
+  // an F-22 seen from above: its diamond wings and stabilators, the gold canopy, two tails
+  f22_raptor: (s) => {
+    const G = [138, 146, 156], D = [104, 111, 121], E = [158, 165, 174];
+    const rows = [[1, 7, 8], [2, 7, 8], [3, 6, 9], [4, 6, 9], [5, 5, 10], [6, 5, 10], [7, 4, 11], [8, 3, 12], [9, 2, 13], [10, 1, 14], [11, 2, 13], [12, 4, 11], [13, 3, 12], [14, 5, 10]];
+    for (const [y, a, b] of rows) s.rect(a, y, b - a + 1, 1, (i) => (a + i === 7 || a + i === 8 ? G : i === 0 || a + i === b ? E : D));
+    s.rect(7, 3, 2, 2, [220, 176, 72]);
+    s.set(7, 3, [244, 214, 120]);
+    for (const [x, y] of [[5, 12], [10, 12], [5, 13], [10, 13]]) s.set(x, y, [70, 75, 84]);
+    s.rect(6, 14, 4, 1, (i) => (i === 1 || i === 2 ? [70, 74, 80] : [52, 52, 56]));
+    s.outline([30, 34, 40]);
   },
   minecart: (s) => { s.rect(2, 5, 12, 6, (i, j) => (j === 0 || i === 0 || i === 11 ? [170, 170, 176] : [110, 110, 116])); s.rect(3, 6, 10, 2, [70, 70, 76]); s.disc(4.5, 12, 1.6, [60, 60, 64]); s.disc(11.5, 12, 1.6, [60, 60, 64]); s.outline([30, 30, 34]); },
   iron_door: (s) => doorItem(s, [214, 214, 218], [170, 170, 176], true),

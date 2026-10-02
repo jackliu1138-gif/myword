@@ -31,6 +31,9 @@ export function installUse(Game) {
   P.useOnBlock = function useOnBlock(hit, def) {
     const w = this.world, b = hit.block;
     const { x, y, z } = hit;
+    // (a carpet onto a bed's top: its blanket; a bed with a blanket on it is still slept in)
+    if (IS_BED[b] && def && def.kind === 'carpet' && hit.normal[1] === 1) return this.placeCarpet(hit, def);
+    if (b === BLOCK.CARPET && IS_BED[w.getBlock(x, y - 1, z)] && !this.player.sneaking && !(def && def.kind === 'carpet')) { this.useBed(x, y - 1, z, w.getBlock(x, y - 1, z)); return true; }
     if (IS_BED[b] && !this.player.sneaking) { this.useBed(x, y, z, b); return true; }
     // doors, gates and trapdoors open, chests and furnaces open up, signs can be rewritten
     if (!this.player.sneaking && this.useBlock(hit)) return true;
@@ -68,7 +71,27 @@ export function installUse(Game) {
     }
     if (def.kind === 'igniter') return this.useFlint(hit, def);
     if (def.kind === 'bed') return this.placeBed(hit, def);
+    if (def.kind === 'carpet') return this.placeCarpet(hit, def);
     return false;
+  };
+
+  // A carpet goes on the floor (anything solid under it but another carpet), or on a bed, where it
+  // lies over the mattress as its blanket.
+  P.placeCarpet = function placeCarpet(hit, def) {
+    const w = this.world;
+    let { x, y, z } = hit;
+    if (!BLOCKS[hit.block].replaceable) { x += hit.normal[0]; y += hit.normal[1]; z += hit.normal[2]; }
+    if (y < 1 || y >= WORLD_HEIGHT) return true;
+    const cur = w.getBlock(x, y, z);
+    if (cur && (!BLOCKS[cur].replaceable || IS_LIQUID[cur])) return true;
+    const below = w.getBlock(x, y - 1, z);
+    if (!IS_BED[below] && (!IS_SOLID[below] || below === BLOCK.CARPET)) return true;
+    if (!w.setBlock(x, y, z, BLOCK.CARPET, { state: def.color })) return true;
+    this.audio.play('place', 'cloth');
+    this.swing = 1;
+    if (!this.isCreative()) this.inventory.consume(this.selected);
+    if (this.notePlaced) this.notePlaced(x, y, z);
+    return true;
   };
 
   P.wearHeld = function wearHeld(def, n) {
@@ -108,6 +131,8 @@ export function installUse(Game) {
   P.breakBed = function breakBed(x, y, z, b, drops) {
     const other = this.bedPartner(x, y, z, b);
     if (other) this.world.setBlock(other[0], other[1], other[2], 0);
+    // (a blanket on the other half comes off as well; on this one, breakAttached sees to it)
+    if (other && this.world.getBlock(other[0], other[1] + 1, other[2]) === BLOCK.CARPET) this.breakAttached(other[0], other[1], other[2], drops);
     if (drops && !this.isCreative()) {
       const color = BLOCKS[b].bed.color;
       this.sim.dropItem(BED_ITEMS[color], 1, x + 0.5, y + 0.4, z + 0.5);

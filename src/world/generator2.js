@@ -8,6 +8,7 @@ import { BLOCK, CHUNK_SIZE, WORLD_HEIGHT, IS_SOLID } from './blocks.js';
 import { TerrainGenerator } from './generator.js';
 import { SEA2, BIOME2, BIOME2_NAMES } from './biomes.js';
 import { Structures, ChunkCtx } from './structures.js';
+import { planSaucerBase, pasteSaucerBase } from './saucerbase.js';
 
 export { SEA2, BIOME2, BIOME2_NAMES };
 
@@ -363,6 +364,8 @@ export class TerrainGenerator2 extends TerrainGenerator {
     // ---- 7. trees and plants, then villages, temples and the rest on top
     this.decorate2(ctx, colBiome);
     this.structures.build(ctx);
+    // ---- 8. the saucer base, levelled into whatever was there
+    pasteSaucerBase(ctx, planSaucerBase(this));
     return ctx.result();
   }
 
