@@ -278,7 +278,8 @@ export function startServer(overrides = {}) {
     if (!c || typeof c !== 'object' || typeof c.uid !== 'string' || !/^[\w.:-]{1,40}$/.test(c.uid)) return null;
     if (typeof c.type !== 'string' || !/^[a-z_]{1,24}$/.test(c.type) || !Array.isArray(c.p) || c.p.length !== 3) return null;
     const body = JSON.stringify(c);
-    if (body.length > 4096) return null;
+    // (a flying saucer carries the villagers aboard it)
+    if (body.length > (c.type === 'saucer' ? 40000 : 4096)) return null;
     const p = c.p.map((v) => num(v, -3e7, 3e7));
     if (p[1] < -64 || p[1] > WORLD_HEIGHT + 64) return null;
     return { ...c, p };

@@ -7,7 +7,7 @@
 import { BLOCK, BLOCKS, IS_SOLID, IS_RAIL, RAIL_SHAPES, FACING, railShapeFor, MODEL_OF, MODELS_BY_NAME } from '../world/blocks.js';
 import { ITEM, itemDef } from '../sim/items.js';
 import { ARMOR_REF } from '../sim/inventory.js';
-import { SAUCER_SEAT } from '../render/saucer.js';
+import { seatAt, SEAT_H } from '../sim/saucerform.js';
 import { t } from '../ui/i18n.js';
 
 const M = MODELS_BY_NAME;
@@ -341,6 +341,13 @@ export function installVehicles(Game) {
 
   // ---------------------------------------------------------------- the camera: first person, behind, in front
   P.cycleCamera = function cycleCamera() {
+    // (in a flying saucer: round it from outside, or from our seat on the bridge)
+    if (this.ride || this.passengerOf) {
+      this.camMode = this.camMode === 1 ? 0 : 1;
+      this.ui.toast(t(this.camMode === 1 ? 'saucer.view.bridge' : 'saucer.view.orbit'), 1600);
+      this.ui.setCameraMode(this.camMode);
+      return;
+    }
     this.camMode = ((this.camMode || 0) + 1) % 3;
     this.camDist = 0.4; // (it pulls back from the head, rather than jumping)
     this.ui.toast(t('toast.cam' + this.camMode), 1200);
@@ -374,18 +381,21 @@ export function installVehicles(Game) {
   P.localPlayerModel = function localPlayerModel() {
     if (!this.player) return null;
     const p = this.player;
-    // (in a flying saucer: sitting in its dome, the camera outside)
+    // (in a flying saucer: sitting at its controls under the dome, the camera outside; from the
+    // bridge, our own eyes)
     if (this.ride) {
-      const inv = this.inventory;
+      if (this.camMode === 1) return null;
+      const s = seatAt(p.pos, this.ride.yaw, 'pilot');
       return {
-        id: 'local', pos: [p.pos[0], p.pos[1] + SAUCER_SEAT - 0.55, p.pos[2]], yaw: this.ride.yaw, headYaw: this.ride.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: inv.armorIds(),
+        id: 'local', pos: [s.pos[0], s.pos[1] + SEAT_H - 0.55, s.pos[2]], yaw: s.yaw, headYaw: s.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: this.inventory.armorIds(),
         walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, gliding: false, sitting: true, wings: false, offhand: 0,
       };
     }
-    // (a passenger on someone's saucer: sitting on its deck)
+    // (a passenger on someone's saucer: in our seat)
     if (this.passengerOf) {
+      if (this.camMode === 1) return null;
       return {
-        id: 'local', pos: p.pos.slice(), yaw: this.passengerYaw ?? p.yaw, headYaw: p.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: this.inventory.armorIds(),
+        id: 'local', pos: [p.pos[0], p.pos[1] + SEAT_H - 0.55, p.pos[2]], yaw: this.passengerYaw ?? p.yaw, headYaw: p.yaw, headPitch: 0, skin: 'player:0', held: 0, armor: this.inventory.armorIds(),
         walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, gliding: false, sitting: true, wings: false, offhand: 0,
       };
     }

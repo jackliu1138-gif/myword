@@ -860,7 +860,10 @@ export class Renderer {
     const near = 0.06;
     // high above the ground the terrain is still in view below
     const lift = Math.max(0, cam.pos[1] - 300) * 1.15;
-    const far = Math.max(256, state.renderDistance * 16 * 1.6 + 64 + Math.min(lift, 2600));
+    // (and a flying saucer, with the world loaded round it, seen from far off)
+    const fcp = state.fogCenter;
+    const off = fcp ? Math.min(1200, Math.hypot(fcp[0] - cam.pos[0], fcp[1] - cam.pos[1], fcp[2] - cam.pos[2])) : 0;
+    const far = Math.max(256, state.renderDistance * 16 * 1.6 + 64 + Math.min(lift + off, 2600));
     this.near = near;
     this.far = far;
     let jx = 0, jy = 0;
@@ -1171,6 +1174,11 @@ export class Renderer {
     t.hdr.bind();
     const lp = this.prog.lighting.use();
     this.bindSpaceSky(lp, t, spaceMix, state);
+    this.bindPointLights(lp, state);
+    // (the far fog hides the edge of the world loaded round fogCenter: aboard a flying saucer, the
+    // saucer, which the camera looks at from far off)
+    const fc = state.fogCenter ? [state.fogCenter[0] - state.camera.pos[0], state.fogCenter[2] - state.camera.pos[2]] : [0, 0];
+    lp.f2('uFogCenter', fc[0], fc[1]);
     lp.tex('uGAlbedo', t.gbuffer.textures[0], gl.TEXTURE_2D, this.nearestSampler)
       .tex('uGNormal', t.gbuffer.textures[1], gl.TEXTURE_2D, this.nearestSampler)
       .tex('uGLight', t.gbuffer.textures[2], gl.TEXTURE_2D, this.nearestSampler)
@@ -1211,7 +1219,8 @@ export class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const wp = this.prog.water.use();
-    wp.tex('uSceneColor', t.sceneCopy.texture, gl.TEXTURE_2D, this.linearSampler)
+    wp.f2('uFogCenter', fc[0], fc[1])
+      .tex('uSceneColor', t.sceneCopy.texture, gl.TEXTURE_2D, this.linearSampler)
       .tex('uSceneDepth', t.depthCopy.depth, gl.TEXTURE_2D, this.nearestSampler)
       .tex('uShadowCmp', this.shadowTarget.depth, gl.TEXTURE_2D, this.shadowCmpSampler)
       .tex('uAlbedo', this.texAlbedo, gl.TEXTURE_2D_ARRAY)
@@ -1392,6 +1401,33 @@ export class Renderer {
     this.fullscreen();
   }
 
+  // Moving lights: a flying saucer's engines (state.lights: [{ pos, color, reach, air }], the
+  // nearest four), lighting up the ground and glowing in the air round them.
+  // The lights of flying saucers (state.lights: { pos, color, reach, air, occ: [height, radius,
+  // softness] }).
+  // (Set for the eye: eyeScale dims a saucer's fire itself to look as bright at night as by day;
+  // the light it throws is dimmed less, so at night it lights up the ground round it more than by
+  // day, without turning the world white.)
+  bindPointLights(p, state) {
+    const pos = this.pointPos || (this.pointPos = new Float32Array(16));
+    const col = this.pointCol || (this.pointCol = new Float32Array(16));
+    const occ = this.pointOcc || (this.pointOcc = new Float32Array(16));
+    pos.fill(0);
+    col.fill(0);
+    occ.fill(0);
+    const cam = state.camera.pos;
+    const list = state.lights || [];
+    this.eyeScale = Math.min(1, Math.max(0.06, 3 / this.referenceExposure(state)));
+    const eye = Math.pow(this.eyeScale, 0.6);
+    for (let i = 0; i < Math.min(4, list.length); i++) {
+      const l = list[i];
+      pos[i * 4] = l.pos[0] - cam[0]; pos[i * 4 + 1] = l.pos[1] - cam[1]; pos[i * 4 + 2] = l.pos[2] - cam[2]; pos[i * 4 + 3] = l.reach;
+      col[i * 4] = l.color[0] * eye; col[i * 4 + 1] = l.color[1] * eye; col[i * 4 + 2] = l.color[2] * eye; col[i * 4 + 3] = l.air || 0;
+      if (l.occ) { occ[i * 4] = l.occ[0]; occ[i * 4 + 1] = l.occ[1]; occ[i * 4 + 2] = l.occ[2] || 0; }
+    }
+    p.f4v('uPointPos', pos).f4v('uPointCol', col).f4v('uPointOcc', occ);
+  }
+
   bindSpaceSky(p, t, mix, state) {
     const sky = state.sky;
     p.tex('uSpaceSky', mix > 0 && t.space ? t.space.texture : this.spaceDummy, this.gl.TEXTURE_2D, this.nearestSampler)
@@ -1460,7 +1496,7 @@ export class Renderer {
           d[o++] = p.x - cam[0]; d[o++] = p.y - cam[1]; d[o++] = p.z - cam[2];
           d[o++] = (cx * ca - cy * sa) * sz; d[o++] = (cx * sa + cy * ca) * sz;
           d[o++] = cx * 0.5 + 0.5; d[o++] = 0.5 - cy * 0.5;
-          d[o++] = a; d[o++] = p.sky; d[o++] = 0;
+          d[o++] = a; d[o++] = p.sky; d[o++] = (p.glow || 0) * Math.min(1, (p.life / p.max) * 1.6);
           d[o++] = c[0]; d[o++] = c[1]; d[o++] = c[2]; d[o++] = 3;
         }
         continue;

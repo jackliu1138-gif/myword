@@ -5,6 +5,7 @@
 import { Mob, ItemDrop, Arrow, Thrown, EyeOfEnder, Fireball, MOBS, HOSTILE_TYPES, ANIMAL_TYPES, HUNTS, TICK } from './entities.js';
 import { EnderDragon } from './dragon.js';
 import { rayHitsBox } from './physics.js';
+import { rayHit as saucerRayHit } from './saucerform.js';
 import { blockDrops, ITEM } from './items.js';
 import { armorReduce } from './inventory.js';
 import { BLOCK, IS_SOLID, IS_LIQUID, WORLD_HEIGHT } from '../world/blocks.js';
@@ -590,14 +591,22 @@ export class Simulation {
   // First creature along a ray (the player's melee attack), within maxDist.
   pickEntity(origin, dir, maxDist) {
     let best = null, bt = maxDist;
+    // (a flying saucer by its own shape, and from further off: its hull is high over your head)
+    let sBest = null, sT = maxDist + 12;
     for (const e of this.entities.values()) {
-      if (e.kind !== 'mob' || e.deathTime > 0 || e.carriedBy) continue;
+      if (e.kind !== 'mob' || e.deathTime > 0 || e.carriedBy || e.aboard) continue;
       const b = e.body;
+      if (e.type === 'saucer') {
+        const t = saucerRayHit(origin, dir, b.pos, sT);
+        if (t !== null && t < sT) { sT = t; sBest = e; }
+        continue;
+      }
       const pad = 0.1;
       const box = [b.pos[0] - b.hw - pad, b.pos[1] - pad, b.pos[2] - b.hw - pad, b.pos[0] + b.hw + pad, b.pos[1] + b.h + pad, b.pos[2] + b.hw + pad];
       const t = rayHitsBox(origin, dir, box, bt);
       if (t !== null && t < bt) { bt = t; best = e; }
     }
+    if (sBest && (!best || sT < bt)) return { entity: sBest, t: sT };
     return best ? { entity: best, t: bt } : null;
   }
 

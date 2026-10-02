@@ -123,8 +123,58 @@ vec3 skyHere(vec3 dir, bool disks) {
 }
 `;
 
+// Moving lights (a flying saucer's engines): up to four. uPointPos: camera relative xyz, and how
+// far the light reaches (0: none); uPointCol: its colour and strength, and how much it glows in
+// the air around it.
+export const POINT_FUNCS = `
+uniform vec4 uPointPos[4];
+uniform vec4 uPointCol[4];
+uniform vec4 uPointOcc[4]; // a disc over the light that it can't shine through (height over it, radius), and how soft it is (0: a lamp, 1: light from all round)
+vec3 pointLit(vec3 rel, vec3 N, vec3 albedo) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    float reach = uPointPos[i].w;
+    if (reach <= 0.0) continue;
+    vec3 P = uPointPos[i].xyz;
+    vec3 L = P - rel;
+    float d = length(L);
+    if (d >= reach) continue;
+    // (a saucer's engines under its hull: nothing over the hull is lit by them)
+    vec4 oc = uPointOcc[i];
+    if (oc.y > 0.0 && rel.y > P.y + oc.x) {
+      vec2 c = mix(P.xz, rel.xz, oc.x / (rel.y - P.y));
+      if (length(c - P.xz) < oc.y) continue;
+    }
+    float x = d / reach;
+    float win = 1.0 - x * x;
+    float att = win * win / (1.0 + d * d * 0.0008);
+    // (a great glowing plume and the smoke round it rather than a lamp: light even at a slant)
+    float wrap = oc.z;
+    float ndl = max(dot(N, L / max(d, 1e-3)), 0.0) * (1.0 - wrap) + wrap;
+    sum += albedo * uPointCol[i].rgb * ndl * att;
+  }
+  return sum;
+}
+// their light scattered by the air along the view ray, out to dist
+vec3 pointGlow(vec3 dir, float dist) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    float reach = uPointPos[i].w;
+    if (reach <= 0.0 || uPointCol[i].a <= 0.0) continue;
+    vec3 P = uPointPos[i].xyz;
+    float tStar = dot(P, dir);
+    float h = max(length(P - dir * tStar), 1.0);
+    // the integral of 1 / (h^2 + s^2) along the ray from the camera to dist
+    float I = (atan((dist - tStar) / h) - atan(-tStar / h)) / h;
+    sum += uPointCol[i].rgb * uPointCol[i].a * I * smoothstep(reach, reach * 0.25, h);
+  }
+  return sum;
+}
+`;
+
 export const FOG_FUNCS = `
 uniform float uVolumetricOn;
+uniform vec2 uFogCenter; // where the world is loaded round (camera relative xz): the camera, or a flying saucer it looks at
 vec3 applyFog(vec3 col, vec3 rel, vec3 dir, float dist) {
   float dens = uFogParams.x;
   float fall = uFogParams.y;
@@ -140,8 +190,9 @@ vec3 applyFog(vec3 col, vec3 rel, vec3 dir, float dist) {
     ins += uLightColor.rgb * hgPhase(dot(dir, uLightDir.xyz), 0.65) * (1.0 - T) * 1.2 * cave;
   }
   col = col * T + ins;
-  float far = smoothstep(uFogParams.z, uFogParams.w, length(rel.xz));
-  col = mix(col, skyHere(dir, false) * (0.04 + 0.96 * cave), far * far * (3.0 - 2.0 * far));
+  float far = smoothstep(uFogParams.z, uFogParams.w, length(rel.xz - uFogCenter));
+  // (only where it shows: the view behind is not even looked up for nearer ground)
+  if (far > 0.0) col = mix(col, skyHere(dir, false) * (0.04 + 0.96 * cave), far * far * (3.0 - 2.0 * far));
   return col;
 }
 `;
@@ -209,6 +260,7 @@ ${MATS}
 ${CLOUD_FUNCS}
 ${SKY_FUNCS}
 ${FOG_FUNCS}
+${POINT_FUNCS}
 ${WATER_COMMON}
 ${RAIN_FUNCS}
 uniform sampler2D uGAlbedo;
@@ -337,6 +389,7 @@ void main() {
       sky = sky * cl.a + cl.rgb;
     }
     sky += vec3(0.62, 0.67, 0.85) * uWeather.z * (0.5 + 0.8 * saturate(dir.y));
+    sky += pointGlow(dir, 4000.0);
     oColor = vec4(sky, 1.0);
     return;
   }
@@ -464,7 +517,10 @@ void main() {
 
   vec3 emissive = albedo * emission * emission * 7.0;
   vec3 color = direct + diffuse + env + emissive;
+  // a flying saucer's engines lighting up the ground round them
+  color += pointLit(rel, N, albedo) * (1.0 - metal * 0.4);
   color = applyFog(color, rel, dir, dist);
+  color += pointGlow(dir, dist);
   oColor = vec4(color, 1.0);
 }
 `;

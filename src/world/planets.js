@@ -57,9 +57,11 @@ function craterField(seed, layers, x, z, density, opt) {
   return [h, fresh];
 }
 
-// the launch pad's deck reaches this far from the world's middle; the ground is levelled further out
-export const PAD_R = 7.5;
-const PAD_CLEAR = 9.5;
+// the launch pad's deck reaches this far from the world's middle (room for a saucer 55 blocks
+// across); the ground is levelled further out, and cleared high enough over it for one to stand
+export const PAD_R = 34;
+const PAD_CLEAR = 42;
+const PAD_HIGH = 40;
 
 class PlanetGenerator {
   constructor(seed, body) {
@@ -107,28 +109,26 @@ class PlanetGenerator {
     return this.padY;
   }
 
-  // The pad: a round deck of smooth stone with a yellow ring and a glowing middle, lights round its
-  // edge and four lamp posts, on ground levelled out round it.
+  // The pad: a great round deck of smooth stone with a glowing middle, a yellow ring where a
+  // saucer's feet stand, stripes out from the middle, a ring of lights and a yellow edge, eight
+  // lamp posts round it, on ground levelled out round it and cleared above.
   pad(blocks, x0, z0) {
     const py = this.padHeight();
+    const top = Math.min(H - 1, py + PAD_HIGH);
     for (let z = 0; z < CS; z++) {
       for (let x = 0; x < CS; x++) {
         const wx = x0 + x, wz = z0 + z;
-        const d = Math.hypot(wx, wz);
+        const fx = wx + 0.5, fz = wz + 0.5;
+        const d = Math.hypot(fx, fz);
         if (d > PAD_CLEAR) continue;
         const l = this.layers(this.surface(wx, wz), 0);
-        for (let y = py + 1; y <= py + 16; y++) blocks[idx(x, y, z)] = 0;
+        for (let y = py + 1; y <= top; y++) blocks[idx(x, y, z)] = 0;
         for (let y = py - 4; y < py; y++) if (!blocks[idx(x, y, z)]) blocks[idx(x, y, z)] = l.rock;
-        let top = l[0];
-        if (d <= 1.5) top = B.SEA_LANTERN;
-        else if (d > 5.5 && d <= 6.5) top = B.YELLOW_WOOL;
-        else if (d <= PAD_R) top = B.SMOOTH_STONE;
-        const ax = Math.abs(wx), az = Math.abs(wz);
-        if ((ax === 7 && az === 0) || (ax === 0 && az === 7) || (ax === 5 && az === 5)) top = B.SEA_LANTERN;
-        blocks[idx(x, py, z)] = top;
-        if (ax === 6 && az === 6) {
-          for (let y = py + 1; y <= py + 3; y++) blocks[idx(x, y, z)] = B.IRON_BARS;
-          blocks[idx(x, py + 4, z)] = B.SEA_LANTERN;
+        blocks[idx(x, py, z)] = padBlock(fx, fz, d, l[0]);
+        // lamp posts round the edge, out of the way of a saucer's rim
+        if (PAD_POSTS.some(([px, pz]) => px === wx && pz === wz)) {
+          for (let y = py + 1; y <= py + 5; y++) blocks[idx(x, y, z)] = B.IRON_BARS;
+          blocks[idx(x, py + 6, z)] = B.SEA_LANTERN;
         }
       }
     }
@@ -180,6 +180,21 @@ class PlanetGenerator {
     const c = this.colourOf(s);
     return [Math.round(c[0]), Math.round(c[1]), Math.round(c[2]), Math.round(clamp01((s.h - this.base + 48) / 248) * 255)];
   }
+}
+
+const PAD_POSTS = [];
+for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + (k * Math.PI) / 4; PAD_POSTS.push([Math.floor(Math.cos(a) * 38), Math.floor(Math.sin(a) * 38)]); }
+
+// The pad's deck at (fx, fz), d from its middle (outside it: the ground's own top, ground).
+function padBlock(fx, fz, d, ground) {
+  if (d > PAD_R) return ground;
+  if (d <= 2.5) return B.SEA_LANTERN;
+  if (d <= 3.5 || (d > 16.8 && d <= 19.2) || d > PAD_R - 1.2) return B.YELLOW_WOOL;
+  // lights round it, and stripes out from the middle
+  const a = Math.atan2(fz, fx);
+  if (d > 29.5 && d <= 30.5 && Math.abs(((a / (Math.PI / 12)) % 1 + 1) % 1 - 0.5) > 0.38) return B.SEA_LANTERN;
+  if (d > 4.5 && Math.abs(Math.sin(a * 6)) < 3 / d) return B.LIGHT_GRAY_WOOL;
+  return B.SMOOTH_STONE;
 }
 
 // ---------------------------------------------------------------------------------- the Moon
@@ -337,12 +352,51 @@ export class SpaceGenerator {
 export const STATION_Y = 120; // the deck
 export const STATION_R = 22;
 export const STATION_PAD = [0, 12]; // the landing pad's middle (x, z)
+// beside it, across a bridge: the round docking platform a flying saucer comes down on
+export const STATION_DOCK = [0, 66];
+export const DOCK_R = 33;
 const DOME = [0, -7], DOME_R = 9;
+
+// The docking platform and the bridge to it.
+function dockBlock(fx, dy, fz) {
+  const dx = fx - STATION_DOCK[0], dz = fz - STATION_DOCK[1];
+  const d = Math.hypot(dx, dz);
+  if (d < DOCK_R) {
+    // under it, a shallow cone of hull down to an engine
+    if (dy < 0) {
+      if (dy < -7) return 0;
+      const k = -dy / 7;
+      const rr = (DOCK_R - 0.5) * (1 - k * k * 0.85);
+      if (d >= rr) return 0;
+      if (dy === -1) return B.IRON_BLOCK;
+      if (d > rr - 1.6) return dy === -3 && ((Math.floor(Math.atan2(dz, dx) / (Math.PI / 10)) & 1) === 0) ? B.SEA_LANTERN : B.IRON_BLOCK;
+      if (dy === -7 || (dy <= -5 && d < 3)) return B.SEA_LANTERN;
+      return 0;
+    }
+    if (dy === 0) return padBlock(dx, dz, d * (PAD_R / DOCK_R), B.QUARTZ_BLOCK);
+    // a rail round it (open towards the bridge)
+    if (dy === 1 && d >= DOCK_R - 1.2 && !(Math.abs(dx) < 2 && dz < 0)) return B.IRON_BARS;
+    return 0;
+  }
+  // the bridge between them, railed
+  if (Math.abs(fx) < 3 && fz > STATION_R - 2 && fz < STATION_DOCK[1] - DOCK_R + 2) {
+    if (dy === 0) return Math.abs(fx) < 0.6 ? B.SEA_LANTERN : B.SMOOTH_STONE;
+    if (dy === -1) return B.IRON_BLOCK;
+    if (dy === 1 && Math.abs(fx) > 2) return B.IRON_BARS;
+  }
+  return 0;
+}
 
 export function stationBlock(x, y, z) {
   const dy = y - STATION_Y;
   const fx = x + 0.5, fz = z + 0.5;
   const r = Math.hypot(fx, fz);
+  if (r >= STATION_R - 1.5 && dy >= -12 && dy <= 40) {
+    const b = dockBlock(fx, dy, fz);
+    if (b) return b;
+    // (the station's own rail opens onto the bridge)
+    if (dy === 1 && Math.abs(fx) < 2 && fz > 0 && r < STATION_R) return 0;
+  }
   if (r >= STATION_R || dy < -12 || dy > 17) return 0;
   const ddx = fx - DOME[0], ddz = fz - DOME[1];
   const dd = Math.hypot(ddx, ddz, Math.max(0, dy));
@@ -423,7 +477,7 @@ export class StationGenerator {
   caveEntrance() { return false; }
   precipitation() { return 'none'; }
   column(x, z, out = {}) {
-    const on = Math.hypot(x + 0.5, z + 0.5) < STATION_R;
+    const on = Math.hypot(x + 0.5, z + 0.5) < STATION_R || Math.hypot(x + 0.5 - STATION_DOCK[0], z + 0.5 - STATION_DOCK[1]) < DOCK_R;
     Object.assign(out, { height: on ? STATION_Y : 0, hf: on ? STATION_Y : 0, biome: BIOME.PLAINS, temp: 0.6, hum: 0.3, mountain: 0, river: 0, cont: 0 });
     return out;
   }
@@ -431,7 +485,8 @@ export class StationGenerator {
   generateChunk(cx, cz) {
     const blocks = new Uint8Array(CS * CS * H);
     const x0 = cx * CS, z0 = cz * CS;
-    if (x0 > STATION_R || x0 + CS < -STATION_R || z0 > STATION_R || z0 + CS < -STATION_R) return blocks;
+    const zMax = STATION_DOCK[1] + DOCK_R;
+    if (x0 > DOCK_R || x0 + CS < -DOCK_R || z0 > zMax || z0 + CS < -STATION_R) return blocks;
     for (let lz = 0; lz < CS; lz++) for (let lx = 0; lx < CS; lx++) {
       for (let y = STATION_Y - 12; y <= STATION_Y + 17; y++) {
         const b = stationBlock(x0 + lx, y, z0 + lz);

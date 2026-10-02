@@ -2,6 +2,7 @@
 // Everything is synthesised with WebAudio, no sample files.
 
 import { playThroughSilentSwitch } from './audiosession.js';
+import { installSaucerSound } from './saucersound.js';
 
 const MATERIAL = {
   stone: { f: 1700, q: 1.1, decay: 0.13, thump: 110, gain: 0.55 },
@@ -313,46 +314,6 @@ export class Audio {
     }
   }
 
-  // A flying saucer's engine: a deep roar with the thrust (lift-off is loud), and under it the
-  // saucer's own wavering hum while it is running. Both 0: quiet.
-  setEngine(thrust, hum = 0) {
-    if (!this.ctx) return;
-    const c = this.ctx;
-    if (!this.eng && (thrust > 0.01 || hum > 0.01)) {
-      const src = c.createBufferSource();
-      src.buffer = this.noiseBuf;
-      src.loop = true;
-      const lp = c.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 160; lp.Q.value = 0.9;
-      const g = c.createGain();
-      g.gain.value = 0;
-      src.connect(lp).connect(g).connect(this.master);
-      src.start();
-      const osc = c.createOscillator();
-      osc.type = 'sawtooth'; osc.frequency.value = 70;
-      const of = c.createBiquadFilter();
-      of.type = 'lowpass'; of.frequency.value = 340;
-      const og = c.createGain();
-      og.gain.value = 0;
-      const lfo = c.createOscillator();
-      lfo.frequency.value = 5.5;
-      const lg = c.createGain();
-      lg.gain.value = 3;
-      lfo.connect(lg).connect(osc.frequency);
-      osc.connect(of).connect(og).connect(this.master);
-      osc.start();
-      lfo.start();
-      this.eng = { lp, g, osc, og };
-    }
-    if (this.eng) {
-      const t = c.currentTime, e = this.eng;
-      e.g.gain.setTargetAtTime(Math.min(0.85, thrust * 0.85), t, 0.12);
-      e.lp.frequency.setTargetAtTime(130 + thrust * 560, t, 0.2);
-      e.og.gain.setTargetAtTime(Math.min(0.1, hum * 0.1), t, 0.3);
-      e.osc.frequency.setTargetAtTime(62 + hum * 26 + thrust * 46, t, 0.4);
-    }
-  }
-
   startAmbient() {
     const c = this.ctx;
     // wind: filtered looping noise with slow gusts
@@ -430,3 +391,6 @@ export class Audio {
 export function materialOf(block) {
   return block && block.sound ? block.sound : 'stone';
 }
+
+// (a flying saucer's engines, lift-off and landing: setEngine, saucerSpool, saucerIgnite, saucerThud)
+installSaucerSound(Audio);

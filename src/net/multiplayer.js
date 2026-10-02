@@ -5,7 +5,7 @@
 
 import { NetClient, serverUrl } from './net.js';
 import { SAUCER_FLAGS } from '../game/saucer.js';
-import { SAUCER_SEAT } from '../render/saucer.js';
+import { seatAt, SEAT_H } from '../sim/saucerform.js';
 import { Voice } from './voice.js';
 import { RemoteMob, MOB_TYPES, mobSnapshot } from '../sim/remote.js';
 import { loadEntity } from '../sim/containers.js';
@@ -406,6 +406,18 @@ export function installMultiplayer(Game) {
       // someone in another dimension is nowhere near us, whatever their coordinates say
       p.rec.pos = (p.dim | 0) === (this.dimension | 0) ? p.pos.slice() : [0, -1000, 0];
     }
+    // villagers sitting in someone's saucer as it flies: in their seats where we see it now (what
+    // its pilot reports of them lags behind it, and in space is in their frame, not ours)
+    for (const g of mp.ghosts.values()) {
+      if (g.seat === null || g.seat === undefined || g.removed) continue;
+      const p = mp.players.get(g.owner);
+      if (!p || !p.pos || !(p.flags & FLAG.SAUCER) || (p.dim | 0) !== (this.dimension | 0)) { g.pinned = 0; continue; }
+      const s = seatAt(p.pos, p.yaw, g.seat);
+      g.body.pos = [s.pos[0], s.pos[1] + SEAT_H - 0.375, s.pos[2]];
+      g.prevPos = g.body.pos.slice();
+      g.yaw = g.prevYaw = g.goalYaw = g.headYaw = g.goalHeadYaw = s.yaw;
+      g.pinned = 0.3;
+    }
     // voice: loudness by distance, a few times a second
     mp.voiceTimer -= dt;
     if (this.voice && mp.voiceTimer <= 0) {
@@ -559,7 +571,8 @@ export function installMultiplayer(Game) {
       const by = p.carriedBy === 'local' ? this.player : p.carriedBy ? mp.players.get(p.carriedBy) : null;
       // (flying a saucer: sitting in its dome)
       if (p.flags & FLAG.SAUCER) {
-        out.push({ id: p.id, pos: [p.pos[0], p.pos[1] + SAUCER_SEAT - 0.55, p.pos[2]], yaw: p.yaw, headYaw: p.yaw, headPitch: 0, skin: p.skin, held: 0, armor: p.armor, sitting: true, walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, offhand: 0 });
+        const s = seatAt(p.pos, p.yaw, 'pilot');
+        out.push({ id: p.id, pos: [s.pos[0], s.pos[1] + SEAT_H - 0.55, s.pos[2]], yaw: s.yaw, headYaw: s.yaw, headPitch: 0, skin: p.skin, held: 0, armor: p.armor, sitting: true, walkPhase: 0, walkAmount: 0, swing: 0, hurtTime: 0, deathTime: 0, offhand: 0 });
         continue;
       }
       out.push({

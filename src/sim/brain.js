@@ -555,6 +555,8 @@ const L = {
       arrive: ['我们到{place}啦？我要跟全村人讲！', '这里的地面怎么是这个颜色……', '{player}，你真了不起！'],
       home: ['终于回家了！还是地球最好。', '回来啦！我要跟全村讲我去过太空！', '{player}，下次还带我去！'],
       stay: ['飞碟？我、我还是在这儿等你吧！', '我恐高，就在下面看着你飞！'],
+      board: ['哇，这么大的飞碟！我可以坐窗边吗？', '{player}，你要带我上天？太好了！', '我还是第一次坐飞碟，好紧张啊……'],
+      off: ['这就是{place}？那我就在这儿住下啦！', '新家！不知道这里能种些什么……', '谢谢你带我来，{player}！'],
     },
     treasureNone: ['附近？除了田就是树，没听说有什么好玩的地方。', '我从没出过村子，外面有什么我可不知道。'],
   },
@@ -604,6 +606,8 @@ const L = {
       arrive: ['Are we on {place}? Wait till I tell the village!', 'Why is the ground that colour here...', '{player}, you\'re amazing!'],
       home: ['Home at last! There\'s nowhere like the Earth.', 'We\'re back! Wait till the village hears I\'ve been to space!', '{player}, take me again next time!'],
       stay: ['A flying saucer? I-I\'ll wait for you here!', 'I\'m scared of heights. I\'ll watch from down here!'],
+      board: ['What a huge saucer! Can I sit by the window?', '{player}, you\'re taking me up to the sky? Wonderful!', 'My first time in a flying saucer... I\'m a bit nervous.'],
+      off: ['So this is {place}? I\'ll make my home here, then!', 'A new home! I wonder what grows here...', 'Thank you for bringing me, {player}!'],
     },
     treasureNone: ['Round here? Fields and trees. Never heard of anything worth seeing.', 'I\'ve never been out of the village. No idea what\'s out there.'],
   },
@@ -639,7 +643,7 @@ export function offlineReply(input) {
   if (event === 'deliver' && q) return say(T.deliver, 'happy', null, { count: q.count, want: stuffName(q.want, lang), rewardCount: q.rewardCount, reward: stuffName(q.reward, lang) });
   if (event === 'trip') {
     const [stage, to] = tripOf(input.itemName);
-    return say(T.trip[stage], stage === 'stay' ? 'scared' : stage === 'home' ? 'happy' : 'surprised', null, { place: TRIP_PLACES[to] ? TRIP_PLACES[to][zh ? 0 : 1] : '' });
+    return say(T.trip[stage], stage === 'stay' ? 'scared' : stage === 'home' || stage === 'board' ? 'happy' : 'surprised', null, { place: TRIP_PLACES[to] ? TRIP_PLACES[to][zh ? 0 : 1] : '' });
   }
   const intent = intentOf(line);
   const night = ctx.phase === 'night' || ctx.time === '晚上' || ctx.time === 'night';
@@ -705,7 +709,7 @@ export function offlineReply(input) {
 }
 
 // A trip in a flying saucer, as a game tells a villager carried along of it: 'stage:where'.
-export const TRIP_STAGES = ['lift', 'space', 'arrive', 'home', 'stay'];
+export const TRIP_STAGES = ['lift', 'space', 'arrive', 'home', 'stay', 'board', 'off'];
 const TRIP_PLACES = { earth: ['地球', 'the Earth'], moon: ['月球', 'the Moon'], mars: ['火星', 'Mars'], jupiter: ['木星的空间站', 'the Jupiter station'], saturn: ['土星的空间站', 'the Saturn station'] };
 export function tripOf(s) {
   const [stage, to] = String(s || '').split(':');
@@ -715,8 +719,8 @@ export function tripNote(s, who, lang) {
   const [stage, to] = tripOf(s);
   const zh = lang === 'zh';
   const place = TRIP_PLACES[to][zh ? 0 : 1];
-  if (zh) return { lift: `${who}抱着你坐进了一个会飞的大飞碟，正喷着火往天上飞，要去${place}`, space: `你们坐着飞碟飞出了天空，到了漆黑的太空里，能看见整个世界变成一个大球，正在去${place}的路上`, arrive: `飞碟刚刚降落在${place}，你是第一个来这里的村民`, home: `你们坐着飞碟从太空回到了地球，刚刚降落`, stay: `${who}要坐飞碟去${place}，想带上你` }[stage];
-  return { lift: `${who} is carrying you in a great flying saucer, roaring up into the sky with fire under it, on the way to ${place}`, space: `the saucer has flown right out of the sky into the black of space; you can see the whole world as a ball, on the way to ${place}`, arrive: `the saucer has just landed on ${place}; you are the first villager ever to come here`, home: `the saucer has brought you back from space to the Earth; it has just landed`, stay: `${who} wants to take you with them in a flying saucer to ${place}` }[stage];
+  if (zh) return { lift: `你坐在${who}的巨大飞碟里，它正喷着火往天上飞，要去${place}`, space: `你们坐着飞碟飞出了天空，到了漆黑的太空里，能看见整个世界变成一个大球，正在去${place}的路上`, arrive: `飞碟刚刚降落在${place}，你是第一个来这里的村民`, home: `你们坐着飞碟从太空回到了地球，刚刚降落`, stay: `${who}要坐飞碟去${place}，想带上你`, board: `${who}邀请你坐上一艘巨大的飞碟，一道光束刚刚把你接上了船，你坐在玻璃穹顶下的座位上`, off: `你坐着${who}的飞碟来到了${place}，刚刚下了船，打算在这里住下来` }[stage];
+  return { lift: `you are aboard ${who}'s great flying saucer, roaring up into the sky with fire under it, on the way to ${place}`, space: `the saucer has flown right out of the sky into the black of space; you can see the whole world as a ball, on the way to ${place}`, arrive: `the saucer has just landed on ${place}; you are the first villager ever to come here`, home: `the saucer has brought you back from space to the Earth; it has just landed`, stay: `${who} wants to take you with them in a flying saucer to ${place}`, board: `${who} has invited you aboard a huge flying saucer; a beam of light has just lifted you up to a seat under its glass dome`, off: `you have come to ${place} in ${who}'s flying saucer and just got off; you mean to make your home here` }[stage];
 }
 
 // How what was said or done changes a villager's feelings.

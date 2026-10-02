@@ -315,6 +315,8 @@ export class UI {
     click('btn-saucer-exit', 'saucerExit');
     click('btn-saucer-fuel', 'saucerFuel');
     click('btn-saucer-fly', 'saucerFly');
+    click('btn-saucer-invite', 'saucerInvite');
+    click('btn-saucer-unload', 'saucerUnload');
     $('btn-saucer-go').addEventListener('click', () => {
       this.emit('click');
       const c = this.saucerChoice;
@@ -842,6 +844,13 @@ export class UI {
     }
     $('saucer-custom').hidden = !c.custom;
     if (c.custom) { $('saucer-custom-range').value = String(c.secs); $('saucer-custom-text').textContent = this.tripTime(c.secs); }
+    // who is aboard: villagers asked aboard (or let off) while it stands landed
+    const aboard = (info.crew || 0) + (info.players || 0);
+    $('saucer-crew-text').textContent = t('saucer.crew.count', { n: aboard, max: info.seats || 16, v: info.crew || 0 });
+    $('btn-saucer-invite').hidden = !info.landed;
+    $('btn-saucer-invite').disabled = !info.nearVillagers || aboard >= (info.seats || 16);
+    $('btn-saucer-invite').textContent = t('saucer.crew.invite') + (info.nearVillagers ? ' (' + info.nearVillagers + ')' : '');
+    $('btn-saucer-unload').hidden = !info.landed || !info.crew;
     // (in the air, flying it ourselves: no climbing out; carry on, or let the autopilot take over)
     $('btn-saucer-exit').hidden = !!info.flying;
     $('btn-saucer-fly').textContent = t(info.flying ? 'saucer.flyOn' : 'saucer.fly');

@@ -83,7 +83,8 @@ export const MOBS = {
   boat: { vehicle: 'boat', hw: 0.7, h: 0.56, eye: 0.3, health: 3, seat: 0.25, drops: [[ITEM.OAK_BOAT, 1, 1]] },
   minecart: { vehicle: 'minecart', hw: 0.49, h: 0.7, eye: 0.35, health: 4, seat: 0.35, drops: [[ITEM.MINECART, 1, 1]] },
   // (parked: flown, it is part of its pilot; see game/saucer.js)
-  saucer: { vehicle: 'saucer', persistent: true, hw: 1.5, h: 1.6, eye: 1.2, health: 16, seat: 1.8, drops: [[ITEM.FLYING_SAUCER, 1, 1]] },
+  // (it stays exactly where it stands: sim/saucerform.js has its shape, for the crosshair)
+  saucer: { vehicle: 'saucer', persistent: true, fixed: true, hw: 1.5, h: 1.6, eye: 1.2, health: 40, seat: 1.8, drops: [[ITEM.FLYING_SAUCER, 1, 1]] },
   tnt: { fixed: true, invulnerable: true, hw: 0.49, h: 0.98, eye: 0.5, health: 1, drops: [] },
   evoker_fangs: { fixed: true, invulnerable: true, hw: 0.25, h: 0.8, eye: 0.4, health: 1, drops: [] },
 };
@@ -510,6 +511,13 @@ export class Mob extends Entity {
       b.vel[0] = b.vel[1] = b.vel[2] = 0;
       this.walkPhase += TICK * 3;
       this.walkAmount = 0.25;
+      this.fallStart = null;
+      return;
+    }
+    // sitting aboard a flying saucer: placed in its seat each frame (game/saucer.js)
+    if (this.aboard) {
+      b.vel[0] = b.vel[1] = b.vel[2] = 0;
+      this.walkAmount = 0;
       this.fallStart = null;
       return;
     }

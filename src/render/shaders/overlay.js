@@ -96,6 +96,8 @@ void main() {
     if (a < 0.01) discard;
     float sky = vLight.x;
     vec3 light = uSkyColor.rgb * (0.35 + 0.65 * sky) + uLightColor.rgb * max(uLightDir.y, 0.0) * sky * 0.8 + 0.02;
+    // (lit from below by a fire: a flying saucer's engines; vLight.y how much)
+    light += vec3(1.0, 0.38, 0.1) * vLight.y * 2.0;
     vec3 col = srgbToLinear(vTint.rgb) * light;
     oColor = vec4(col * a, a);
     return;

@@ -25,7 +25,8 @@ export function mobFlags(e) {
 
 // Snapshot of one of our own creatures for the other players:
 // [id, type, x, y, z (1/16 block), yaw, head yaw (1/100 rad), flags, variant, fuse (1/10 s)]
-// and for a villager also [uid, trade seed]: who it is (to talk to it) and what it sells
+// and for a villager also [uid, trade seed]: who it is (to talk to it) and what it sells, and
+// [seat] when it sits in the flying saucer its owner is flying
 export function mobSnapshot(e) {
   const b = e.body;
   const s = [e.id, MOB_TYPES.indexOf(e.type), Math.round(b.pos[0] * 16), Math.round(b.pos[1] * 16), Math.round(b.pos[2] * 16),
@@ -33,6 +34,8 @@ export function mobSnapshot(e) {
   if (e.type === 'villager') {
     if (!e.tradeSeed) e.tradeSeed = (Math.random() * 2 ** 31) | 0; // (as its first look at its trades would)
     s.push(e.uid || '', e.tradeSeed);
+    // (sitting in the saucer its owner flies: which seat, to keep it there as the saucer moves)
+    if (e.aboard && e.inRide && Number.isInteger(e.aboard.seat)) s.push(e.aboard.seat);
   }
   return s;
 }
@@ -67,6 +70,8 @@ export class RemoteMob {
     this.mode = 'idle';
     this.swing = 0;
     this.flags = 0;
+    this.seat = null; // (sitting in a saucer flying by, and in which seat: see Game.updateNet)
+    this.pinned = 0;
     this.renderScale = 1;
     this.health = d.health;
     this.age = 0;
@@ -81,7 +86,10 @@ export class RemoteMob {
   apply(s) {
     const x = s[2] / 16, y = s[3] / 16, z = s[4] / 16;
     const p = this.body.pos;
-    if (!this.goal || Math.abs(x - p[0]) + Math.abs(y - p[1]) + Math.abs(z - p[2]) > 12) {
+    this.seat = Number.isInteger(s[12]) && s[12] >= 0 && s[12] < 64 ? s[12] : null;
+    this.aboard = this.seat !== null;
+    // (in a seat of a saucer flying by it is placed there each frame instead: see Game.updateNet)
+    if (!(this.pinned > 0) && (!this.goal || Math.abs(x - p[0]) + Math.abs(y - p[1]) + Math.abs(z - p[2]) > 12)) {
       p[0] = x; p[1] = y; p[2] = z;
       this.prevPos = p.slice();
       this.yaw = this.prevYaw = s[5] / 100;
@@ -118,6 +126,12 @@ export class RemoteMob {
     this.prevPos[0] = p[0]; this.prevPos[1] = p[1]; this.prevPos[2] = p[2];
     this.prevYaw = this.yaw;
     if (this.carriedBy) { this.stale = 0; return; } // (in someone's arms: placed there each frame)
+    if (this.pinned > 0) { // (in a seat of a saucer flying by: placed there each frame)
+      this.pinned -= TICK;
+      this.walkAmount = 0;
+      if (this.stale > 1.5) this.removed = true;
+      return;
+    }
     if (this.goal) {
       const k = 0.35;
       const dx = (this.goal[0] - p[0]) * k, dz = (this.goal[2] - p[2]) * k;

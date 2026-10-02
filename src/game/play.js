@@ -799,6 +799,8 @@ export function installPlay(Game) {
     const self = this.state !== 'title' && this.state !== 'boot' ? this.localPlayerModel() : null;
     if (self) players.push(self);
     const saucers = this.saucerModels();
+    // (how much a saucer's fire is dimmed for an eye set for the dark: see Renderer.bindPointLights)
+    this.entityMesh.eye = this.renderer && this.renderer.eyeScale !== undefined ? this.renderer.eyeScale : 1;
     return this.entityMesh.build(this.sim, this.camera.pos, this.sim.alpha || 0, this.world, performance.now() / 1000, 96, players.length ? players : null, this.visibleSigns(this.camera.pos), this.rodTip(), saucers.length ? saucers : null);
   };
 

@@ -18,7 +18,8 @@ export const BREED_FOOD = {
   wolf: [ITEM.RAW_BEEF, ITEM.COOKED_BEEF, ITEM.RAW_PORKCHOP, ITEM.COOKED_PORKCHOP, ITEM.RAW_CHICKEN, ITEM.COOKED_CHICKEN, ITEM.RAW_MUTTON, ITEM.COOKED_MUTTON, ITEM.ROTTEN_FLESH],
   cat: [ITEM.RAW_COD, ITEM.RAW_SALMON], horse: [ITEM.GOLDEN_CARROT, ITEM.GOLDEN_APPLE],
 };
-const PERSIST_FIELDS = ['tamed', 'sitting', 'saddled', 'sheared', 'growth', 'home', 'trades', 'tradeSeed', 'tradeDay', 'stats', 'temper', 'size', 'persistent', 'love', 'fuel'];
+// (a saucer's fuel, how far its legs reach down, and the villagers aboard it)
+const PERSIST_FIELDS = ['tamed', 'sitting', 'saddled', 'sheared', 'growth', 'home', 'trades', 'tradeSeed', 'tradeDay', 'stats', 'temper', 'size', 'persistent', 'love', 'fuel', 'feet', 'crew'];
 
 export function installCreaturePlay(Game) {
   const P = Game.prototype;
@@ -237,6 +238,8 @@ export function installCreaturePlay(Game) {
   // the creatures that should outlive being far away (villagers, pets, what was bred or ridden)
   P.keepsCreature = function keepsCreature(e) {
     if (e.type === 'end_crystal' || e.type === 'ender_dragon' || e.type === 'tnt' || e.type === 'evoker_fangs') return false;
+    // (a villager aboard a flying saucer is kept with the saucer, wherever it goes)
+    if (e.aboard) return false;
     return !!(e.persistent || e.tamed || e.def.persistent || e.def.vehicle);
   };
 

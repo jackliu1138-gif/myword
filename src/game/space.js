@@ -18,7 +18,7 @@ import {
   placeOn, blendFrame, toC, fromC, v3, bodyPos, toBody, fromBody, carryWeight, relFrame, orthonormal,
 } from '../world/space.js';
 import { SEA_LEVEL } from '../world/blocks.js';
-import { STATION_Y, STATION_PAD } from '../world/planets.js';
+import { STATION_Y, STATION_PAD, STATION_DOCK } from '../world/planets.js';
 import { PlanetMaps } from './planetmaps.js';
 import { projectToScreen } from '../net/multiplayer.js';
 import { t } from '../ui/i18n.js';
@@ -173,7 +173,9 @@ export function installSpace(Game) {
       const [x, y, z] = cam.pos;
       const bf = bodyFrame(body, T);
       const [lon, lat] = worldToLonLat(body, x, z);
-      const pl = positionOn(body, lon, lat, y - this.bodyBase(body), T, bf);
+      // (in a crater or a canyon, below the body's datum: its sphere would be over our heads, so
+      // the view from on high is drawn from just over it)
+      const pl = positionOn(body, lon, lat, Math.max(2, y - this.bodyBase(body)), T, bf);
       pos = pl.pos;
       local = pl.local;
       ef = this.earthFrameNow(T);
@@ -294,9 +296,11 @@ export function installSpace(Game) {
     r.alt = Math.max(80, Math.min(BODIES[body].top - LAND_MARGIN, r.alt));
     const station = !!BODIES[body].station;
     if (station) {
-      // (no ground to come down to: the station's beacon guides you to it)
+      // (no ground to come down to: the station's beacon guides you to it; a saucer, over its
+      // docking deck)
       const [lon, lat] = BODIES[body].station;
-      Object.assign(r, { x: STATION_PAD[0] + 0.5, z: STATION_PAD[1] + 0.5, alt: STATION_Y + STATION_ARRIVE - this.bodyBase(body), local: localFrame(bf, lon, lat) });
+      const at = this.ride ? STATION_DOCK : STATION_PAD;
+      Object.assign(r, { x: at[0] + 0.5, z: at[1] + 0.5, alt: STATION_Y + STATION_ARRIVE - this.bodyBase(body), local: localFrame(bf, lon, lat) });
     }
     const fwd = fromC(r.local, toC(s.frame, p.forward()));
     const vel = fromC(r.local, toC(s.frame, p.vel));

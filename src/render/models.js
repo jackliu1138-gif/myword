@@ -712,6 +712,11 @@ function pose(e, type, t) {
     r.rightArm = [(r.rightArm ? r.rightArm[0] : 0) + 0.63, 0, 0.05];
     r.leftArm = [(r.leftArm ? r.leftArm[0] : 0) + 0.63, 0, -0.05];
   }
+  // a villager in its seat (aboard a flying saucer): legs out in front, hands in its lap
+  if (type === 'villager' && (e.sitting || (e.flags & 256))) {
+    r.rightLeg = [1.41, Math.PI / 14, 0];
+    r.leftLeg = [1.41, -Math.PI / 14, 0];
+  }
   if (type === 'player' && e.gliding) { r.rightArm = [0.1, 0, -0.35]; r.leftArm = [0.1, 0, 0.35]; r.rightLeg = [0.05, 0, 0.06]; r.leftLeg = [0.05, 0, -0.06]; }
   if ((type === 'player' || type === 'zombie' || type === 'skeleton') && e.blocking) r.leftArm = [1.1, 0.5, 0];
   // carried in someone's arms (see carry.js): knees over their arm, legs kicking a little, hands

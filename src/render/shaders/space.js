@@ -598,11 +598,13 @@ vec4 marsAir(vec3 ro, vec3 dir, vec3 sun, float tEnd, out vec3 trans) {
     float dt = tb2 - ta2;
     vec3 p = rel + dir * (0.5 * (ta2 + tb2));
     float r = length(p);
-    float dens = exp(-(r - R) / H);
+    // (never more than a few times the ground's density: a ray from a camera below the datum
+    // would otherwise go through the planet's middle, where exp() overflows)
+    float dens = exp(-max(r - R, -3.0 * H) / H);
     float muS = dot(p / r, sun);
     float lit = smoothstep(-0.12, 0.06, muS);
     // sunlight through the dust above this point: redder and dimmer as the sun gets low
-    float tauSun = 0.5 * exp(-(r - R) / H) / max(muS + 0.12, 0.04);
+    float tauSun = 0.5 * dens / max(muS + 0.12, 0.04);
     vec3 tsun = exp(-tauSun * vec3(0.75, 1.0, 1.35));
     float dTau = dens * dt / TAU0;
     // (the dust's forward scattering favours blue: a blue glow round a setting sun)
@@ -642,7 +644,7 @@ vec4 giantAir(int i, vec3 dir, vec3 sun, float tEnd, out vec3 trans) {
     float dt = tb2 - ta2;
     vec3 p = rel + dir * (0.5 * (ta2 + tb2));
     float r = length(p);
-    float dens = exp(-(r - R) / H);
+    float dens = exp(-max(r - R, -3.0 * H) / H);
     float muS = dot(p / r, sun);
     float lit = smoothstep(-0.12, 0.08, muS);
     float tauSun = 0.35 * dens / max(muS + 0.1, 0.04);
@@ -733,6 +735,9 @@ void main() {
     vec3 ins = texture(uSpaceLut, skyViewUV(r, vz, lightViewCos)).rgb;
     col = col * T + ins;
   }
-  oColor = vec4(col, 1.0);
+  // (whatever happens above, never a NaN or an infinity: the ground's haze is mixed with this,
+  // and one bad value would blacken everything looking that way)
+  if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
+  oColor = vec4(min(col, vec3(6.0e4)), 1.0);
 }
 `;

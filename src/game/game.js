@@ -436,6 +436,8 @@ export class Game {
     ui.on('saucerChoice', (c) => { this.saucerChoice = c; if (this.ride) this.ui.renderSaucer(this.saucerPanelInfo(), c); });
     ui.on('saucerFuel', () => this.saucerFuelUp());
     ui.on('saucerFly', () => this.flySaucer());
+    ui.on('saucerInvite', () => this.inviteVillagers());
+    ui.on('saucerUnload', () => this.unloadVillagers());
     ui.on('saucerClose', () => this.closeSaucerPanel());
     ui.on('saucerExit', () => { this.closeSaucerPanel(); this.leaveSaucer(); });
     ui.on('saucerZoom', (k) => this.saucerZoom(k));
@@ -769,7 +771,9 @@ export class Game {
       this.titleAnchor = this.player.pos.slice();
       this.spawnPending = false;
     }
-    if (playing && ready && !this.spawnPending && !this.arrival && !this.sleeping) {
+    // (a saucer on autopilot follows its course whether or not the ground under it is there yet)
+    const scripted = this.ride && this.ride.phase !== 'manual' && this.ride.phase !== 'landed';
+    if (playing && (ready || scripted) && !this.spawnPending && !this.arrival && !this.sleeping) {
       // fixed sub-steps keep movement identical at any frame rate
       let rem = dt;
       while (rem > 1e-6) {
@@ -783,6 +787,8 @@ export class Game {
         ctl.jumpPressed = false;
         rem -= step;
       }
+      // (the villagers aboard our saucer: in their seats where it has got to)
+      if (this.ride) this.updateCrew();
     }
 
     // creatures, items, arrows, health; then what the other players need to know
@@ -814,8 +820,10 @@ export class Game {
     this.updatePrecipitation(dt, cam);
     this.updateSpaceView();
 
-    // streaming and mesh uploads; liquids flow
-    this.world.update(cam.pos[0], cam.pos[2], cam.forward[0], cam.forward[2]);
+    // streaming and mesh uploads; liquids flow (aboard a flying saucer: round the saucer, which
+    // the camera looks at from up to hundreds of blocks off, not round the camera)
+    const near = this.ride || this.passengerOf ? this.player.pos : cam.pos;
+    this.world.update(near[0], near[2], cam.forward[0], cam.forward[2]);
     if (this.state !== 'paused' || this.mp) this.world.updateFluids(dt);
     this.uploadMeshes();
     this.updateLoading();
@@ -1156,11 +1164,15 @@ export class Game {
       camera: cam,
       chunks: this.world.chunks.values(),
       renderDistance: this.world.renderDistance,
+      // (aboard a flying saucer the world is loaded round it, not round the camera)
+      fogCenter: this.ride || this.passengerOf ? this.player.pos.slice() : null,
       dayTime: this.dayTime,
       // the Moon goes round in eight days, full on the first night (world/space.js)
       moonPhase: moonPhase(this.spaceTime()),
       sky: this.skyState(cam),
       fog,
+      // (a flying saucer's engines light up the ground round them)
+      lights: this.saucerLights ? this.saucerLights(cam) : null,
       underwater: this.state === 'playing' && this.player.headInWater,
       waterDepth: this.player.headInWater ? this.waterDepthAbove() : 0,
       eyeSky: this.eyeSky,

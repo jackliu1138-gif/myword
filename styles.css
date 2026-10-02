@@ -1107,6 +1107,8 @@ body:has(.bossbar:not([hidden])) #toast { top: calc(58px + env(safe-area-inset-t
 .saucer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .saucer-label { margin: 4px 0 0; font: 600 12px/1.2 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
 .saucer-fuel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 12px; }
+.saucer-crew { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; font-size: 13px; }
+.saucer-crew > span { flex: 1 1 160px; opacity: 0.9; }
 .saucer-fuel .fuel-meta { display: grid; gap: 2px; }
 .saucer-fuel .fuel-meta b { font: 700 14px/1.2 var(--font-ui); }
 .saucer-fuel .fuel-meta .hint { font-size: 12px; }

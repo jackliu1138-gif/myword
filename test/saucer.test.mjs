@@ -11,13 +11,16 @@ import { join } from 'node:path';
 import * as S from '../src/world/space.js';
 import { tripCost, cruisePoint, installSaucer, SAUCER_DESTS, SAUCER_FLAGS } from '../src/game/saucer.js';
 import { createGenerator, generate, DIM } from '../src/world/dimensions.js';
-import { STATION_Y, STATION_PAD } from '../src/world/planets.js';
+import { STATION_Y, STATION_DOCK, DOCK_R, PAD_R } from '../src/world/planets.js';
+import * as F from '../src/sim/saucerform.js';
 import { BLOCK } from '../src/world/blocks.js';
 import { ITEM, saucerFuel, SAUCER_TANK, RECIPES } from '../src/sim/items.js';
 import { offlineReply, tripNote, TRIP_STAGES, personaFor, newRecord } from '../src/sim/brain.js';
 import { t } from '../src/ui/i18n.js';
 import '../src/ui/strings5.js';
 import { startServer, PROTOCOL } from '../server/server.mjs';
+import { RemoteMob, mobSnapshot, mobFlags } from '../src/sim/remote.js';
+import { TICK } from '../src/sim/entities.js';
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const ARRIVE_BELOW_TOP = 170; // (as in saucer.js: arriving a little under where a world takes over)
@@ -99,13 +102,16 @@ test('launch pads: a flat, clear deck in the middle of the Moon and Mars, where 
       };
       const py = g.padHeight();
       assert.equal(at(0, py, 0), BLOCK.SEA_LANTERN, body + ': the glowing middle');
-      for (const [x, z] of [[3, 0], [-3, 2], [0, -4], [2, 3]]) assert.equal(at(x, py, z), BLOCK.SMOOTH_STONE, body + ': the deck');
-      assert.equal(at(-6, py, 0), BLOCK.YELLOW_WOOL, body + ': the ring');
-      for (let x = -7; x <= 7; x++) {
-        for (let z = -7; z <= 7; z++) {
-          if (Math.hypot(x, z) > 7) continue;
+      for (const [x, z] of [[7, 2], [-8, -3], [2, 11], [12, -4]]) assert.equal(at(x, py, z), BLOCK.SMOOTH_STONE, body + ': the deck at ' + x + ', ' + z);
+      assert.equal(at(-18, py, 0), BLOCK.YELLOW_WOOL, body + ': the ring the feet stand on');
+      assert.equal(at(33, py, 0), BLOCK.YELLOW_WOOL, body + ': the edge');
+      // wide enough for the whole saucer, its rim and its feet, and clear high over it
+      assert.ok(PAD_R > F.RIM + 4 && PAD_R > F.FOOT_R + 4);
+      for (let x = -PAD_R; x <= PAD_R; x++) {
+        for (let z = -PAD_R; z <= PAD_R; z++) {
+          if (Math.hypot(x + 0.5, z + 0.5) > PAD_R - 0.5) continue;
           assert.ok(at(x, py, z) && at(x, py - 1, z), `${body}: solid under the deck at ${x}, ${z}`);
-          for (let y = py + 1; y <= py + 12; y++) assert.equal(at(x, y, z), 0, `${body}: clear over the deck at ${x}, ${y}, ${z}`);
+          for (let y = py + 1; y <= py + F.TOP + 4; y++) assert.equal(at(x, y, z), 0, `${body}: clear over the deck at ${x}, ${y}, ${z}`);
         }
       }
       // the game's idea of where its pad is: the same place
@@ -117,11 +123,31 @@ test('launch pads: a flat, clear deck in the middle of the Moon and Mars, where 
       assert.deepEqual([pad.x, pad.y, pad.z], [0.5, py + 1, 0.5]);
     }
   }
+  // the stations: a docking deck of their own beside them, joined to them by a bridge
+  for (const dim of [DIM.JUPITER, DIM.SATURN]) {
+    const g = createGenerator(5, dim, 2);
+    const chunks = new Map();
+    const at = (x, y, z) => {
+      const cx = Math.floor(x / 16), cz = Math.floor(z / 16), key = cx + ',' + cz;
+      if (!chunks.has(key)) chunks.set(key, generate(g, cx, cz).blocks);
+      return chunks.get(key)[(y << 8) | ((z - cz * 16) << 4) | (x - cx * 16)];
+    };
+    const [dx, dz] = STATION_DOCK;
+    assert.ok(DOCK_R > F.RIM + 3 && DOCK_R > F.FOOT_R + 4);
+    for (let x = dx - DOCK_R + 2; x <= dx + DOCK_R - 2; x += 2) {
+      for (let z = dz - DOCK_R + 2; z <= dz + DOCK_R - 2; z += 2) {
+        if (Math.hypot(x + 0.5 - dx, z + 0.5 - dz) > DOCK_R - 1.5) continue;
+        assert.ok(at(x, STATION_Y, z), `station ${dim}: the dock's deck at ${x}, ${z}`);
+        for (let y = STATION_Y + 1; y <= STATION_Y + F.TOP + 4; y++) assert.equal(at(x, y, z), 0, `station ${dim}: clear over the dock at ${x}, ${y}, ${z}`);
+      }
+    }
+    for (let z = 22; z < dz - DOCK_R + 2; z++) assert.ok(at(0, STATION_Y, z) && !at(0, STATION_Y + 1, z) && !at(0, STATION_Y + 2, z), `station ${dim}: the bridge at z ${z}`);
+  }
   class G {}
   installSaucer(G);
   const game = new G();
   game.world = { seed: 1 };
-  for (const body of ['jupiter', 'saturn']) assert.deepEqual(game.padOf(body), { x: STATION_PAD[0] + 0.5, y: STATION_Y + 1, z: STATION_PAD[1] + 0.5 });
+  for (const body of ['jupiter', 'saturn']) assert.deepEqual(game.padOf(body), { x: STATION_DOCK[0] + 0.5, y: STATION_Y + 1, z: STATION_DOCK[1] + 0.5 });
   // the Earth's pad is wherever the saucer was first set down (none yet: nowhere to go back to)
   assert.equal(game.padOf('earth'), null);
   game.ride = { home: [10.5, 70, -3.5] };
@@ -165,7 +191,8 @@ const controls = (o = {}) => ({ forward: 0, strafe: 0, jump: false, sneak: false
 function fly(g, secs, ctl, each = null) {
   for (let i = 0; i < secs * 60 && g.ride.phase === 'manual'; i++) {
     g.saucerStep(1 / 60, ctl);
-    assert.ok(!g.saucerBlocked(g.player.pos, g.ride.legs) || g.ride.phase === 'landed', 'inside something at ' + g.player.pos.map((v) => v.toFixed(2)));
+    // (being pushed up on its legs off the ground it rests on, they reach only as far as that)
+    assert.ok(!g.saucerBlocked(g.player.pos, g.ride.rising ? 0 : g.ride.legs) || g.ride.phase === 'landed', 'inside something at ' + g.player.pos.map((v) => v.toFixed(2)));
     if (each) each(g);
   }
 }
@@ -193,19 +220,20 @@ test('flying it yourself: slammed into the ground it bounces off unharmed; rough
   fly(g, 20, controls({ sneak: true }));
   assert.equal(g.ride.phase, 'landed', 'let down gently afterwards, it lands');
 
-  // steps of rock under it: down onto them, it won't land
-  const rough = flight((x, y, z) => y < FLOOR || (Math.abs(x) <= 8 && Math.abs(z) <= 8 && y < FLOOR + ((x + z) & 3)), [0.5, 80, 0.5]);
-  fly(rough, 12, controls({ sneak: true }));
+  // steps of rock under it, higher than its legs reach: down onto them, it won't land
+  const rough = flight((x, y, z) => y < FLOOR + ((((x >> 2) & 1) ^ ((z >> 2) & 1)) ? F.LEG_REACH + 2 : 0), [0.5, 100, 0.5]);
+  fly(rough, 15, controls({ sneak: true }));
   assert.equal(rough.ride.phase, 'manual');
   assert.ok(rough.toasts.includes(t('saucer.uneven')));
 });
 
 test('flying it yourself: into a wall at speed it bounces back; fast and high, not through a thin one', () => {
-  // a wall a block thick to the north (-z), from the ground up
-  const g = flight((x, y, z) => y < FLOOR || (z === -10 && y < 90), [0.5, FLOOR + 2, 0.5]);
+  // a wall a block thick to the north (-z), from the ground up, a little way beyond its rim
+  const W = -Math.ceil(F.RIM) - 8;
+  const g = flight((x, y, z) => y < FLOOR || (z === W && y < FLOOR + 40), [0.5, FLOOR + 2, 0.5]);
   let back = 0;
   fly(g, 3, controls({ forward: 1, sprint: true }), (q) => {
-    assert.ok(q.player.pos[2] > -9, 'on this side of the wall');
+    assert.ok(q.player.pos[2] - F.RIM > W, 'on this side of the wall');
     back = Math.max(back, q.player.vel[2]);
   });
   assert.ok(back > 4, 'thrown back off it');
@@ -215,11 +243,11 @@ test('flying it yourself: into a wall at speed it bounces back; fast and high, n
   // high up it goes faster (as fast as it ever goes: several blocks a step): a one-block wall
   // still stops it, from wherever it set off
   for (const z0 of [601, 603, 603.5, 604, 606]) {
-    const hi = flight((x, y, z) => y < FLOOR || (z === -10 && y >= 330 && y < 384), [0.5, 360, z0]);
+    const hi = flight((x, y, z) => y < FLOOR || (z === -10 && y >= 300 && y < 384), [0.5, 320, z0]);
     hi.bodyBase = () => -2000;
     let fastest = 0;
     fly(hi, 3, controls({ forward: 1, sprint: true }), (q) => {
-      assert.ok(q.player.pos[2] > -9, `from ${z0}: not through the wall (${q.player.pos[2].toFixed(2)})`);
+      assert.ok(q.player.pos[2] - F.RIM > -10, `from ${z0}: not through the wall (${q.player.pos[2].toFixed(2)})`);
       fastest = Math.max(fastest, -q.player.vel[2]);
     });
     assert.ok(fastest / 60 > 6.5, 'fast enough to have jumped the wall in a step: ' + fastest.toFixed(1));
@@ -268,26 +296,67 @@ test('a villager along for the ride has something to say at each stage, and the 
 });
 
 // ------------------------------------------------------------------ on a server
-test('the pilot\'s side: three seats, once each, only while landed; getting off frees the seat', () => {
+test('sixteen seats round the deck under the dome, and the pilot\'s at the front: none in another\'s way', () => {
+  assert.equal(F.SEATS.length, 16);
+  const all = [...F.SEATS, F.PILOT_SEAT];
+  for (const [x, z] of all) assert.ok(Math.hypot(x, z) < F.DOME_R - 1.2, 'under the dome: ' + x.toFixed(2) + ', ' + z.toFixed(2));
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) assert.ok(Math.hypot(all[i][0] - all[j][0], all[i][1] - all[j][1]) > 1.4, `seats ${i} and ${j} apart`);
+  // in the world: on the deck, turning with the saucer
+  const s = F.seatAt([10, 70, -4], Math.PI / 2, 'pilot');
+  assert.ok(Math.abs(s.pos[1] - (70 + F.DECK)) < 1e-9);
+  assert.ok(Math.abs(Math.hypot(s.pos[0] - 10, s.pos[2] + 4) - Math.hypot(F.PILOT_SEAT[0], F.PILOT_SEAT[1])) < 1e-9);
+  assert.ok(Math.abs(s.pos[0] - (10 - 7.4)) < 1e-9, 'the front, turned a quarter to the left');
+});
+
+test('the pilot\'s side: sixteen seats, once each, only while landed, shared with the villagers aboard; getting off frees the seat', () => {
   class G {}
   installSaucer(G);
   const g = new G();
   const sent = [];
   g.mp = { net: { send: (m) => sent.push(m) }, players: new Map([['7', { name: 'Ann' }]]) };
   g.ui = { toast() {} };
-  g.ride = { phase: 'landed', passengers: [] };
+  g.ride = { phase: 'landed', passengers: [], crew: [{ seat: 0, c: { type: 'villager', uid: 'v.a' } }, { seat: 2, c: { type: 'villager', uid: 'v.b' } }] };
   const ask = (from) => { g.onBoardMessage({ from }); return sent[sent.length - 1]; };
-  assert.deepEqual(ask('7'), { t: 'aboard', to: '7', ok: 1, seat: 0 });
-  assert.deepEqual(ask('7'), { t: 'aboard', to: '7', ok: 1, seat: 0 }, 'asked twice: the same seat');
-  assert.equal(ask('8').seat, 1);
-  assert.equal(ask('9').seat, 2);
-  assert.deepEqual(ask('10'), { t: 'aboard', to: '10', ok: 0, why: 'full' });
+  assert.deepEqual(ask('7'), { t: 'aboard', to: '7', ok: 1, seat: 1 }, 'the first seat no villager has');
+  assert.deepEqual(ask('7'), { t: 'aboard', to: '7', ok: 1, seat: 1 }, 'asked twice: the same seat');
+  assert.equal(ask('8').seat, 3);
+  for (let i = 9; i < 9 + 12; i++) assert.equal(ask(String(i)).ok, 1, 'player ' + i);
+  assert.deepEqual(ask('30'), { t: 'aboard', to: '30', ok: 0, why: 'full' });
   g.onBoardMessage({ from: '8', leave: 1 });
-  assert.equal(ask('10').seat, 1, 'a seat came free');
+  assert.equal(ask('30').seat, 3, 'a seat came free');
   g.ride.phase = 'cruise';
-  assert.equal(ask('11').why, 'flying');
+  assert.equal(ask('31').why, 'flying');
   g.ride = null;
-  assert.equal(ask('12').why, 'gone');
+  assert.equal(ask('32').why, 'gone');
+});
+
+test('on a server: a villager sitting in a saucer as it flies keeps to its seat, however late its pilot\'s reports of it come', () => {
+  // the pilot's game: the seat goes with the villager's snapshot (not for a parked saucer's crew)
+  const e = { id: 5, type: 'villager', body: { pos: [10, 90, 3] }, yaw: 0.5, headYaw: 0.5, uid: 'v.x', tradeSeed: 7, aboard: { seat: 4 }, inRide: true, sitting: true };
+  const s = mobSnapshot(e);
+  assert.equal(s[12], 4);
+  assert.ok(mobFlags(e) & 256, 'sitting');
+  assert.equal(mobSnapshot({ ...e, inRide: false }).length, 12);
+  // another's game: placed in its seat each frame, the reports (behind the saucer) don't move it
+  const g = new RemoteMob({}, 1, 'p1', 5, 'villager');
+  g.apply(s);
+  assert.deepEqual([g.seat, g.aboard], [4, true]);
+  g.body.pos = [60, 101, 40];
+  g.pinned = 0.3;
+  g.apply(s);
+  g.update();
+  assert.deepEqual(g.body.pos, [60, 101, 40], 'still in its seat');
+  // no longer placed (off the saucer): back to following the reports
+  for (let i = 0; i < 0.3 / TICK + 20; i++) g.update();
+  assert.ok(Math.hypot(g.body.pos[0] - 10, g.body.pos[2] - 3) < 1, 'to where it is reported');
+  // and gone if its owner stops reporting it, seated or not
+  g.pinned = 99;
+  for (let i = 0; i < 1.6 / TICK; i++) g.update();
+  assert.equal(g.removed, true);
+  // off the saucer again: no seat
+  const h = new RemoteMob({}, 2, 'p1', 6, 'villager');
+  h.apply(mobSnapshot({ ...e, aboard: null }));
+  assert.deepEqual([h.seat, h.aboard], [null, false]);
 });
 
 function client(port) {

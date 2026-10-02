@@ -51,10 +51,11 @@ export class Particles {
   }
 
   // A puff of smoke or dust: soft, spreading as it slows and rises, fading away (blended over the
-  // scene, not glowing). color: rgb 0..1 (lit by the sky where it is).
-  smoke(x, y, z, vx, vy, vz, color, { life = 2.5, size = 0.8, rise = 0.6, drag = 1.8 } = {}) {
+  // scene, not glowing). color: rgb 0..1 (lit by the sky where it is); glow: lit from below by a
+  // fire as well, this much (fading as it drifts off).
+  smoke(x, y, z, vx, vy, vz, color, { life = 2.5, size = 0.8, rise = 0.6, drag = 1.8, glow = 0 } = {}) {
     if (this.list.length > 2400) return;
-    this.list.push({ kind: 'smoke', x, y, z, vx, vy, vz, life, max: life, size, grow: size * 1.6, color, rise, drag, sky: 1, block: 0, layer: 0, u: 0, v: 0, angle: Math.random() * 6.28, spin: (Math.random() - 0.5) * 0.6 });
+    this.list.push({ kind: 'smoke', x, y, z, vx, vy, vz, life, max: life, size, grow: size * 1.6, color, rise, drag, sky: 1, block: 0, glow, layer: 0, u: 0, v: 0, angle: Math.random() * 6.28, spin: (Math.random() - 0.5) * 0.6 });
   }
 
   // A firework's burst: a ball of stars in its colours that fall and fade, with a few crackles.

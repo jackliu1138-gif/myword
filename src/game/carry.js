@@ -6,7 +6,7 @@
 // Installed as methods on Game.prototype.
 
 import { t, getLanguage } from '../ui/i18n.js';
-import { SAUCER_SEAT } from '../render/saucer.js';
+import { seatAt, SEAT_H } from '../sim/saucerform.js';
 import { remember, befriend } from '../sim/brain.js';
 
 export const CARRY_RANGE = 3.2;
@@ -196,7 +196,7 @@ export function installCarry(Game) {
         const e = c.e;
         if (e.removed || e.deathTime > 0 || !this.sim.entities.has(e.id)) this.carrying = null;
         // (in a flying saucer: in our arms where we sit, in its dome)
-        else if (this.ride) this.holdAt(e, [p.pos[0], p.pos[1] + SAUCER_SEAT - 0.55, p.pos[2]], this.ride.yaw);
+        else if (this.ride) { const s = seatAt(p.pos, this.ride.yaw, 'pilot'); this.holdAt(e, [s.pos[0], s.pos[1] + SEAT_H - 0.55, s.pos[2]], s.yaw); }
         else this.holdAt(e, p.pos, p.yaw);
       } else {
         const o = this.mp && this.mp.players.get(c.id);
